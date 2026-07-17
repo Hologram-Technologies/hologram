@@ -32,6 +32,10 @@ pub struct PortDescriptor {
 
 #[derive(Default)]
 pub struct HoloWriter {
+    /// `.holo` v3 application manifest: the opaque canonical bytes of an
+    /// `AppManifest` realization. Empty ⇒ a bare tensor archive (no manifest
+    /// section emitted). See [`HoloWriter::set_app_manifest`].
+    app_manifest: Vec<u8>,
     kernel_calls: Vec<KernelCall>,
     schedule: Option<Schedule>,
     weights: WeightStore,
@@ -54,6 +58,13 @@ impl HoloWriter {
         Self::default()
     }
 
+    /// Attach the `.holo` v3 application manifest — the canonical bytes of an
+    /// `AppManifest` realization (`hologram-space`). The archive layer stores it
+    /// opaquely; the app loader resolves its closure. Omit it for a bare tensor
+    /// archive (no manifest section is emitted).
+    pub fn set_app_manifest(&mut self, bytes: Vec<u8>) {
+        self.app_manifest = bytes;
+    }
     pub fn set_kernel_calls(&mut self, calls: Vec<KernelCall>) {
         self.kernel_calls = calls;
     }
@@ -99,6 +110,13 @@ impl HoloWriter {
     pub fn finish(self) -> Result<Vec<u8>, ArchiveError> {
         // Build payload sections in a stable order.
         let mut payloads: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+
+        // AppManifest first (the application root) when present — a thin archive
+        // is manifest + certificates + footer. Opaque bytes; omitted for a bare
+        // tensor archive.
+        if !self.app_manifest.is_empty() {
+            payloads.push((SectionKind::AppManifest, self.app_manifest.clone()));
+        }
 
         // KernelCalls — encoded via `kernel_codec` (one tagged variant per
         // OpKind, total round-trip with `decoder::decode_calls`).

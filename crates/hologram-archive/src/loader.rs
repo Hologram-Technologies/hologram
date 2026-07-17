@@ -29,6 +29,15 @@ impl<'a> LoadedPlan<'a> {
         &self.sections
     }
 
+    /// The `.holo` v3 application manifest section bytes, if present (spec 03) —
+    /// the opaque canonical form of an `AppManifest` realization, decoded by the
+    /// app-load layer (`hologram-space`). `None` for a bare tensor archive that
+    /// carries no manifest (a v2 archive, or a v3 archive read purely as a
+    /// tensor container). Zero-copy: the slice borrows the archive.
+    pub fn app_manifest(&self) -> Option<&'a [u8]> {
+        self.section(SectionKind::AppManifest).ok()
+    }
+
     /// Every `Extension` section, parsed to `(key, bytes)` in archive order
     /// (zero-copy: `bytes` borrows the archive). Open producer metadata
     /// (tokenizer, generation config, …); the runtime carries it opaquely.
@@ -93,7 +102,10 @@ impl<'a> HoloLoader<'a> {
             return Err(ArchiveError::BadMagic(m));
         }
         let ver = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if ver != FORMAT_VERSION {
+        // Read-shim (spec 03 §Compatibility): accept v2 tensor archives through
+        // the current version; writers emit v3 only. Below MIN_READ_VERSION or
+        // above the current version is rejected.
+        if !(crate::format::MIN_READ_VERSION..=FORMAT_VERSION).contains(&ver) {
             return Err(ArchiveError::UnsupportedVersion(ver));
         }
 
@@ -184,6 +196,7 @@ impl<'a> HoloLoader<'a> {
                 12 => SectionKind::ExecPlan,
                 13 => SectionKind::WarmStart,
                 14 => SectionKind::Extension,
+                15 => SectionKind::AppManifest,
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)

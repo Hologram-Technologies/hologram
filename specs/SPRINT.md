@@ -384,8 +384,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     enforces the load-time invariants (primary is exit-bearing; rootfs has arch; portable kinds
     don't); `decode()` is the inverse. Registered in `REGISTRY`. 6 new tests; native + wasm32 +
     thumbv7em green, clippy -D, fmt clean.
-  - [ ] **P4.2** — `.holo` v3 in `hologram-archive`: FORMAT_VERSION 2→3, `SectionKind::AppManifest`,
-    manifest codec (the AppManifest canonical bytes are the section payload), v2 read-shim.
+  - [x] **P4.2 — `.holo` v3 in `hologram-archive`** (2026-07-17). `FORMAT_VERSION` 2→3;
+    `SectionKind::AppManifest` (discriminant 15; kinds 0–14 unchanged, κ-stability); writer
+    `set_app_manifest` (opaque bytes — the AppManifest canonical form; the archive doesn't depend on
+    `hologram-space`, correct layering); loader `app_manifest()` accessor; v2 read-shim
+    (`MIN_READ_VERSION..=FORMAT_VERSION`). 4 new tests; exec/ffi/runtime round-trip v3 unchanged;
+    clippy -D, fmt clean. Manifest-*presence* enforcement is the app loader's (P4.3); `into_plan`
+    stays the bare tensor-container reader.
   - [ ] **P4.3** — fat/thin profiles + loader `resolve_closure`; parser fuzz targets (CI-permanent).
   - [ ] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
   - [ ] **P5** — networks (Network realization, restricted-tier, wire-version, bounded-resolve, TCK

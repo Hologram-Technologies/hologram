@@ -177,6 +177,24 @@ test, kept green from here on); V&V still green.
   override; v2 read-compat shim; `hologram app` CLI subcommands.
 - TCK: app boot/compose/exit-propagation battery.
 
+**Progress (2026-07-16/17):**
+- **P4.1 done** — `AppManifest` realization in `hologram-space` (SPINE-2/3): closed `LayerKind`
+  enum (wasm-codemodule / tensor-plan / rootfs-image / view; exit-semantics derived from kind),
+  `Layer` descriptor, `primary: Option<u32>` so the degenerate tensor-only archive is valid,
+  `validate()` (primary is exit-bearing; rootfs has arch; portable kinds don't) and `decode()`
+  inverse; registered in `REGISTRY`. Native + wasm32 + thumbv7em green.
+- **P4.2 done** — `.holo` v3 in `hologram-archive`: `FORMAT_VERSION` 2→3, `SectionKind::AppManifest`
+  (discriminant 15, kinds 0–14 unchanged for κ-stability), writer `set_app_manifest` (opaque bytes),
+  loader `app_manifest()` accessor, and the v2 read-shim (`MIN_READ_VERSION..=FORMAT_VERSION`).
+  The inference pipeline (exec/ffi/runtime) round-trips v3 unchanged.
+  - *Enforcement layering* (honesty note): the tensor-container reader (`LoadedPlan::into_plan`)
+    does **not** require a manifest — it is the tensor-execution path, and a bare tensor archive is
+    valid to it. The "a v3 archive without a manifest is invalid" invariant (03 §Encoding) is the
+    **app loader's** to enforce; that loader lands in **P4.3**, and the compiler defaulting every
+    archive to a single-tensor-plan manifest lands in **P4.4**. Until then the format *capability*
+    exists without forcing every producer through it — no dishonest "v3 requires manifest" claim is
+    made before the pieces that make it true are in place.
+
 **Exit criteria**: a multi-layer demo app (wasm layer + tensor layer + rootfs layer +
 portable view) boots on browser, native, and bare RAM-device spaces from the same `.holo`
 bytes (same κ); v2 archives still load; release cut.
