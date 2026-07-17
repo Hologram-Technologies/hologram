@@ -428,7 +428,10 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       under nightly+ASAN; `manifest_decode` ran **200k iterations with no crash**, independently
       confirming the parser-hardening fixes. Generated corpus/artifacts gitignored. (A nightly CI job
       runs them; the deterministic in-tree mutation suites remain the always-green gate.)
-    - [ ] `hologram app fat` (needs the node content store).
+    - [x] **`hologram app fat`** (2026-07-17) — `app fat --input --output --store <redb>` resolves
+      the manifest closure over a persistent `NativeKappaStore` and embeds every reachable κ's content
+      as a ContentBlob (self-contained); the app κ is unchanged. Completes the fat/thin CLI
+      (inspect/thin/fat). Test provisions a store, fattens, verifies blobs embedded + κ preserved.
   - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
     ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
@@ -474,7 +477,9 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       --policy <file> --tier <t> [--key <file>] --output <file>` builds a `Network` realization whose
       membership/policy/key are the **κs of the content files** (a member/policy/key is content, named
       by its κ — SPINE-1); enforces Private ⟺ `--key`. `network show <file>` decodes + displays the κ,
-      tier, membership, policy, and key binding. End-to-end create→decode test (temp files).
+      tier, membership, policy, and key binding. `network delegate --parent <capset> --child <capset>
+      --output` mints a `Delegation` realization but only if `admits(parent, child)` — amplification
+      refused (attenuation only, law 5). End-to-end tests (temp files).
     - [x] **in-process loopback transport test** (2026-07-17) — a `PairedNic` (crossed queues: one
       NIC's `transmit` is the other's `receive`) drives two real `BareNetSync` peers over an in-process
       link with **no sockets**: peer B fetches content only peer A holds — the full FETCH_REQ → resolve

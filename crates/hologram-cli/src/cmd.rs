@@ -189,6 +189,20 @@ enum AppCommand {
         #[arg(long)]
         output: std::path::PathBuf,
     },
+    /// Convert a `.holo` to a **fat** (self-contained) archive: embed every layer/closure κ
+    /// resolvable from the `--store` as a content blob. The app κ is **unchanged**; κs absent from
+    /// the store stay unresolved (re-run once synced).
+    Fat {
+        /// Input `.holo`.
+        #[arg(long)]
+        input: std::path::PathBuf,
+        /// Output fat `.holo`.
+        #[arg(long)]
+        output: std::path::PathBuf,
+        /// A `NativeKappaStore` (redb file) to resolve layer content from.
+        #[arg(long)]
+        store: std::path::PathBuf,
+    },
 }
 
 /// Parse command-line arguments from the process environment and run the CLI.
@@ -484,7 +498,66 @@ fn run_app(app_cli: AppCli) -> Result<(), CompileError> {
     match app_cli.command {
         AppCommand::Inspect { archive } => app_inspect(&archive),
         AppCommand::Thin { input, output } => app_thin(&input, &output),
+        AppCommand::Fat {
+            input,
+            output,
+            store,
+        } => app_fat(&input, &output, &store),
     }
+}
+
+/// Convert `input` to a **fat** `.holo` at `output`, embedding every layer/closure κ resolvable from
+/// the `NativeKappaStore` at `store_dir` (spec 03 §Fat and thin). The app κ is unchanged.
+fn app_fat(input: &Path, output: &Path, store_dir: &Path) -> Result<(), CompileError> {
+    use hologram_archive::format::SectionKind;
+    use hologram_archive::{HoloLoader, HoloWriter};
+    use hologram_space::{resolve_closure, KappaStore, REGISTRY};
+    use hologram_store_native::NativeKappaStore;
+
+    let bytes = std::fs::read(input).map_err(|_| CompileError::SourceParse("read archive"))?;
+    let plan = HoloLoader::from_bytes(&bytes)
+        .map_err(CompileError::Archive)?
+        .into_plan()
+        .map_err(CompileError::Archive)?;
+    let manifest = plan
+        .app_manifest()
+        .ok_or(CompileError::SourceParse(
+            "not a .holo v3 application (no manifest section)",
+        ))?
+        .to_vec();
+
+    let store =
+        NativeKappaStore::open(store_dir).map_err(|_| CompileError::SourceParse("open store"))?;
+    // Seed the manifest so the closure walk starts from its κ, then resolve over the store.
+    let manifest_kappa = store
+        .put("blake3", &manifest)
+        .map_err(|_| CompileError::SourceParse("store manifest"))?;
+    let closure = resolve_closure(manifest_kappa, &store, REGISTRY)
+        .map_err(|_| CompileError::SourceParse("resolve closure"))?;
+
+    let mut sections: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+    sections.push((SectionKind::AppManifest, manifest));
+    if let Ok(certs) = plan.section(SectionKind::Certificates) {
+        sections.push((SectionKind::Certificates, certs.to_vec()));
+    }
+    let mut embedded = 0usize;
+    for kappa in &closure.reachable {
+        if let Ok(Some(content)) = store.get(kappa) {
+            let mut blob = kappa.as_array().to_vec();
+            blob.extend_from_slice(content.as_ref());
+            sections.push((SectionKind::ContentBlob, blob));
+            embedded += 1;
+        }
+    }
+    let fat = HoloWriter::assemble(sections);
+    std::fs::write(output, &fat).map_err(|_| CompileError::SourceParse("write archive"))?;
+    println!(
+        "fattened {} bytes → {} bytes ({embedded} blob(s) embedded) at {}",
+        bytes.len(),
+        fat.len(),
+        output.display()
+    );
+    Ok(())
 }
 
 /// Inspect a `.holo` v3 application: identity κ + layer descriptors (spec 03). Store-free — decodes
@@ -806,6 +879,56 @@ mod tests {
             &bad
         )
         .is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn app_fat_embeds_store_resolvable_content() {
+        use hologram_archive::format::SectionKind;
+        use hologram_archive::{HoloLoader, HoloWriter};
+        use hologram_space::{AppManifest, KappaStore, Layer, Realization};
+        use hologram_store_native::NativeKappaStore;
+
+        let dir = std::env::temp_dir().join(format!("holo-fat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store_path = dir.join("store.redb");
+
+        // Provision layer content into a persistent store, then build a thin app over those κs. The
+        // store is dropped at the end of this block so `app_fat` can re-open the (locked) redb file.
+        let manifest = {
+            let store = NativeKappaStore::open(&store_path).unwrap();
+            AppManifest {
+                primary: Some(0),
+                requires: store.put("blake3", b"fat-cli-caps").unwrap(),
+                layers: vec![
+                    Layer::wasm(store.put("blake3", b"fat-cli-wasm").unwrap(), "_start"),
+                    Layer::tensor(store.put("blake3", b"fat-cli-plan").unwrap(), "s"),
+                ],
+                children: vec![],
+            }
+        };
+        let mut w = HoloWriter::new();
+        w.set_app_manifest(manifest.canonicalize());
+        let thin = dir.join("app.holo");
+        std::fs::write(&thin, w.finish().unwrap()).unwrap();
+
+        // Fatten it against the store.
+        let fat = dir.join("app.fat.holo");
+        app_fat(&thin, &fat, &store_path).unwrap();
+
+        let fat_bytes = std::fs::read(&fat).unwrap();
+        let fat_plan = HoloLoader::from_bytes(&fat_bytes)
+            .unwrap()
+            .into_plan()
+            .unwrap();
+        // Content is embedded as blobs, and the app κ (manifest bytes) is unchanged.
+        assert!(fat_plan.content_blobs().unwrap().len() >= 3);
+        assert_eq!(
+            fat_plan.app_manifest(),
+            Some(manifest.canonicalize().as_slice())
+        );
+        assert!(fat_plan.section(SectionKind::ContentBlob).is_ok());
 
         std::fs::remove_dir_all(&dir).ok();
     }
