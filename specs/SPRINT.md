@@ -457,8 +457,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       predecessor κ + reason) forms a tamper-evident revocation list; `is_revoked(key, head, store)`
       walks the chain so a verifier can decide if a key is revoked (append-only — nothing un-revokes).
       Registered; covered by the parser-hardening dispatch fuzz.
-    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier), network
-      keys, snapshot-attestation extension section.
+    - [x] **`SessionAttestation`** (2026-07-17, spec 07 R3) — the additive, non-breaking attestation
+      section: a realization binding *where and how* a workload ran ("session booted app κ under caps
+      κ on space-impl κ at engine κ", signed by an `AttestationKey` κ). `references()` recovers the
+      five bound facts (no side tables); the binding is tamper-evident (content-addressed) and the
+      signing key is bound as content, not a second surface. ed25519 signature verification is the
+      verifier's follow-on. Existing `Snapshot` κs untouched (a separate realization, not a format
+      break). Registered.
+    - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier) + network
+      keys; ed25519 sign/verify wiring for `SessionAttestation`/`AttestationKey`.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +

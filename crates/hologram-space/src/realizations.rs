@@ -1269,6 +1269,62 @@ realization!(
     "https://hologram.foundation/realization/revocation-event"
 );
 
+// ─────────────────── session attestation (P6, spec 07 R3) ───────────────────
+
+/// `https://hologram.foundation/realization/session-attestation` — a space's signed statement of
+/// **where and how** a workload ran (spec 07 R3): *"session booted app κ under capability-set κ on
+/// space-impl κ at engine κ"*. Operands (the bound facts, recovered by `references()` — no side
+/// tables): the app κ, the capability-set κ, the space-impl κ, the engine κ, and the **signing key**
+/// κ (an [`AttestationKey`], bound as content — never a second identity surface, R3/GV-3). Payload:
+/// the detached signature over the canonical attested bytes.
+///
+/// Because identity is the content address, the attested facts are **tamper-evident**: change any
+/// bound κ and the attestation κ changes. A verifier resolves the signing-key κ (and checks it
+/// against the [`RevocationEvent`] chain), then verifies the signature — the format binds the facts;
+/// the signature scheme (ed25519) is the verifier's, a follow-on. This is the additive, non-breaking
+/// "attestation section" R3 requires (a separate realization referencing what it attests, so
+/// existing `Snapshot` κs are untouched).
+pub struct SessionAttestation {
+    /// The application κ that ran.
+    pub app: KappaLabel71,
+    /// The capability-set κ it ran under.
+    pub caps: KappaLabel71,
+    /// The space-impl κ it ran on (a space build is itself content).
+    pub space: KappaLabel71,
+    /// The engine κ that executed it.
+    pub engine: KappaLabel71,
+    /// The `AttestationKey` κ that signed this statement (bound as content, not a second identity).
+    pub signing_key: KappaLabel71,
+    /// The detached signature over the canonical attested bytes (scheme per the signing key).
+    pub signature: Vec<u8>,
+}
+
+impl SessionAttestation {
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        (
+            alloc::vec![
+                self.app,
+                self.caps,
+                self.space,
+                self.engine,
+                self.signing_key
+            ],
+            self.signature.clone(),
+        )
+    }
+    /// Recover the detached signature bytes from a canonical session-attestation form.
+    pub fn signature_of(bytes: &[u8]) -> Result<Vec<u8>, RealizationError> {
+        payload_of(
+            "https://hologram.foundation/realization/session-attestation",
+            bytes,
+        )
+    }
+}
+realization!(
+    SessionAttestation,
+    "https://hologram.foundation/realization/session-attestation"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1338,6 +1394,11 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     (
         RevocationEvent::IRI,
         <RevocationEvent as Realization>::references,
+    ),
+    // Session attestation (P6, spec 07 R3).
+    (
+        SessionAttestation::IRI,
+        <SessionAttestation as Realization>::references,
     ),
 ];
 
@@ -1817,6 +1878,45 @@ mod tests {
             other.admits_network_op(NetworkOp::Store, 2000),
             "the other cap has its own budget"
         );
+    }
+
+    #[test]
+    fn session_attestation_binds_where_and_how_it_ran() {
+        // R3: "session booted app κ under caps κ on space κ at engine κ", signed by a key κ. The
+        // five facts are the operands — references() recovers exactly them (no side tables) — and
+        // the binding is tamper-evident: change any fact and the attestation κ changes.
+        let att = SessionAttestation {
+            app: k(b"app"),
+            caps: k(b"caps"),
+            space: k(b"space-impl"),
+            engine: k(b"engine"),
+            signing_key: k(b"attestation-key"),
+            signature: alloc::vec![0xAB; 64],
+        };
+        let bytes = att.canonicalize();
+        assert_eq!(
+            SessionAttestation::references(&bytes).unwrap(),
+            alloc::vec![
+                k(b"app"),
+                k(b"caps"),
+                k(b"space-impl"),
+                k(b"engine"),
+                k(b"attestation-key"),
+            ]
+        );
+        assert_eq!(
+            SessionAttestation::signature_of(&bytes).unwrap(),
+            alloc::vec![0xAB; 64]
+        );
+        // Dispatches through the registry; the signing key is bound as an operand (single identity).
+        assert_eq!(references(&bytes, REGISTRY).unwrap().len(), 5);
+        // Tamper-evidence: attesting a different engine yields a different identity.
+        let att_kappa = att.kappa();
+        let other = SessionAttestation {
+            engine: k(b"DIFFERENT-engine"),
+            ..att
+        };
+        assert_ne!(other.kappa(), att_kappa);
     }
 
     #[test]
