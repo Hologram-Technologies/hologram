@@ -9,6 +9,7 @@
 //! ordered PrismModel lives behind the compute engine, excluded by RZ).
 
 use crate::{address_bytes, Capabilities, KappaLabel, KappaLabel71, RealizationError, References};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 // ───────────────────── uniform operand-embedding layout (SPINE-2/3) ─────────────────────
@@ -79,6 +80,16 @@ fn read_u64(bytes: &[u8], cur: &mut usize) -> Result<u64, RealizationError> {
         .map_err(|_| RealizationError::Truncated)?;
     *cur = end;
     Ok(u64::from_le_bytes(arr))
+}
+
+/// Read a length-prefixed (`u32 LE`) UTF-8 string from a realization payload. Used by the
+/// [`AppManifest`] codec for per-layer entrypoints and kind-specific tags (arch / surface).
+fn read_str(bytes: &[u8], cur: &mut usize) -> Result<String, RealizationError> {
+    let len = read_u32(bytes, cur)? as usize;
+    let end = cur.checked_add(len).ok_or(RealizationError::Truncated)?;
+    let slice = bytes.get(*cur..end).ok_or(RealizationError::Truncated)?;
+    *cur = end;
+    String::from_utf8(slice.to_vec()).map_err(|_| RealizationError::Malformed)
 }
 
 /// The opaque payload a realization's canonical form carries after its embedded operand κ-labels
@@ -673,6 +684,283 @@ realization!(
     "https://hologram.foundation/realization/boot-config"
 );
 
+// ─────────────────── .holo v3 application container (P4, spec 03) ───────────────────
+// One format: an application is a manifest naming an ordered list of κ-referenced layers plus
+// the child apps it composes (D9). A tensor-only archive is the degenerate single-layer case.
+
+/// A `.holo` v3 layer's kind (spec 03 §v3 structure) — a **closed** enum, extended only by a
+/// format-version bump (exhaustive matching, no catch-all). The kind alone fixes whether a layer
+/// bears an exit code: an application is "a binary with an exit code", so only the code-bearing
+/// kinds may serve as a manifest's `primary` (an app's exit code cannot be undefined).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum LayerKind {
+    /// A compiled wasm code module, booted via the engine seam; exit-code bearing (`_start`).
+    WasmCodemodule = 0,
+    /// A compiled tensor plan, run as an `InferenceSession`; no exit code. The degenerate
+    /// single-layer archive (a v2-style compiled graph) is exactly one of these.
+    TensorPlan = 1,
+    /// A rootfs image, booted in the emulator + κ-disk; exit-code bearing; ISA fixed at provision
+    /// (its `aux` tag carries the mandatory `arch`).
+    RootfsImage = 2,
+    /// A UI view (D10), attached when its surface is ready; no exit code. Its `aux` tag carries the
+    /// `surface` (`portable`, `native(ios)`, …).
+    View = 3,
+}
+
+impl LayerKind {
+    /// Whether this kind produces an exit code — a manifest's `primary` MUST be such a layer
+    /// (spec 03 §Encoding decisions).
+    pub fn has_exit_semantics(self) -> bool {
+        matches!(self, LayerKind::WasmCodemodule | LayerKind::RootfsImage)
+    }
+    fn from_u8(b: u8) -> Result<Self, RealizationError> {
+        match b {
+            0 => Ok(LayerKind::WasmCodemodule),
+            1 => Ok(LayerKind::TensorPlan),
+            2 => Ok(LayerKind::RootfsImage),
+            3 => Ok(LayerKind::View),
+            _ => Err(RealizationError::Malformed),
+        }
+    }
+}
+
+/// One layer of a `.holo` v3 application: a κ-referenced payload plus its boot descriptor. The
+/// `entry` is the layer's entrypoint (like `main`); `aux` is the kind-specific tag — the **arch**
+/// for a rootfs-image (mandatory, ISA fixed at provision) or the **surface** for a view, empty for
+/// the portable code/tensor kinds.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Layer {
+    pub kind: LayerKind,
+    /// The layer's payload κ (a codemodule, tensor plan, rootfs image, or view bundle). Dedup
+    /// spans layers: a model shared by two layers is stored once (Law L3).
+    pub content: KappaLabel71,
+    /// Entrypoint name (e.g. `_start`, a session id, `boot`).
+    pub entry: String,
+    /// Kind-specific tag: arch for rootfs-image, surface for view, empty otherwise.
+    pub aux: String,
+}
+
+impl Layer {
+    /// A portable wasm code-module layer (exit-bearing).
+    pub fn wasm(content: KappaLabel71, entry: impl Into<String>) -> Self {
+        Self {
+            kind: LayerKind::WasmCodemodule,
+            content,
+            entry: entry.into(),
+            aux: String::new(),
+        }
+    }
+    /// A tensor-plan layer (no exit code) — the degenerate single-layer archive is one of these.
+    pub fn tensor(content: KappaLabel71, entry: impl Into<String>) -> Self {
+        Self {
+            kind: LayerKind::TensorPlan,
+            content,
+            entry: entry.into(),
+            aux: String::new(),
+        }
+    }
+    /// A rootfs-image layer for a fixed `arch` (exit-bearing; ISA fixed at provision).
+    pub fn rootfs(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        arch: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LayerKind::RootfsImage,
+            content,
+            entry: entry.into(),
+            aux: arch.into(),
+        }
+    }
+    /// A view layer for a `surface` (D10; no exit code — attached when the surface is ready).
+    pub fn view(content: KappaLabel71, surface: impl Into<String>) -> Self {
+        Self {
+            kind: LayerKind::View,
+            content,
+            entry: String::new(),
+            aux: surface.into(),
+        }
+    }
+}
+
+/// Why an [`AppManifest`] is not loadable (spec 03 §Encoding decisions — validated at load, before
+/// any layer boots). Distinct from [`RealizationError`] (which is about malformed *bytes*): these
+/// are well-formed manifests that violate the format's execution invariants.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ManifestError {
+    /// A manifest has no layers (an application has at least one).
+    NoLayers,
+    /// `primary` does not index any layer.
+    PrimaryOutOfRange,
+    /// `primary` indexes a layer with no exit semantics (tensor-plan or view).
+    PrimaryNotExitBearing,
+    /// A rootfs-image layer is missing its mandatory `arch` tag (ISA fixed at provision).
+    RootfsMissingArch,
+    /// A portable layer (wasm-codemodule / tensor-plan) carries an `arch`/`aux` tag it must not.
+    PortableLayerHasArch,
+    /// A view layer is missing its `surface` tag.
+    ViewMissingSurface,
+}
+
+/// `https://hologram.foundation/realization/app-manifest` — a `.holo` v3 application (spec 03).
+/// **One format**: the manifest embeds every layer κ, every child `(app κ, caps κ)`, and the
+/// required-capabilities κ as operands, so [`references`](crate::Realization::references) yields the
+/// whole application's reachability closure — migrating an app between peers is
+/// `resolve_closure(app κ)`, the same operation as migrating any content. A tensor-only archive is
+/// the degenerate single-layer case (one `TensorPlan` layer, `primary == None`, no children).
+pub struct AppManifest {
+    /// Index of the layer whose exit code IS the application's exit code — must be exit-bearing.
+    /// `None` for a non-executable archive (a degenerate tensor-only / library artifact has no
+    /// app exit code; "running" it is opening a session).
+    pub primary: Option<u32>,
+    /// The `CapabilitySet` κ the app needs; provision checks `granted ⊇ requires` and fails fast.
+    /// The grant, not this request, is what the runtime enforces — `requires` is a declaration.
+    pub requires: KappaLabel71,
+    /// Ordered layers; boot order = index order.
+    pub layers: Vec<Layer>,
+    /// Composed child apps (D9): each `(app κ, delegated caps κ)`. The delegated set must be a
+    /// subset of the parent's effective set (attenuation only — enforced at `spawn_child`, not
+    /// here; amplification is unrepresentable).
+    pub children: Vec<(KappaLabel71, KappaLabel71)>,
+}
+
+impl AppManifest {
+    /// Sentinel encoding `primary == None` in the canonical payload (a manifest with 2³²−1 layers
+    /// is not representable, so the top u32 is free as a "no primary" marker).
+    const NO_PRIMARY: u32 = u32::MAX;
+
+    /// The degenerate single-layer archive (spec 03 §Degenerate case): one tensor-plan layer, no
+    /// primary, no children — what the compiler emits for a compile-only tensor graph by default.
+    pub fn single_tensor_plan(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        requires: KappaLabel71,
+    ) -> Self {
+        Self {
+            primary: None,
+            requires,
+            layers: alloc::vec![Layer::tensor(content, entry)],
+            children: Vec::new(),
+        }
+    }
+
+    /// Validate the manifest's execution invariants (spec 03 §Encoding decisions). Called at load,
+    /// before any layer boots — see [`ManifestError`] for the rejection reasons.
+    pub fn validate(&self) -> Result<(), ManifestError> {
+        if self.layers.is_empty() {
+            return Err(ManifestError::NoLayers);
+        }
+        if let Some(i) = self.primary {
+            let layer = self
+                .layers
+                .get(i as usize)
+                .ok_or(ManifestError::PrimaryOutOfRange)?;
+            if !layer.kind.has_exit_semantics() {
+                return Err(ManifestError::PrimaryNotExitBearing);
+            }
+        }
+        for layer in &self.layers {
+            match layer.kind {
+                LayerKind::RootfsImage => {
+                    if layer.aux.is_empty() {
+                        return Err(ManifestError::RootfsMissingArch);
+                    }
+                }
+                LayerKind::View => {
+                    if layer.aux.is_empty() {
+                        return Err(ManifestError::ViewMissingSurface);
+                    }
+                }
+                LayerKind::WasmCodemodule | LayerKind::TensorPlan => {
+                    if !layer.aux.is_empty() {
+                        return Err(ManifestError::PortableLayerHasArch);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = Vec::with_capacity(1 + self.layers.len() + 2 * self.children.len());
+        refs.push(self.requires);
+        for l in &self.layers {
+            refs.push(l.content);
+        }
+        for (app, caps) in &self.children {
+            refs.push(*app);
+            refs.push(*caps);
+        }
+        let mut p = Vec::new();
+        p.extend_from_slice(&self.primary.unwrap_or(Self::NO_PRIMARY).to_le_bytes());
+        p.extend_from_slice(&(self.layers.len() as u32).to_le_bytes());
+        for l in &self.layers {
+            p.push(l.kind as u8);
+            p.extend_from_slice(&(l.entry.len() as u32).to_le_bytes());
+            p.extend_from_slice(l.entry.as_bytes());
+            p.extend_from_slice(&(l.aux.len() as u32).to_le_bytes());
+            p.extend_from_slice(l.aux.as_bytes());
+        }
+        p.extend_from_slice(&(self.children.len() as u32).to_le_bytes());
+        (refs, p)
+    }
+
+    /// Decode a canonical app-manifest form back into its structured view — the inverse of
+    /// `canonicalize`. Recovers `primary`, the ordered layers (kinds + entrypoints + tags, with
+    /// each layer's κ re-bound from the operand list), and the composed children.
+    pub fn decode(bytes: &[u8]) -> Result<AppManifest, RealizationError> {
+        let refs = <Self as crate::Realization>::references(bytes)?;
+        let payload = payload_of(
+            "https://hologram.foundation/realization/app-manifest",
+            bytes,
+        )?;
+        let mut cur = 0usize;
+        let primary_raw = read_u32(&payload, &mut cur)?;
+        let primary = (primary_raw != Self::NO_PRIMARY).then_some(primary_raw);
+        let n_layers = read_u32(&payload, &mut cur)? as usize;
+        // refs = [requires, layer κ × n_layers, (app κ, caps κ) × n_children].
+        let requires = *refs.first().ok_or(RealizationError::Malformed)?;
+        let layer_refs = refs
+            .get(1..1 + n_layers)
+            .ok_or(RealizationError::Malformed)?;
+        let mut layers = Vec::with_capacity(n_layers);
+        for content in layer_refs {
+            let kind = LayerKind::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
+            cur += 1;
+            let entry = read_str(&payload, &mut cur)?;
+            let aux = read_str(&payload, &mut cur)?;
+            layers.push(Layer {
+                kind,
+                content: *content,
+                entry,
+                aux,
+            });
+        }
+        let n_children = read_u32(&payload, &mut cur)? as usize;
+        let child_refs = refs
+            .get(1 + n_layers..)
+            .ok_or(RealizationError::Malformed)?;
+        if child_refs.len() != 2 * n_children {
+            return Err(RealizationError::Malformed);
+        }
+        let children = child_refs
+            .chunks_exact(2)
+            .map(|c| (c[0], c[1]))
+            .collect::<Vec<_>>();
+        Ok(AppManifest {
+            primary,
+            requires,
+            layers,
+            children,
+        })
+    }
+}
+realization!(
+    AppManifest,
+    "https://hologram.foundation/realization/app-manifest"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -727,6 +1015,8 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
         <HardwareAbstractionTraits as Realization>::references,
     ),
     (BootConfig::IRI, <BootConfig as Realization>::references),
+    // .holo v3 application container (P4, spec 03).
+    (AppManifest::IRI, <AppManifest as Realization>::references),
 ];
 
 #[cfg(test)]
@@ -902,5 +1192,143 @@ mod tests {
         };
         assert_eq!(a.kappa(), b.kappa());
         assert_ne!(a.kappa(), c.kappa());
+    }
+
+    // ── .holo v3 AppManifest (P4) ──
+
+    fn full_app() -> AppManifest {
+        AppManifest {
+            primary: Some(0),
+            requires: k(b"caps"),
+            layers: alloc::vec![
+                Layer::wasm(k(b"wasm"), "_start"),
+                Layer::tensor(k(b"plan"), "sess"),
+                Layer::rootfs(k(b"rootfs"), "boot", "riscv64"),
+                Layer::view(k(b"view"), "portable"),
+            ],
+            children: alloc::vec![(k(b"child-app"), k(b"child-caps"))],
+        }
+    }
+
+    #[test]
+    fn app_manifest_references_are_the_whole_reachability_closure() {
+        let m = full_app();
+        // references() = [requires, 4×layer κ, child app κ, child caps κ] — the full closure a
+        // `resolve_closure(app κ)` fetches to migrate the app.
+        let refs = AppManifest::references(&m.canonicalize()).unwrap();
+        assert_eq!(
+            refs,
+            alloc::vec![
+                k(b"caps"),
+                k(b"wasm"),
+                k(b"plan"),
+                k(b"rootfs"),
+                k(b"view"),
+                k(b"child-app"),
+                k(b"child-caps"),
+            ]
+        );
+    }
+
+    #[test]
+    fn app_manifest_round_trips_through_decode() {
+        let m = full_app();
+        let decoded = AppManifest::decode(&m.canonicalize()).unwrap();
+        assert_eq!(decoded.primary, Some(0));
+        assert_eq!(decoded.requires, k(b"caps"));
+        assert_eq!(decoded.layers, m.layers);
+        assert_eq!(
+            decoded.children,
+            alloc::vec![(k(b"child-app"), k(b"child-caps"))]
+        );
+    }
+
+    #[test]
+    fn app_manifest_dispatches_through_registry() {
+        let m = full_app();
+        let refs = references(&m.canonicalize(), REGISTRY).unwrap();
+        assert_eq!(refs.len(), 7);
+        assert!(REGISTRY.iter().any(|(iri, _)| *iri == AppManifest::IRI));
+    }
+
+    #[test]
+    fn degenerate_tensor_only_archive_is_valid_with_no_primary() {
+        // Spec §Degenerate case: a v2-style compiled graph is one tensor-plan layer, no exit code.
+        let m = AppManifest::single_tensor_plan(k(b"graph"), "sess", k(b"caps"));
+        assert_eq!(m.primary, None);
+        m.validate().unwrap();
+        let decoded = AppManifest::decode(&m.canonicalize()).unwrap();
+        assert_eq!(decoded.primary, None);
+        assert_eq!(decoded.layers.len(), 1);
+        assert_eq!(decoded.layers[0].kind, LayerKind::TensorPlan);
+    }
+
+    #[test]
+    fn primary_must_index_an_exit_bearing_layer() {
+        // A wasm primary is fine; a tensor-plan / view primary is rejected (undefined exit code).
+        assert!(full_app().validate().is_ok());
+        let bad = AppManifest {
+            primary: Some(1), // the tensor-plan layer
+            ..full_app()
+        };
+        assert_eq!(bad.validate(), Err(ManifestError::PrimaryNotExitBearing));
+        let oor = AppManifest {
+            primary: Some(99),
+            ..full_app()
+        };
+        assert_eq!(oor.validate(), Err(ManifestError::PrimaryOutOfRange));
+    }
+
+    #[test]
+    fn rootfs_requires_arch_and_portable_kinds_reject_it() {
+        let no_arch = AppManifest {
+            layers: alloc::vec![
+                Layer::wasm(k(b"w"), "_start"),
+                Layer {
+                    kind: LayerKind::RootfsImage,
+                    content: k(b"r"),
+                    entry: "boot".into(),
+                    aux: String::new(), // missing arch
+                },
+            ],
+            ..full_app()
+        };
+        assert_eq!(no_arch.validate(), Err(ManifestError::RootfsMissingArch));
+        let wasm_with_arch = AppManifest {
+            layers: alloc::vec![Layer {
+                kind: LayerKind::WasmCodemodule,
+                content: k(b"w"),
+                entry: "_start".into(),
+                aux: "riscv64".into(), // portable kind must not carry arch
+            }],
+            ..full_app()
+        };
+        assert_eq!(
+            wasm_with_arch.validate(),
+            Err(ManifestError::PortableLayerHasArch)
+        );
+    }
+
+    #[test]
+    fn app_identity_binds_every_operand_and_the_layer_order() {
+        let base = full_app();
+        // Reordering layers changes identity (boot order = manifest order is part of the app).
+        let reordered = AppManifest {
+            layers: alloc::vec![
+                Layer::tensor(k(b"plan"), "sess"),
+                Layer::wasm(k(b"wasm"), "_start"),
+                Layer::rootfs(k(b"rootfs"), "boot", "riscv64"),
+                Layer::view(k(b"view"), "portable"),
+            ],
+            primary: Some(1),
+            ..full_app()
+        };
+        assert_ne!(base.kappa(), reordered.kappa());
+        // A different child caps κ changes identity (composition is bound).
+        let reattenuated = AppManifest {
+            children: alloc::vec![(k(b"child-app"), k(b"OTHER-caps"))],
+            ..full_app()
+        };
+        assert_ne!(base.kappa(), reattenuated.kappa());
     }
 }

@@ -371,7 +371,27 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     exercised; the runtime seam SP-3 already covered Sync + Runtime.)
   - [ ] **P3 remaining**: the Client naming-review gate (D29); first lockstep `uor-hologram`
     release (hard stop, D26). The spec-02 `Space` contract is complete (7/7), all witnessed.
-- [ ] **P4–P6** .holo v3 / networks / encryption (follow-on).
+- [ ] **P4–P6** .holo v3 / networks / encryption (follow-on). Conformance-driven: drive HF → NW →
+  GV rows from ⛔ to ✅, each backed by its real feature; always-green at every commit.
+  - [x] **P4.1 — `AppManifest` realization** (2026-07-16, spec 03). The `.holo` v3 application is a
+    SPINE-2/3 realization in `hologram-space`: `AppManifest` (IRI `.../realization/app-manifest`)
+    embeds every layer κ, every child `(app κ, caps κ)`, and the `requires` CapabilitySet κ as
+    operands, so `references()` yields the whole app's reachability closure — migrating an app is
+    `resolve_closure(app κ)`, the same op as any content. Closed `LayerKind` enum
+    (WasmCodemodule/TensorPlan/RootfsImage/View; exit-semantics derived from kind, no catch-all);
+    `Layer` (content κ + entrypoint + kind-specific arch/surface tag); `primary: Option<u32>` so the
+    **degenerate tensor-only archive** (one TensorPlan layer, no exit code) is valid; `validate()`
+    enforces the load-time invariants (primary is exit-bearing; rootfs has arch; portable kinds
+    don't); `decode()` is the inverse. Registered in `REGISTRY`. 6 new tests; native + wasm32 +
+    thumbv7em green, clippy -D, fmt clean.
+  - [ ] **P4.2** — `.holo` v3 in `hologram-archive`: FORMAT_VERSION 2→3, `SectionKind::AppManifest`,
+    manifest codec (the AppManifest canonical bytes are the section payload), v2 read-shim.
+  - [ ] **P4.3** — fat/thin profiles + loader `resolve_closure`; parser fuzz targets (CI-permanent).
+  - [ ] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
+  - [ ] **P5** — networks (Network realization, restricted-tier, wire-version, bounded-resolve, TCK
+    battery); drive NW-1/2 (+NW-3/4) ⛔→✅.
+  - [ ] **P6** — encryption/governance (AttestationKey / RevocationEvent / NetworkPolicy /
+    AuditEvent, key lifecycle, session-signing, ChaCha20); drive GV-2/3/4 (+GV-5/6) ⛔→✅.
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
