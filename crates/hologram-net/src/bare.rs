@@ -32,9 +32,13 @@ use hologram_space::NetworkInterface;
 use hologram_space::{verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaSync, SyncError};
 use spin::Mutex;
 
+use crate::protocol::WireVersionRange;
+
 // ── frame codec ─────────────────────────────────────────────────────────────
 
 /// Frame kinds on the wire. Append-only — never renumber an existing kind (SPINE-5).
+/// The connect-handshake HELLO carrying a `WireVersionRange` (spec 04 §Protocol hardening).
+const KIND_HELLO: u8 = 0x00;
 const KIND_FETCH_REQ: u8 = 0x01;
 const KIND_FETCH_RES_OK: u8 = 0x02;
 const KIND_FETCH_RES_404: u8 = 0x03;
@@ -64,6 +68,39 @@ pub fn decode_frame(buf: &[u8]) -> Option<(u8, &[u8], usize)> {
     let kind = buf[4];
     let payload = &buf[5..4 + len];
     Some((kind, payload, 4 + len))
+}
+
+// ── connect handshake (wire-version negotiation, spec 04 §Protocol hardening) ──
+
+/// Why the connect handshake failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeError {
+    /// The peer's first frame was not a well-formed HELLO (wrong kind, or a malformed range).
+    BadHello,
+    /// No wire version both peers support — they are incompatible; refuse (never a silent downgrade).
+    Incompatible,
+}
+
+/// Build the connect-handshake HELLO frame advertising `range`. Each peer sends this first on a new
+/// connection; the frame is a normal `len | KIND_HELLO | min:u16 ‖ max:u16` frame.
+#[must_use]
+pub fn hello_frame(range: WireVersionRange) -> Vec<u8> {
+    encode_frame(KIND_HELLO, &range.encode())
+}
+
+/// Given our advertised `local` range and the peer's inbound HELLO frame bytes, negotiate the wire
+/// version to speak — or refuse (the receiver half of the handshake; the sender emits [`hello_frame`]
+/// first). Never panics on hostile bytes.
+pub fn negotiate_from_hello(
+    local: WireVersionRange,
+    peer_hello: &[u8],
+) -> Result<u16, HandshakeError> {
+    let (kind, payload, _n) = decode_frame(peer_hello).ok_or(HandshakeError::BadHello)?;
+    if kind != KIND_HELLO {
+        return Err(HandshakeError::BadHello);
+    }
+    let peer = WireVersionRange::decode(payload).ok_or(HandshakeError::BadHello)?;
+    local.negotiate(peer).ok_or(HandshakeError::Incompatible)
 }
 
 // ── BareNetSync ─────────────────────────────────────────────────────────────
@@ -331,6 +368,31 @@ mod tests {
     use hologram_space::KappaStore;
     use hologram_space::NicError;
     use hologram_tck::MemKappaStore;
+
+    #[test]
+    fn connect_handshake_negotiates_or_refuses() {
+        let a = WireVersionRange { min: 1, max: 3 };
+        let b = WireVersionRange { min: 2, max: 5 };
+        // Each peer negotiates from the other's HELLO → the highest common version (symmetric).
+        assert_eq!(negotiate_from_hello(b, &hello_frame(a)), Ok(3));
+        assert_eq!(negotiate_from_hello(a, &hello_frame(b)), Ok(3));
+        // An incompatible peer is refused — never a silent downgrade.
+        let far = WireVersionRange { min: 9, max: 9 };
+        assert_eq!(
+            negotiate_from_hello(far, &hello_frame(a)),
+            Err(HandshakeError::Incompatible)
+        );
+        // A non-HELLO first frame, or hostile garbage, is a clean BadHello (never a panic).
+        assert_eq!(
+            negotiate_from_hello(a, &encode_frame(KIND_ANNOUNCE, b"x")),
+            Err(HandshakeError::BadHello)
+        );
+        assert_eq!(
+            negotiate_from_hello(a, b"\x01"),
+            Err(HandshakeError::BadHello)
+        );
+        assert_eq!(negotiate_from_hello(a, &[]), Err(HandshakeError::BadHello));
+    }
 
     /// A loopback NIC: every `transmit` becomes available to the same NIC's `receive`. Backed
     /// by an internal queue — the simplest possible no_std-compatible NIC test fixture.

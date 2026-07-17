@@ -459,10 +459,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     - [x] **wire-version negotiation** (2026-07-17, spec 04 §Protocol hardening). `hologram-net`
       `protocol` module: `WIRE_VERSION` + `WireVersionRange{min,max}` with `negotiate` (highest common
       version; disjoint ranges ⇒ `None` = refuse, never a silent downgrade) + `encode`/`decode` of the
-      4-byte handshake payload (malformed / `min>max` rejected). Portable/no_std; the connect handshake
-      wires it when a transport lands. Native + thumbv7em green.
-    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) + the
-      connect handshake using `WireVersionRange`, `hologram network` CLI, TCK network battery.
+      4-byte handshake payload (malformed / `min>max` rejected). Portable/no_std.
+      **Wired into the `bare` frame protocol**: `KIND_HELLO` frame + `hello_frame` /
+      `negotiate_from_hello` (the connect handshake — highest common version, or a `HandshakeError`;
+      a non-HELLO/garbage first frame is a clean `BadHello`, never a panic). Deterministic in-process
+      test; native + thumbv7em green.
+    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) that drive
+      the `bare`/`tcp` handshake over real sockets, `hologram network` CLI, TCK network battery.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
