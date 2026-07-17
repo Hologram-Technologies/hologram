@@ -392,7 +392,17 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     clippy -D, fmt clean. Manifest-*presence* enforcement is the app loader's (P4.3); `into_plan`
     stays the bare tensor-container reader.
   - [ ] **P4.3** — fat/thin profiles + loader `resolve_closure`; parser fuzz targets (CI-permanent).
-  - [ ] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
+  - [~] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
+    - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
+      (a real v3 archive whose AppManifest section carries `single_tensor_plan`) yields the
+      degenerate single-layer case (1 tensor-plan layer, no primary). Witnessed end-to-end through
+      the archive container + AppManifest realization. `container.feature` @status:enforced, HF-1 ✅.
+    - [x] **HF-2** (2026-07-17) — capability-attenuated nesting: a parent AppManifest nests a child
+      by κ ref `(app κ, delegated caps κ)`; `Capabilities::admits` witnesses the delegated set ⊆
+      parent (refs + budgets), and an over-broad child is refused. `nesting.feature` @status:enforced,
+      HF-2 ✅. bdd now **13 passed / 20 skipped**; meta-gate bijection + status agreement green.
+    - [ ] **HF-3** — per-layer certificates verify + never stripped by inspection (needs per-layer
+      certs in the archive + a Client inspection API).
   - [ ] **P5** — networks (Network realization, restricted-tier, wire-version, bounded-resolve, TCK
     battery); drive NW-1/2 (+NW-3/4) ⛔→✅.
   - [ ] **P6** — encryption/governance (AttestationKey / RevocationEvent / NetworkPolicy /

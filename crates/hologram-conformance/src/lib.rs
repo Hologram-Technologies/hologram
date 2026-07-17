@@ -68,4 +68,11 @@ pub struct ConformanceWorld {
     /// MG-8: `true` once the CS bijection audit binds every `CS` catalog row to a present V1–V8
     /// validator script — the honesty check that the docs V&V is really absorbed.
     pub mg8_cs_bound: Option<bool>,
+    /// HF-1: `(layer_count, only_layer_is_tensor_plan, primary_is_none)` recovered by opening a
+    /// tensor-only `.holo` v3 archive as an application — the degenerate single-layer case is
+    /// `(1, true, true)`.
+    pub hf1_degenerate: Option<(usize, bool, bool)>,
+    /// HF-2: `(child_admitted, refs_subset, overbroad_refused)` from nesting a child app by κ ref
+    /// with a delegated CapabilitySet — capability-attenuation holds iff `(true, true, true)`.
+    pub hf2_attenuation: Option<(bool, bool, bool)>,
 }

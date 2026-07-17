@@ -11,6 +11,11 @@ use cucumber::{given, then, when, World};
 use hologram::Client;
 use hologram_space::{address_bytes, verify_kappa, Capabilities, Realization};
 use hologram_space::{CapabilitySet, ContainerManifest};
+// HF-1/HF-2: the `.holo` v3 application container (spec 03) — the AppManifest realization + the
+// real archive container, so opening a tensor-only archive and nesting a child are witnessed
+// end-to-end through the shipping format.
+use hologram_archive::{HoloLoader, HoloWriter};
+use hologram_space::{AppManifest, LayerKind};
 // SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
 // public API (external witness: the shipping reference impls in `hologram-space`).
 use hologram_space::{
@@ -462,6 +467,137 @@ fn mg8_assert(w: &mut ConformanceWorld) {
             .expect("the When step must have run the CS bijection audit"),
         "every CS catalog row must bind to a present V1–V8 validator script — the holospaces docs \
          V&V is absorbed honestly (MG-8)"
+    );
+}
+
+// ───────────────────────────── HF-1 — `.holo` v3 is the one container ─────────────────────────────
+// A tensor-only archive is the degenerate single-layer case of the one format: a `.holo` v3 whose
+// AppManifest names exactly one tensor-plan layer (no exit code, no children). Witnessed end-to-end
+// through the real archive container — write a v3 archive, load it, decode the manifest realization.
+
+#[given("a tensor-only archive")]
+fn hf1_given(w: &mut ConformanceWorld) {
+    // A compiled tensor graph κ + the required-capabilities κ (a declaration, never an entitlement).
+    let graph = address_bytes(b"hf1-tensor-graph");
+    let requires = address_bytes(b"hf1-requires");
+    let manifest = AppManifest::single_tensor_plan(graph, "session", requires);
+    let mut writer = HoloWriter::new();
+    writer.set_app_manifest(manifest.canonicalize());
+    w.canonical = writer
+        .finish()
+        .expect("write a tensor-only .holo v3 archive");
+}
+
+#[when("I open it as a .holo v3 application")]
+fn hf1_open(w: &mut ConformanceWorld) {
+    let plan = HoloLoader::from_bytes(&w.canonical)
+        .expect("a v3 archive loads")
+        .into_plan()
+        .expect("its section table parses");
+    let manifest_bytes = plan
+        .app_manifest()
+        .expect("the v3 archive carries an AppManifest section");
+    let manifest = AppManifest::decode(manifest_bytes).expect("the manifest realization decodes");
+    // "Opening as an application" validates the manifest's execution invariants.
+    manifest.validate().expect("the manifest is loadable");
+    let first_is_tensor_plan = manifest
+        .layers
+        .first()
+        .is_some_and(|l| l.kind == LayerKind::TensorPlan);
+    w.hf1_degenerate = Some((
+        manifest.layers.len(),
+        first_is_tensor_plan,
+        manifest.primary.is_none(),
+    ));
+}
+
+#[then("it is the degenerate single-layer case of the one format")]
+fn hf1_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.hf1_degenerate,
+        Some((1, true, true)),
+        "a tensor-only archive must open as exactly one tensor-plan layer with no exit code (no \
+         primary) — the degenerate single-layer case of the one `.holo` v3 format"
+    );
+}
+
+// ───────────────────────────── HF-2 — capability-attenuated nesting ─────────────────────────────
+// A parent app nests a child by κ ref with a delegated CapabilitySet; the delegated authority must
+// be a subset of the parent's — attenuation only, amplification unrepresentable. Witnessed by the
+// capability lattice's `admits` relation over a real AppManifest child edge.
+
+/// Full `Capabilities` builder (the struct has no `Default`); channel lists inferred empty.
+fn hf2_caps(storage: &[&[u8]], quota: u64, fetch: bool) -> Capabilities {
+    Capabilities {
+        storage_roots: storage.iter().map(|s| address_bytes(s)).collect(),
+        storage_quota_bytes: quota,
+        network_fetch: fetch,
+        network_announce: false,
+        publish_channels: vec![],
+        subscribe_channels: vec![],
+        memory_max_bytes: quota,
+        cpu_time_per_event_ms: 10,
+        priority_weight: 4,
+    }
+}
+
+#[given("a parent app with a CapabilitySet")]
+fn hf2_given(w: &mut ConformanceWorld) {
+    // Parent authority: two storage roots, a real budget, fetch allowed. Carried to the When step
+    // as CapabilitySet canonical bytes so the World stays free of domain types.
+    let parent = hf2_caps(&[b"root-A", b"root-B"], 1000, true);
+    w.canonical = CapabilitySet::new(parent).canonicalize();
+}
+
+#[when("it nests a child by κ ref with a delegated CapabilitySet")]
+fn hf2_nest(w: &mut ConformanceWorld) {
+    let parent = CapabilitySet::to_capabilities(&w.canonical).expect("decode parent caps");
+
+    // The delegated child: a subset of the parent (fewer roots, tighter budget, fetch dropped).
+    let child = hf2_caps(&[b"root-A"], 500, false);
+    let child_caps_kappa = CapabilitySet::new(child.clone()).kappa();
+    let child_app_kappa = address_bytes(b"hf2-child-app");
+
+    // The nesting is expressed in the κ-graph: the parent AppManifest carries the child as a
+    // `(app κ, delegated caps κ)` edge — nested "by κ ref", recovered by references().
+    let parent_manifest = AppManifest {
+        primary: None,
+        requires: CapabilitySet::new(parent.clone()).kappa(),
+        layers: vec![hologram_space::Layer::tensor(
+            address_bytes(b"hf2-code"),
+            "run",
+        )],
+        children: vec![(child_app_kappa, child_caps_kappa)],
+    };
+    let refs = <AppManifest as Realization>::references(&parent_manifest.canonicalize())
+        .expect("the parent manifest decodes");
+    assert!(
+        refs.contains(&child_app_kappa) && refs.contains(&child_caps_kappa),
+        "the child must be nested by κ ref — its app κ and delegated caps κ are edges in the \
+         parent's reachability closure"
+    );
+
+    // An over-broad child that reaches a root the parent lacks — amplification, must be refused.
+    let overbroad = hf2_caps(&[b"root-A", b"root-C"], 500, false);
+
+    let refs_subset = child
+        .storage_roots
+        .iter()
+        .all(|r| parent.storage_roots.contains(r));
+    w.hf2_attenuation = Some((
+        parent.admits(&child),
+        refs_subset,
+        !parent.admits(&overbroad),
+    ));
+}
+
+#[then("the child's refs and capabilities are a subset of the parent's")]
+fn hf2_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.hf2_attenuation,
+        Some((true, true, true)),
+        "the delegated child must be admitted (caps ⊆ parent), its refs a subset of the parent's, \
+         and an over-broad child refused — attenuation only, amplification unrepresentable"
     );
 }
 

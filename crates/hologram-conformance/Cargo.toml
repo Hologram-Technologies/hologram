@@ -16,6 +16,9 @@ tokio = { workspace = true }
 # GV-1 (R1 traceability) is witnessed against the existing substrate realizations:
 # a ContainerManifest embeds its operand κs and references() recovers exactly them.
 hologram-space = { path = "../hologram-space", default-features = false }
+# HF-1 (.holo v3 is the one container) opens a real `.holo` v3 archive whose AppManifest
+# section carries a single-tensor-plan manifest — the degenerate single-layer case.
+hologram-archive = { path = "../hologram-archive" }
 # SP-3 / LAW-3 are witnessed by driving the **real** `hologram::Client` over `SpikeSpace` — an
 # external-crate `Space` impl (D21/D28): the spike crate now provides only that reference space,
 # and the Client comes from the facade. Client accepting an outside space with no in-tree

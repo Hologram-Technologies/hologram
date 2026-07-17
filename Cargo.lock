@@ -1557,6 +1557,7 @@ name = "hologram-conformance"
 version = "0.10.0"
 dependencies = [
  "cucumber",
+ "hologram-archive",
  "hologram-space",
  "hologram-spike-sp3",
  "hologram-tck",

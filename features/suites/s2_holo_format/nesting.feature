@@ -1,4 +1,4 @@
-@class:HF @id:HF-2 @spec:03-holo-format @phase:P3 @status:pending
+@class:HF @id:HF-2 @spec:03-holo-format @phase:P4 @status:enforced
 Feature: capability-attenuated app nesting
   Scenario: nested app cannot exceed parent
     Given a parent app with a CapabilitySet
