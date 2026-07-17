@@ -16,5 +16,7 @@ extern crate alloc;
 
 pub mod bare;
 pub mod http;
+/// Wire-protocol version negotiation (spec 04 §Protocol hardening) — portable, transport-agnostic.
+pub mod protocol;
 #[cfg(feature = "tcp")]
 pub mod tcp;

@@ -456,8 +456,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       adversarially wide/deep κ-graph to force an unbounded resolve (DoS). `resolve_closure_bounded(…,
       max_nodes)` stops at the limit and sets `Closure::truncated`; `is_complete()` now also requires
       `!truncated`. `resolve_closure` delegates to it (unbounded). Tested; native + thumbv7em green.
-    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop),
-      wire-version negotiation, `hologram network` CLI, TCK network battery.
+    - [x] **wire-version negotiation** (2026-07-17, spec 04 §Protocol hardening). `hologram-net`
+      `protocol` module: `WIRE_VERSION` + `WireVersionRange{min,max}` with `negotiate` (highest common
+      version; disjoint ranges ⇒ `None` = refuse, never a silent downgrade) + `encode`/`decode` of the
+      4-byte handshake payload (malformed / `min>max` rejected). Portable/no_std; the connect handshake
+      wires it when a transport lands. Native + thumbv7em green.
+    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) + the
+      connect handshake using `WireVersionRange`, `hologram network` CLI, TCK network battery.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
