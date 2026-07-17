@@ -1207,6 +1207,68 @@ realization!(
     "https://hologram.foundation/realization/audit-event"
 );
 
+// ─────────────────── key revocation (P6, spec 07 R3) ───────────────────
+
+/// `https://hologram.foundation/realization/revocation-event` — an **append-only** revocation of a
+/// key (attestation / operator / network), spec 07 R3. You cannot delete a key from a κ-store; you
+/// publish this event and require verifiers to check the chain. The complement of key **rotation**
+/// (a new [`AttestationKey`] published as new content): rotation supersedes, revocation invalidates.
+/// Operands: the revoked key κ + the predecessor revocation-event κ (the chain link; `None` at the
+/// head). Payload: a `reason:u8` code. SPINE-5 makes the revocation list tamper-evident for free.
+pub struct RevocationEvent {
+    /// The key κ being revoked.
+    pub revoked_key: KappaLabel71,
+    /// The prior revocation-event κ (the append-only chain link); `None` at the head.
+    pub predecessor: Option<KappaLabel71>,
+    /// A revocation reason code (opaque to the format; `0` = unspecified).
+    pub reason: u8,
+}
+
+impl RevocationEvent {
+    #[must_use]
+    pub fn new(revoked_key: KappaLabel71, predecessor: Option<KappaLabel71>, reason: u8) -> Self {
+        Self {
+            revoked_key,
+            predecessor,
+            reason,
+        }
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut refs = alloc::vec![self.revoked_key];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        (refs, alloc::vec![self.reason])
+    }
+
+    /// Walk the append-only revocation chain from `chain_head` over `store`, returning whether
+    /// `key` has been revoked (spec 07 R3: "require verifiers to check the chain"). Bounded by the
+    /// chain length; stops at the head, at absent bytes (a broken/foreign link), or at the first
+    /// non-revocation node. A revoker cannot un-revoke — the chain only grows.
+    pub fn is_revoked(
+        key: &KappaLabel71,
+        chain_head: &KappaLabel71,
+        store: &dyn crate::KappaStore,
+    ) -> Result<bool, crate::StoreError> {
+        let mut cursor = Some(*chain_head);
+        while let Some(k) = cursor {
+            let Some(bytes) = store.get(&k)? else { break };
+            let Ok(refs) = <Self as crate::Realization>::references(bytes.as_ref()) else {
+                break;
+            };
+            if refs.first() == Some(key) {
+                return Ok(true);
+            }
+            cursor = refs.get(1).copied(); // predecessor
+        }
+        Ok(false)
+    }
+}
+realization!(
+    RevocationEvent,
+    "https://hologram.foundation/realization/revocation-event"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1272,6 +1334,11 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     ),
     // Audit trail (P6, spec 07 R2).
     (AuditEvent::IRI, <AuditEvent as Realization>::references),
+    // Key revocation (P6, spec 07 R3).
+    (
+        RevocationEvent::IRI,
+        <RevocationEvent as Realization>::references,
+    ),
 ];
 
 #[cfg(test)]
@@ -1749,6 +1816,39 @@ mod tests {
         assert!(
             other.admits_network_op(NetworkOp::Store, 2000),
             "the other cap has its own budget"
+        );
+    }
+
+    #[test]
+    fn revocation_is_append_only_and_verifiers_check_the_chain() {
+        // R3: revocation is an append-only κ-chain; a verifier walks it to decide if a key is
+        // revoked. Publishing a revocation (append) can invalidate a key, but nothing un-revokes it.
+        let store = crate::MemKappaStore::new();
+        let put = |e: &RevocationEvent| store.put("blake3", &e.canonicalize()).unwrap();
+
+        let key_a = k(b"attestation-key-a");
+        let key_b = k(b"attestation-key-b");
+        let key_c = k(b"never-revoked-key");
+
+        // Chain: revoke A (head0) ← revoke B (head1).
+        let e0 = RevocationEvent::new(key_a, None, 0);
+        let head0 = put(&e0);
+        let e1 = RevocationEvent::new(key_b, Some(head0), 7);
+        let head1 = put(&e1);
+
+        // A verifier checking `head1` sees both A and B revoked, but not C.
+        assert!(RevocationEvent::is_revoked(&key_a, &head1, &store).unwrap());
+        assert!(RevocationEvent::is_revoked(&key_b, &head1, &store).unwrap());
+        assert!(!RevocationEvent::is_revoked(&key_c, &head1, &store).unwrap());
+
+        // The chain is append-only: an earlier head (head0) only knows about A, not the later B.
+        assert!(RevocationEvent::is_revoked(&key_a, &head0, &store).unwrap());
+        assert!(!RevocationEvent::is_revoked(&key_b, &head0, &store).unwrap());
+
+        // references() recovers exactly [revoked_key, predecessor] — no side tables.
+        assert_eq!(
+            RevocationEvent::references(&e1.canonicalize()).unwrap(),
+            alloc::vec![key_b, head0]
         );
     }
 

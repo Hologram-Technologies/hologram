@@ -452,8 +452,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       threading an append-only audit κ-chain — runtime-tested that all four advance a distinct linked
       head (no bypass). BDD witnesses the same seam's κ-chain.
     - bdd **19 passed**; meta-gate bijection + status agreement green; native + wasm32 + thumbv7em.
+    - [x] **`RevocationEvent` chain + verifier** (2026-07-17, spec 07 R3) — the append-only
+      complement to `AttestationKey` rotation: a `RevocationEvent` realization (revoked key κ +
+      predecessor κ + reason) forms a tamper-evident revocation list; `is_revoked(key, head, store)`
+      walks the chain so a verifier can decide if a key is revoked (append-only — nothing un-revokes).
+      Registered; covered by the parser-hardening dispatch fuzz.
     - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier), network
-      keys, `RevocationEvent` chain + verifier, snapshot-attestation extension section.
+      keys, snapshot-attestation extension section.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
