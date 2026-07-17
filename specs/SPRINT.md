@@ -482,9 +482,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       silent downgrade). Integration tests (`#[cfg(feature="tcp")]`, `127.0.0.1:0`, `current_thread`
       tokio): the raw handshake negotiates/refuses over a real socket, **and a real `TcpKappaSync`
       answers the handshake at its current wire version**. Cleanly gated — a no-op without `tcp`.
-    - [ ] non-conformance P5 follow-on: outbound dialer sends HELLO first (full negotiate before a
-      fetch); iroh/WebRTC transports; `network join`/`delegate` (need the node store); the live
-      multi-node TCK battery on the heavy CI runner.
+    - [x] **dialer-side handshake — full end-to-end negotiation** (2026-07-17). `TcpKappaSync::rpc`
+      now runs `dialer_handshake` once per new connection (before any request): send our HELLO, read
+      the peer's, negotiate — an incompatible peer aborts the dial. Both sides of a real connection
+      now negotiate. **Verified with zero regression**: the whole DHT suite (fetch / find_node /
+      get_providers / forgery-rejection — 8/8) passes with the handshake in the flow, proving the
+      two-peer negotiate→fetch path works end-to-end. `no_std` core unaffected (tcp-gated).
+    - [ ] non-conformance P5 follow-on: iroh/WebRTC transports; `network join`/`delegate` (need the
+      node store); the live multi-node TCK battery on the heavy CI runner.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as

@@ -366,6 +366,43 @@ impl TcpKappaSync {
 
     // ── outbound RPCs ───────────────────────────────────────────────────────
 
+    /// The outbound half of the connect handshake (spec 04 §Protocol hardening): send our HELLO,
+    /// read the peer's, negotiate. Runs once per new connection, before any request frame; an
+    /// incompatible peer returns an error so the dial is aborted (never a silent downgrade). A peer
+    /// on the shared `bare`/`tcp` protocol answers a HELLO with its own HELLO (see
+    /// `handle_frame`).
+    async fn dialer_handshake(&self, stream: &mut TcpStream) -> Result<(), SyncError> {
+        use crate::protocol::WireVersionRange;
+        stream
+            .write_all(&crate::bare::hello_frame(WireVersionRange::CURRENT))
+            .await
+            .map_err(|_| SyncError::BackendFailure("handshake-write"))?;
+        let mut buf = Vec::with_capacity(16);
+        let mut tmp = [0u8; 256];
+        loop {
+            let n = match self.config.rpc_timeout {
+                Some(d) => timeout(d, stream.read(&mut tmp))
+                    .await
+                    .map_err(|_| SyncError::BackendFailure("handshake-timeout"))?
+                    .map_err(|_| SyncError::BackendFailure("handshake-read"))?,
+                None => stream
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|_| SyncError::BackendFailure("handshake-read"))?,
+            };
+            if n == 0 {
+                return Err(SyncError::BackendFailure("handshake-eof"));
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if decode_frame(&buf).is_some() {
+                break;
+            }
+        }
+        crate::bare::negotiate_from_hello(WireVersionRange::CURRENT, &buf)
+            .map(|_| ())
+            .map_err(|_| SyncError::BackendFailure("incompatible wire version"))
+    }
+
     /// Send a single frame to `peer`, await one response frame.
     async fn rpc(&self, peer: &Peer, frame: Vec<u8>) -> Result<(u8, Vec<u8>), SyncError> {
         let stream_arc = {
@@ -373,9 +410,12 @@ impl TcpKappaSync {
             match d.get(&peer.addr).cloned() {
                 Some(s) => s,
                 None => {
-                    let s = TcpStream::connect(peer.addr)
+                    let mut s = TcpStream::connect(peer.addr)
                         .await
                         .map_err(|_| SyncError::BackendFailure("dial"))?;
+                    // Dialer-side wire-version handshake (spec 04): negotiate once, before any
+                    // request; an incompatible peer aborts the dial (refuse, no silent downgrade).
+                    self.dialer_handshake(&mut s).await?;
                     let s = Arc::new(AsyncMutex::new(s));
                     d.insert(peer.addr, s.clone());
                     s
