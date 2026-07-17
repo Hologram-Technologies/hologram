@@ -476,7 +476,46 @@ jobs:
           cargo test -p holospaces --release --test cc51_nested_workspace -- --ignored \
             --exact the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p
 
-  # Job 15: Verify all quality gates passed
+  # Job 15: CS docs conformance (MG-7 Phase G4 / MG-8). Validates the holospaces documentation
+  # (arc42 / C4 / OPM ISO 19450 / ISO 15288) against its external standards via validators V1–V8.
+  # Needs the docs toolchain — JDK 21, Ruby 3, Structurizr, cmark-gfm, pandoc — provisioned here.
+  # NOT yet in ci-success.needs: introduced non-blocking (the toolchain isn't locally verifiable),
+  # promoted to blocking + MG-8 flipped ✅ once observed green (run via workflow_dispatch / the PR).
+  docs-conformance:
+    name: CS docs conformance (arc42 · C4 · OPM · ISO 15288 — V1–V8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive   # fetch specs/holospaces/vendor/arc42-generator (pinned)
+
+      - name: Setup JDK 21 (Structurizr's Java exporter)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Ruby 3 (the V1/V5/V6/V7 validators + Bundler)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: specs/holospaces
+          bundler-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install the docs toolchain (Structurizr · cmark-gfm · pandoc · playwright)
+        working-directory: specs/holospaces
+        run: bash scripts/install-tools.sh
+
+      - name: Run the docs V&V (V1–V8 — build.sh)
+        working-directory: specs/holospaces
+        run: bash scripts/build.sh
+
+  # Job 16: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()

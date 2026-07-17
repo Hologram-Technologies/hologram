@@ -282,8 +282,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       (`specs/holospaces/scripts/v*-*`); `run.sh` CS block repointed to
       `specs/holospaces/scripts/build.sh` (`CC_ONLY` still defaults on locally — no toolchain; G4
       sets it off). Rows 🟡. meta_gate green (CS ignored) — `7307b99`.
-    - [ ] **G4** docs-conformance CI job (JDK 21 · Ruby 3 · Structurizr · cmark-gfm · pandoc → V1–V8)
-      + add the arc42-generator submodule + set `CC_ONLY=0` there.
+    - [~] **G4** docs-conformance CI job authored (2026-07-16). New `docs-conformance` job in
+      `ci.yml`: checkout `submodules: recursive`, JDK 21 + Ruby 3 (bundler-cache) + Node 22,
+      `install-tools.sh` (Structurizr/cmark-gfm/pandoc/playwright), then `build.sh` (V1–V8). Added
+      the **arc42-generator submodule** as a pointer only (`.gitmodules` + a gitlink at pin
+      `46bd7cea` via `update-index --cacheinfo` — no 153M clone; CI fetches it). Introduced
+      **non-blocking** (toolchain not locally verifiable — java 24≠21, ruby 4≠3, cmark/pandoc
+      absent); promote to blocking + flip MG-8 ✅ once observed green (workflow_dispatch / the PR).
+      (A dedicated CS job runs the docs V&V directly, so `vv/run.sh`'s `CC_ONLY` stays on — CS and
+      CC gate in separate jobs.)
     - [x] **G5** shaped **MG-8** (`@status:pending`) + CONFORMANCE row (⛔) witnessing CS absorption;
       enforces when G4 is green. bdd bijective (MG-8 skipped, non-gating).
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
