@@ -70,11 +70,16 @@ jobs:
           cache-on-failure: true
           key: ${{ matrix.os }}-test
 
+      # holospaces' CC integration tests need the vv/artifacts fixtures + Linux tools (e2fsprogs,
+      # qemu, docker); on a generic runner where a tool is present but the fixture isn't, some
+      # would try to read the fixture rather than skip. They are comprehensively gated by the
+      # holospaces-vv-heavy job (fixtures materialized), so exclude the space from the generic
+      # matrix test; its lib/unit tests run in holospaces-vv-heavy.
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude holospaces
 
       - name: Run doc tests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --exclude holospaces --doc
 
   # Job 5: Documentation
   docs:
@@ -278,7 +283,9 @@ jobs:
             -p hologram-net -p hologram-runtime -p hologram-cli
 
       - name: Live HTTP-CAS transport (NW class, --features live)
-        run: cargo test -p hologram-net --features live
+        # `tcp` too, so the tokio-backed uor-native DHT test in the consolidated hologram-net
+        # (was hologram-net-tcp) compiles alongside the live HTTP-CAS transport.
+        run: cargo test -p hologram-net --features live,tcp
 
       - name: RZ gate — compute engine absent from store/route crates
         run: |
@@ -474,6 +481,9 @@ jobs:
             --exact a_resumed_idle_devcontainer_is_live_and_its_scrollback_is_a_terminal_concern
           cargo test -p holospaces --release --test cc51_nested_workspace -- --ignored \
             --exact the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p
+
+      - name: holospaces lib/unit tests (excluded from the generic matrix test)
+        run: cargo test -p holospaces --lib
 
   # Job 15: CS docs conformance (MG-7 Phase G4 / MG-8). Validates the holospaces documentation
   # (arc42 / C4 / OPM ISO 19450 / ISO 15288) against its external standards via validators V1–V8.

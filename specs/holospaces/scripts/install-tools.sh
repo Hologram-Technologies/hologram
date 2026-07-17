@@ -254,7 +254,12 @@ if [ "$CURRENT" != "$ARC42_TEMPLATE_PIN" ]; then
     # lock, then clear the stale lock and retry.
     checkout_ok=
     for attempt in 1 2 3; do
-        if ( cd "$ARC42_TEMPLATE_DIR" && git fetch --quiet origin && git checkout --quiet "$ARC42_TEMPLATE_PIN" ); then
+        # Fetch the exact pinned SHA first (a recursive-submodule checkout may leave the nested
+        # arc42-template at a different commit whose history doesn't contain the pin — a plain
+        # `git fetch origin` then wouldn't retrieve it). Fall back to a full fetch.
+        if ( cd "$ARC42_TEMPLATE_DIR" \
+                && { git fetch --quiet origin "$ARC42_TEMPLATE_PIN" || git fetch --quiet origin; } \
+                && git checkout --quiet "$ARC42_TEMPLATE_PIN" ); then
             checkout_ok=1
             break
         fi
