@@ -148,6 +148,20 @@ enum NetworkCommand {
         #[arg(long)]
         network: std::path::PathBuf,
     },
+    /// Delegate membership: mint a `Delegation` realization granting an attenuated `--child`
+    /// CapabilitySet from a `--parent` CapabilitySet. **Refuses amplification** (child ⊄ parent) —
+    /// attenuation only (law 5). Both inputs are CapabilitySet realization files.
+    Delegate {
+        /// Parent CapabilitySet file (the delegating member's authority).
+        #[arg(long)]
+        parent: std::path::PathBuf,
+        /// Child CapabilitySet file (the new member's attenuated authority).
+        #[arg(long)]
+        child: std::path::PathBuf,
+        /// Output path for the Delegation realization.
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
 }
 
 /// `hologram app <subcommand>` — `.holo` v3 application tooling.
@@ -340,7 +354,43 @@ fn run_network(net_cli: NetworkCli) -> Result<(), CompileError> {
             output,
         } => net_create(&members, &policy, &tier, key.as_deref(), &output),
         NetworkCommand::Show { network } => net_show(&network),
+        NetworkCommand::Delegate {
+            parent,
+            child,
+            output,
+        } => net_delegate(&parent, &child, &output),
     }
+}
+
+fn net_delegate(parent: &Path, child: &Path, output: &Path) -> Result<(), CompileError> {
+    use hologram_space::{address_bytes, CapabilitySet, Delegation, Realization};
+    let parent_bytes =
+        std::fs::read(parent).map_err(|_| CompileError::SourceParse("read parent capset"))?;
+    let child_bytes =
+        std::fs::read(child).map_err(|_| CompileError::SourceParse("read child capset"))?;
+    let parent_caps = CapabilitySet::to_capabilities(&parent_bytes)
+        .map_err(|_| CompileError::SourceParse("parent is not a CapabilitySet realization"))?;
+    let child_caps = CapabilitySet::to_capabilities(&child_bytes)
+        .map_err(|_| CompileError::SourceParse("child is not a CapabilitySet realization"))?;
+    // Attenuation only (law 5): the child's authority must be a subset of the parent's.
+    if !parent_caps.admits(&child_caps) {
+        return Err(CompileError::SourceParse(
+            "delegation would amplify authority (child is not a subset of parent) — refused",
+        ));
+    }
+    let delegation = Delegation {
+        parent_caps: address_bytes(&parent_bytes),
+        child_caps: address_bytes(&child_bytes),
+    };
+    std::fs::write(output, delegation.canonicalize())
+        .map_err(|_| CompileError::SourceParse("write delegation"))?;
+    println!(
+        "delegated (attenuated) parent κ={} → child κ={} at {}",
+        String::from_utf8_lossy(delegation.parent_caps.as_array()),
+        String::from_utf8_lossy(delegation.child_caps.as_array()),
+        output.display()
+    );
+    Ok(())
 }
 
 fn parse_tier(s: &str) -> Result<hologram_space::NetworkTier, CompileError> {
@@ -756,6 +806,49 @@ mod tests {
             &bad
         )
         .is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn network_delegate_enforces_attenuation() {
+        use hologram_space::{address_bytes, Capabilities, CapabilitySet, Delegation, Realization};
+
+        let caps = |roots: &[&[u8]], quota: u64| Capabilities {
+            storage_roots: roots.iter().map(|r| address_bytes(r)).collect(),
+            storage_quota_bytes: quota,
+            network_fetch: true,
+            network_announce: false,
+            publish_channels: vec![],
+            subscribe_channels: vec![],
+            memory_max_bytes: quota,
+            cpu_time_per_event_ms: 10,
+            priority_weight: 4,
+        };
+
+        let dir = std::env::temp_dir().join(format!("holo-deleg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let parent = dir.join("parent.caps");
+        let child = dir.join("child.caps");
+        let amp = dir.join("amp.caps");
+        let out = dir.join("grant.deleg");
+        let write = |p: &std::path::Path, c: Capabilities| {
+            std::fs::write(p, CapabilitySet::new(c).canonicalize()).unwrap()
+        };
+        write(&parent, caps(&[b"A", b"B"], 1000));
+        write(&child, caps(&[b"A"], 500)); // subset → attenuated
+        write(&amp, caps(&[b"A", b"C"], 500)); // reaches root C the parent lacks → amplifies
+
+        // The attenuated child is delegated: a valid Delegation binding the two capset κs.
+        net_delegate(&parent, &child, &out).unwrap();
+        assert_eq!(
+            Delegation::references(&std::fs::read(&out).unwrap())
+                .unwrap()
+                .len(),
+            2
+        );
+        // The amplifying child is refused (attenuation only, law 5).
+        assert!(net_delegate(&parent, &amp, &out).is_err());
 
         std::fs::remove_dir_all(&dir).ok();
     }
