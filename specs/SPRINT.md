@@ -469,9 +469,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       membership/policy/key are the **κs of the content files** (a member/policy/key is content, named
       by its κ — SPINE-1); enforces Private ⟺ `--key`. `network show <file>` decodes + displays the κ,
       tier, membership, policy, and key binding. End-to-end create→decode test (temp files).
-    - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop) driving the
-      `bare`/`tcp` handshake over real sockets; `network join`/`delegate` (need the node store); TCK
-      network battery.
+    - [x] **in-process loopback transport test** (2026-07-17) — a `PairedNic` (crossed queues: one
+      NIC's `transmit` is the other's `receive`) drives two real `BareNetSync` peers over an in-process
+      link with **no sockets**: peer B fetches content only peer A holds — the full FETCH_REQ → resolve
+      → FETCH_RES_OK → verify-on-receipt path — plus the FETCH_RES_404 miss path. Deterministic; the
+      two-node protocol test the TCK battery would otherwise need a live harness for.
+    - [ ] non-conformance P5 follow-on: native socket transports (iroh/WebRTC/WebSocket) driving the
+      same `bare`/`tcp` protocol over real connections; `network join`/`delegate` (need the node
+      store); the live multi-node TCK battery on the heavy CI runner.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as

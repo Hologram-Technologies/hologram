@@ -515,4 +515,113 @@ mod tests {
             assert!(matches!(recorded, Some(None)));
         });
     }
+
+    /// Two NICs joined by crossed queues — one NIC's `transmit` is the other's `receive` and vice
+    /// versa: an in-process point-to-point link (the loopback transport, no sockets). The simplest
+    /// deterministic fixture for two-peer protocol tests.
+    struct PairedNic {
+        mac: [u8; 6],
+        mtu: u32,
+        tx: Arc<Mutex<Vec<u8>>>,
+        rx: Arc<Mutex<Vec<u8>>>,
+    }
+    impl PairedNic {
+        fn pair() -> (Arc<Self>, Arc<Self>) {
+            let ab = Arc::new(Mutex::new(Vec::new()));
+            let ba = Arc::new(Mutex::new(Vec::new()));
+            let a = Arc::new(Self {
+                mac: [0x02, 0, 0, 0, 0, 1],
+                mtu: 1500,
+                tx: ab.clone(),
+                rx: ba.clone(),
+            });
+            let b = Arc::new(Self {
+                mac: [0x02, 0, 0, 0, 0, 2],
+                mtu: 1500,
+                tx: ba,
+                rx: ab,
+            });
+            (a, b)
+        }
+    }
+    impl NetworkInterface for PairedNic {
+        fn mac_address(&self) -> [u8; 6] {
+            self.mac
+        }
+        fn mtu(&self) -> u32 {
+            self.mtu
+        }
+        fn transmit(&self, frame: &[u8]) -> Result<usize, NicError> {
+            self.tx.lock().extend_from_slice(frame);
+            Ok(frame.len())
+        }
+        fn receive(&self, buffer: &mut [u8]) -> Result<usize, NicError> {
+            let mut q = self.rx.lock();
+            let n = q.len().min(buffer.len());
+            buffer[..n].copy_from_slice(&q[..n]);
+            q.drain(..n);
+            Ok(n)
+        }
+        fn register_rx_waker(&self, _waker: Waker) {}
+    }
+
+    fn peer(nic: Arc<PairedNic>, store: Arc<MemKappaStore>) -> BareNetSync {
+        let get = store.clone();
+        let iter = store.clone();
+        BareNetSync::new(
+            nic as Arc<dyn NetworkInterface>,
+            Arc::new(move |k: &KappaLabel71| get.get(k).ok().flatten()),
+            Arc::new(move || iter.iterate()),
+        )
+    }
+
+    #[test]
+    fn two_peers_fetch_over_the_loopback_link() {
+        // Peer A holds content; peer B (empty store) fetches it over an in-process link — the full
+        // request/response transport path (no local shortcut), with verify-on-receipt.
+        let a_store = Arc::new(MemKappaStore::new());
+        let payload = b"content-that-only-peer-A-holds";
+        let k = a_store.put("blake3", payload).unwrap();
+
+        let (nic_a, nic_b) = PairedNic::pair();
+        let peer_a = peer(nic_a, a_store);
+        let peer_b = peer(nic_b.clone(), Arc::new(MemKappaStore::new()));
+
+        // B sends a FETCH_REQ for `k` over the link (the request half of `fetch`).
+        nic_b
+            .transmit(&encode_frame(KIND_FETCH_REQ, k.as_array()))
+            .unwrap();
+        // A processes the request → resolves `k` → transmits FETCH_RES_OK back over the link.
+        peer_a.poll().unwrap();
+        // B processes the response → verify-on-receipt → records the content.
+        peer_b.poll().unwrap();
+
+        let got = peer_b
+            .fetch_results
+            .lock()
+            .get(k.as_array())
+            .cloned()
+            .flatten()
+            .expect("B resolved A's content over the link");
+        assert_eq!(got.as_ref(), payload);
+    }
+
+    #[test]
+    fn two_peers_fetch_miss_yields_404_over_the_link() {
+        // B fetches a κ neither peer holds → A answers FETCH_RES_404 → B records the miss (not a hang).
+        let (nic_a, nic_b) = PairedNic::pair();
+        let peer_a = peer(nic_a, Arc::new(MemKappaStore::new()));
+        let peer_b = peer(nic_b.clone(), Arc::new(MemKappaStore::new()));
+
+        let absent = hologram_space::address_bytes(b"nobody-has-this");
+        nic_b
+            .transmit(&encode_frame(KIND_FETCH_REQ, absent.as_array()))
+            .unwrap();
+        peer_a.poll().unwrap();
+        peer_b.poll().unwrap();
+
+        // The miss is recorded as an explicit `None` (resolved-absent), not left pending.
+        let recorded = peer_b.fetch_results.lock().get(absent.as_array()).cloned();
+        assert_eq!(recorded, Some(None));
+    }
 }
