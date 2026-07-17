@@ -451,9 +451,13 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       so the check is structurally at the protocol boundary. Public admits all; restricted/private
       require membership (private adds P6 encryption, not a capability change). `tiers.feature`
       @status:enforced, NW-2 ✅. bdd now 16 passed; native + wasm32 + thumbv7em green.
+    - [x] **bounded `resolve_closure`** (2026-07-17, spec 04 §Protocol hardening). A peer resolving a
+      manifest served over the network seam must bound the walk — a hostile peer can otherwise serve an
+      adversarially wide/deep κ-graph to force an unbounded resolve (DoS). `resolve_closure_bounded(…,
+      max_nodes)` stops at the limit and sets `Closure::truncated`; `is_complete()` now also requires
+      `!truncated`. `resolve_closure` delegates to it (unbounded). Tested; native + thumbv7em green.
     - [ ] non-conformance P5 follow-on: native transports (iroh/WebRTC/WebSocket interop),
-      wire-version negotiation, bounded `resolve_closure` over the network seam, `hologram network`
-      CLI, TCK network battery.
+      wire-version negotiation, `hologram network` CLI, TCK network battery.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as

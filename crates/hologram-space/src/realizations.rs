@@ -2200,4 +2200,43 @@ mod tests {
         // The edge is still *reachable* (named in the manifest) — just not present locally.
         assert!(closure.reachable.contains(&absent_layer));
     }
+
+    #[test]
+    fn bounded_closure_stops_at_the_node_limit() {
+        // P5 §Protocol hardening: a bounded walk guards against a hostile peer serving a huge graph.
+        let store = crate::MemKappaStore::new();
+        let put = |b: &[u8]| store.put("blake3", b).unwrap();
+        // Closure size = 1 (manifest) + 1 (requires) + 4 (layers) = 6 nodes.
+        let manifest = AppManifest {
+            primary: Some(0),
+            requires: put(b"bc-caps"),
+            layers: alloc::vec![
+                Layer::wasm(put(b"bc-w"), "_start"),
+                Layer::tensor(put(b"bc-t"), "s"),
+                Layer::rootfs(put(b"bc-r"), "boot", "riscv64"),
+                Layer::view(put(b"bc-v"), "portable"),
+            ],
+            children: Vec::new(),
+        };
+        let app = put(&manifest.canonicalize());
+
+        // Unbounded: the whole closure resolves, not truncated, complete.
+        let full = crate::resolve_closure(app, &store, REGISTRY).unwrap();
+        assert_eq!(full.reachable.len(), 6);
+        assert!(!full.truncated && full.is_complete());
+
+        // Bounded below the closure size: stops at the limit — truncated + not complete.
+        let bounded = crate::resolve_closure_bounded(app, &store, REGISTRY, 3).unwrap();
+        assert_eq!(bounded.reachable.len(), 3);
+        assert!(bounded.truncated);
+        assert!(
+            !bounded.is_complete(),
+            "a truncated closure is never complete"
+        );
+
+        // A bound at/above the closure size is not truncated.
+        let exact = crate::resolve_closure_bounded(app, &store, REGISTRY, 6).unwrap();
+        assert!(!exact.truncated);
+        assert_eq!(exact.reachable.len(), 6);
+    }
 }

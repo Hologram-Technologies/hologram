@@ -283,6 +283,20 @@ pub fn resolve_closure(
     store: &dyn KappaStore,
     registry: RealizationRegistry<'_>,
 ) -> Result<Closure, StoreError> {
+    resolve_closure_bounded(root, store, registry, usize::MAX)
+}
+
+/// Like [`resolve_closure`] but **bounded** (spec 04 §Protocol hardening): the walk stops once it
+/// has recorded `max_nodes` κs, setting [`Closure::truncated`]. A peer resolving a manifest served
+/// over the network seam MUST bound the walk — a hostile peer can otherwise serve an adversarially
+/// wide (or deep) κ-graph to force an unbounded resolve (a DoS). The partial closure is still valid
+/// for what it covers; a `truncated` result means "refuse or fetch more before trusting completeness".
+pub fn resolve_closure_bounded(
+    root: KappaLabel71,
+    store: &dyn KappaStore,
+    registry: RealizationRegistry<'_>,
+    max_nodes: usize,
+) -> Result<Closure, StoreError> {
     use hashbrown::HashSet;
     let mut visited: HashSet<[u8; 71]> = HashSet::new();
     let mut reachable = Vec::new();
@@ -296,6 +310,14 @@ pub fn resolve_closure(
         if !visited.insert(*k.as_array()) {
             continue; // a κ may be enqueued by several parents; process it once (first-seen wins)
         }
+        if reachable.len() >= max_nodes {
+            // Bound hit before recording another node — the closure is partial.
+            return Ok(Closure {
+                reachable,
+                missing,
+                truncated: true,
+            });
+        }
         reachable.push(k);
         match store.get(&k)? {
             None => missing.push(k),
@@ -307,7 +329,11 @@ pub fn resolve_closure(
             }
         }
     }
-    Ok(Closure { reachable, missing })
+    Ok(Closure {
+        reachable,
+        missing,
+        truncated: false,
+    })
 }
 
 /// The result of [`resolve_closure`]: every κ reachable from the root (breadth-first, first-seen
@@ -319,14 +345,19 @@ pub struct Closure {
     /// Reachable κs whose bytes are **absent** locally — thin-archive edges to resolve via
     /// network/sync (LAW-4). Empty ⇒ a fully-materialized (fat) closure.
     pub missing: Vec<KappaLabel71>,
+    /// `true` if [`resolve_closure_bounded`] hit its node bound before completing — the closure is
+    /// partial (a DoS guard, spec 04 §Protocol hardening). The unbounded [`resolve_closure`] leaves
+    /// this `false`.
+    pub truncated: bool,
 }
 
 impl Closure {
-    /// Whether the closure is fully materialized locally — every reachable κ's bytes are present
-    /// (a **fat** archive/store). A **thin** closure has one or more [`Closure::missing`] edges.
+    /// Whether the closure is fully materialized locally — every reachable κ's bytes are present and
+    /// the walk was not truncated (a **fat**, complete closure). A **thin** closure has one or more
+    /// [`Closure::missing`] edges; a **truncated** closure did not finish.
     #[must_use]
     pub fn is_complete(&self) -> bool {
-        self.missing.is_empty()
+        self.missing.is_empty() && !self.truncated
     }
 }
 
