@@ -47,12 +47,12 @@ echo "── CC-* Component conformance (components vs their external authoritie
 cc_rc=0
 witnessed=""
 # Quarantined suites: browser-only VS Code-workbench witnesses that regressed in the
-# holospaces → hologram port (the workbench's SCM / search / tasks integrations fail on
-# vscode-cdn / welcome-media asset loads + command-palette timing). They test CC components
-# that are NOT in hologram's cargo-witnessed CC ledger (no `cc*.rs`), so their failure is
-# reported non-gating here and tracked (SPRINT: "browser workbench V&V gaps") until fixed.
-# Set VV_QUARANTINE="" to make them gating again.
-VV_QUARANTINE="${VV_QUARANTINE:-cc51-scm-git cc52-search cc53-tasks}"
+# holospaces → hologram port. cc51-scm/cc52-search/cc53-tasks (VS Code web-workbench SCM/search/
+# tasks) failed LOCALLY on vscode-cdn / welcome-media asset loads (no CDN network) + command-palette
+# timing under concurrent load — artifacts of the local run, not necessarily real regressions. They
+# are now UN-quarantined so the networked CI runner gates them; set VV_QUARANTINE to re-quarantine
+# specific suites if a genuine (non-environmental) failure surfaces.
+VV_QUARANTINE="${VV_QUARANTINE:-}"
 for suite in "$ROOT"/vv/suites/*.sh; do
     [ -e "$suite" ] || continue
     name="$(basename "$suite" .sh)"
