@@ -115,15 +115,20 @@ binary named `hologram`; no crate named `hologram-backend` remains.
 - Replace all git-pinned `hologram-*` deps (the P0 HEAD pin) with workspace path deps —
   after P0 this is a pure dependency-source swap, no API port.
 - Absorb holospaces CI: vv/ suites, CC catalog, QEMU oracles, Playwright — as distinct CI
-  jobs so core-crate PRs and space PRs gate appropriately (witnessed by `MG-7`). **vv/ artifact
-  carriage decided (2026-07-16): external, never committed.** Import only the ~250K vv/ framework
-  (`suites/`, `lib/`, `heavy/`, `run.sh`, `PROVENANCE.md`); the 170M `vv/artifacts/` tree stays
-  out of git — `run.sh` reproduces/fetches each artifact from its pinned `SOURCE.txt` (mke2fs
-  images, reproducible kernels, BuildKit OCI, fetched-by-pin vscode-web/Structurizr), verified by
-  re-derivation on import; local runs skip-when-absent, CI materializes them. A `.gitignore` guard
-  blocks `vv/artifacts/` from ever being committed.
+  jobs so core-crate PRs and space PRs gate appropriately (witnessed by `MG-7`). **CC absorption
+  DONE + `MG-7` ENFORCED (2026-07-16).** The CC catalog is a non-BDD `CC` class in `CONFORMANCE.md`
+  (**44/45 ✅**; CC-45 dogfood 🟡), each row witnessed by `spaces/holospaces/tests/cc*.rs`, bound by
+  the artifact-free CC bijection audit (`cc_gate`). **vv/ artifact carriage: external, never
+  committed** — import only the ~250K vv/ framework; the 170M `vv/artifacts/` is materialized by
+  `scripts/vv-fetch.sh` from the pinned holospaces subtree (a `.gitignore` guard blocks it). Gated
+  by the blocking `holospaces-vv-heavy` CI job (QEMU · e2fsprogs · Playwright). Three post-port
+  browser-workbench suites (SCM/search/tasks) are quarantined non-gating, tracked.
 - Relocate holospaces docs (arc42/C4/OPM/15288) under `specs/holospaces/`; ADR numbering
-  continues unbroken.
+  continues unbroken. **DONE (2026-07-16, Phase G1)**: 104 tracked source files imported via
+  `git archive` (the 1.6G tool downloads + the arc42-generator submodule content are gitignored /
+  pointer-only). CS-* absorbed as a non-BDD `CS` class (CS-1..CS-6, validators V1–V8); `MG-8`
+  shaped pending; the `docs-conformance` CI job (JDK 21 · Ruby 3 · Structurizr · cmark-gfm ·
+  pandoc) is authored, non-blocking until observed green.
 - Archive the `../holospaces` repo (read-only pointer to this repo).
 
 **Exit criteria**: full V&V green in this repo's CI; every space crate passes the TCK on
