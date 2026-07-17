@@ -411,6 +411,21 @@ impl Capabilities {
     }
 }
 
+// ───────────────────────────── signature verification seam (spec 07 R3) ─────────────────────────────
+
+/// The **attestation signature seam** (spec 07 R3): verify a detached `signature` over `message`
+/// under a `public_key`. Portable and dependency-free — a space provides the concrete verifier for
+/// its platform (native ed25519, browser WebCrypto, a bare-metal secure element), exactly as it
+/// provides its `KappaStore` / HAL seams. Attestation realizations
+/// ([`crate::SessionAttestation`] / [`crate::RevocationEvent`]) sign the κ-embedding of their bound
+/// facts and are verified through this trait — the format binds the facts and names the signing
+/// key κ; the crypto stays behind the seam (the `no_std` core carries no curve dependency).
+pub trait SignatureVerifier {
+    /// Whether `signature` is a valid signature over `message` for `public_key`. Must be constant
+    /// with respect to the inputs and never panic (it verifies network-supplied bytes).
+    fn verify(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> bool;
+}
+
 // ───────────────────────────── KappaStore (sync, spec §8.1) ─────────────────────────────
 
 /// Content-addressed byte storage. Sync (bounded local work; matches the OPFS sync handle and

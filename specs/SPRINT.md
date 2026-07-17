@@ -464,8 +464,16 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       signing key is bound as content, not a second surface. ed25519 signature verification is the
       verifier's follow-on. Existing `Snapshot` κs untouched (a separate realization, not a format
       break). Registered.
+    - [x] **ed25519 sign/verify wiring** (2026-07-17, spec 07 R3) — the R3 attestation seam made
+      real. Portable, dependency-free `SignatureVerifier` trait in the no_std core (a space supplies
+      its platform verifier, like the other HAL seams); `SessionAttestation::signable_bytes` (the
+      κ-embedding of the bound facts, empty payload) + `verify(verifier, public_key)`. The reference
+      ed25519 impl is a **dev-dependency only** (`ed25519-dalek`), so wasm32/thumbv7em portability
+      builds never pull curve25519 — verified. `tests/attestation_ed25519.rs`: a real attestation
+      signs+verifies end-to-end, tampering any bound fact breaks it, wrong key fails, and malformed
+      key/signature bytes are a clean `false` (never panic).
     - [ ] non-conformance P6 follow-on: ChaCha20 payload encryption (the `Private` tier) + network
-      keys; ed25519 sign/verify wiring for `SessionAttestation`/`AttestationKey`.
+      keys; signed `RevocationEvent`s (who-may-revoke authorization).
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +

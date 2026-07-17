@@ -22,6 +22,10 @@ pollster = { workspace = true }
 blake3 = "1"
 sha2 = "0.10"
 sha3 = "0.10"
+# Reference `SignatureVerifier` for the R3 attestation seam (spec 07). A DEV-dependency only: the
+# no_std core carries just the portable trait + signature bytes, so wasm32/thumbv7em portability
+# builds never pull curve25519 — a real space provides its own verifier (hardware / WebCrypto).
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]

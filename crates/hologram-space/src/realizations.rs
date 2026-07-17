@@ -1319,6 +1319,27 @@ impl SessionAttestation {
             bytes,
         )
     }
+
+    /// The bytes the signature covers — the κ-embedding of the bound facts (app / caps / space /
+    /// engine / signing-key κs) with an **empty** payload, so the signature commits to *where and
+    /// how it ran* and to the signing key, but not to itself. A verifier reconstructs this and
+    /// checks the detached signature against the signing key's public key.
+    pub fn signable_bytes(&self) -> Vec<u8> {
+        let (refs, _sig) = self.parts();
+        encode(
+            "https://hologram.foundation/realization/session-attestation",
+            &refs,
+            &[],
+        )
+    }
+
+    /// Verify the attestation's signature under `public_key` (the resolved [`AttestationKey`]
+    /// material) through a [`SignatureVerifier`](crate::SignatureVerifier) seam (spec 07 R3). A full
+    /// verifier additionally confirms the signing key's κ equals `signing_key` and is not revoked
+    /// ([`RevocationEvent::is_revoked`]); this checks the signature itself.
+    pub fn verify<V: crate::SignatureVerifier>(&self, verifier: &V, public_key: &[u8]) -> bool {
+        verifier.verify(public_key, &self.signable_bytes(), &self.signature)
+    }
 }
 realization!(
     SessionAttestation,
