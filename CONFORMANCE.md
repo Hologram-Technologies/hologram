@@ -29,6 +29,7 @@
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
 | **CC** | Component conformance (holospaces) — each component vs its external authority (hash KATs, native-executor oracle, substrate TCK, WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright) — spec 06 §V&V (MG-7) | conformance tests (`spaces/holospaces/tests/cc*.rs`) + CC bijection audit |
+| **CS** | Specification conformance (holospaces docs) — the documentation vs arc42 / C4 / OPM ISO 19450 / ISO 15288, via validators V1–V8 — spec 06 §docs (MG-8) | validator scripts (`specs/holospaces/scripts/v*-*`) |
 | **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
 | **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
 | **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
@@ -491,3 +492,21 @@ witnesses the absorption. Enforcement tiers: `test` (fast, no artifact), `test (
 | **CC-46.boot** | realboot — the aarch64 core serves 9p net and bridge to a real arm64 boot | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc46_realboot.rs::the_aarch64_core_serves_9p_net_and_bridge_to_a_real_arm64_boot` | ✅ |
 | **CC-50** | streaming assembly — a sparse large rootfs streams with bounded peak memory | test | `spaces/holospaces/tests/cc50_streaming_assembly.rs::a_sparse_large_rootfs_streams_with_bounded_peak_memory` | ✅ |
 | **CC-51** | nested workspace — the host and os share a nested workspace tree over virtio 9p | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc51_nested_workspace.rs::the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p` | ✅ |
+
+## CS — specification conformance (holospaces docs V&V; external: arc42 / C4 / OPM ISO 19450 / ISO 15288; validator-witnessed, non-BDD)
+
+Absorbed from holospaces' docs V&V (spec 06 §docs; MG-8). Each row validates the *documentation*
+(now at `specs/holospaces/`) against an external standard via a pinned validator (V1–V8, run by
+`specs/holospaces/scripts/validate.sh`); the authorities + pins are in `specs/holospaces/tools/`.
+Like CC/AS/KC, these are non-BDD (the honesty meta-gate does not bind them to Gherkin); **MG-8**
+witnesses the CS absorption. Enforcement needs the docs toolchain (JDK 21 · Ruby 3 · Structurizr ·
+cmark-gfm · pandoc), so 🟡 = present + imported; ✅ once the docs-conformance CI job gates it green.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **CS-1** | Architecture structure conforms to arc42 (pinned arc42 template + generator). | validators V1+V2 | `specs/holospaces/scripts/v2-arc42-build.sh` | 🟡 |
+| **CS-2** | The C4 model is well-formed (Structurizr DSL parses + renders). | validator V3 | `specs/holospaces/scripts/v3-structurizr.sh` | 🟡 |
+| **CS-3** | Rendered docs are valid GitHub-flavoured Markdown (CommonMark/GFM + github-markup). | validators V4+V5 | `specs/holospaces/scripts/v4-cmark-gfm.sh` | 🟡 |
+| **CS-4** | The conceptual model is valid OPM — every OPL parses against the ISO 19450 grammar. | validator V6 | `specs/holospaces/scripts/v6-opl-syntax.sh` | 🟡 |
+| **CS-5** | Each OPD agrees with its OPL (OPD↔OPL coherence). | validator V7 | `specs/holospaces/scripts/v7-opd-opl-coherence.sh` | 🟡 |
+| **CS-6** | The lifecycle covers the standard ISO/IEC/IEEE 15288 processes (superset check). | validator V8 | `specs/holospaces/scripts/v8-iso-15288-superset.sh` | 🟡 |

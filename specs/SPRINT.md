@@ -260,7 +260,23 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       consistently on vscode-cdn / welcome-media asset loads + command-palette timing (post-port
       workbench regressions; **not** in the 45-row cargo ledger — CC-52/53 have no `cc*.rs`).
       **Quarantined non-gating** in `vv/run.sh` (`VV_QUARANTINE`, clearly logged); fix + un-quarantine.
-    - [ ] **G** (deferred, tracked) CS-\* docs conformance: arc42→`specs/holospaces/`, V1–V8, docs CI job, MG-8.
+  - [~] **Phase G — CS-\* docs conformance (in progress, started 2026-07-16)**. Absorb holospaces'
+    *specification* conformance (the docs V&V) alongside the CC work. Scope from investigation:
+    holospaces `docs/` is 1.7G but only ~1–2MB is source — **105 git-tracked source files** (arc42
+    chapters 01–13, `src/` adoc, `scripts/` V1–V8 validators + orchestration, `tools/` **7 source
+    pins**, Gemfile, images, tests); the **1.6G `docs/tools/`** is downloaded tools (Structurizr.war,
+    cmark-gfm, pandoc — materialized by `install-tools.sh`) and **`docs/vendor/arc42-generator` is a
+    git submodule** — neither is committed. Catalog: **CS-1..CS-6** witnessed by validators **V1–V8**.
+    Toolchain caveat: needs JDK 21 / Ruby 3 / Structurizr / cmark-gfm / pandoc — only partly
+    available locally (java 24, ruby 4, pandoc/cmark absent), so V1–V8 is CI-validated (like the CC
+    heavy tier), not fully local. Sub-phases:
+    - [ ] **G1** import docs source → `specs/holospaces/` (105 files + the arc42-generator submodule);
+      gitignore the 1.6G tool downloads; `install-tools.sh` materializes them (mirrors `vv-fetch.sh`).
+    - [ ] **G2** adapt the V1–V8 validators' paths to the new home; `install-tools.sh` in-tree.
+    - [ ] **G3** add a non-BDD **`CS`** class (CS-1..CS-6) to `CONFORMANCE.md` witnessed by V1–V8;
+      un-gate `run.sh`'s CS block (drop the `CC_ONLY` default) so `vv/run.sh` runs CS+CC.
+    - [ ] **G4** docs-conformance CI job (JDK 21 · Ruby 3 · Structurizr · cmark-gfm · pandoc → V1–V8).
+    - [ ] **G5** shape **MG-8** (pending) witnessing CS absorption; enforce when G4 is green.
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).

@@ -22,17 +22,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "═══ holospaces V&V ═══"
 echo
-# CS-* (specification conformance) runs the docs V&V (docs/scripts/build.sh). In the hologram
-# monorepo the holospaces docs (arc42/OPM/ISO) are not yet relocated under specs/holospaces/, so
-# CS is gated off by default (CC_ONLY=1) — it is absorbed in MG-7 Phase G. Set CC_ONLY=0 once the
-# docs + validators are in-tree to run the full CS+CC V&V.
+# CS-* (specification conformance) runs the docs V&V (specs/holospaces/scripts/build.sh). The docs
+# source is now in-tree (Phase G1), but the CS build needs the docs toolchain (JDK 21 / Ruby 3 /
+# Structurizr / cmark-gfm / pandoc), so CS stays gated off by default (CC_ONLY=1) for local/CC runs.
+# The docs-conformance CI job (Phase G4) provisions the toolchain and sets CC_ONLY=0 to run CS+CC.
 if [ "${CC_ONLY:-1}" = "1" ]; then
-    echo "── CS-* Specification conformance — SKIPPED (CC_ONLY=1; docs V&V absorbed later, MG-7 Phase G) ──"
+    echo "── CS-* Specification conformance — SKIPPED (CC_ONLY=1; docs toolchain not present) ──"
     spec_rc=0
     spec_skipped=1
 else
     echo "── CS-* Specification conformance (docs vs arc42 / OPM ISO 19450 / ISO 15288) ──"
-    "$ROOT/docs/scripts/build.sh"
+    "$ROOT/specs/holospaces/scripts/build.sh"
     spec_rc=$?
     spec_skipped=0
 fi
