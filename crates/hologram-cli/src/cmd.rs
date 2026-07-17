@@ -105,6 +105,36 @@ enum CommandArgs {
     /// Run a deployment-substrate node command (κ-label store / route + serve) — the node
     /// CLI unified into the one `hologram` binary (D13).
     Node(crate::node::NodeCli),
+    /// `.holo` v3 application tooling (spec `refactor/03`): inspect an app's layers + certificates,
+    /// or convert between fat and thin packaging without changing the app κ.
+    App(AppCli),
+}
+
+/// `hologram app <subcommand>` — `.holo` v3 application tooling.
+#[derive(clap::Args, Debug)]
+pub struct AppCli {
+    #[command(subcommand)]
+    command: AppCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum AppCommand {
+    /// Inspect a `.holo` v3 application: its identity κ, primary layer, per-layer descriptors, and
+    /// children. Never strips certificates (spec 03 §per-layer certificates).
+    Inspect {
+        #[arg(long)]
+        archive: std::path::PathBuf,
+    },
+    /// Convert a `.holo` to a **thin** archive: manifest + certificates only, dropping embedded
+    /// content — layers resolve through the store/sync at load. The app κ is **unchanged**.
+    Thin {
+        /// Input `.holo`.
+        #[arg(long)]
+        input: std::path::PathBuf,
+        /// Output thin `.holo`.
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
 }
 
 /// Parse command-line arguments from the process environment and run the CLI.
@@ -255,7 +285,87 @@ fn run_args(cli: CliArgs) -> Result<(), CompileError> {
         // The node subcommand is self-contained (its own store/engine/transport + error
         // handling); it prints and returns a process exit code, so we exit directly.
         CommandArgs::Node(node_cli) => std::process::exit(i32::from(crate::node::run(node_cli))),
+        CommandArgs::App(app_cli) => run_app(app_cli),
     }
+}
+
+fn run_app(app_cli: AppCli) -> Result<(), CompileError> {
+    match app_cli.command {
+        AppCommand::Inspect { archive } => app_inspect(&archive),
+        AppCommand::Thin { input, output } => app_thin(&input, &output),
+    }
+}
+
+/// Inspect a `.holo` v3 application: identity κ + layer descriptors (spec 03). Store-free — decodes
+/// the manifest realization only.
+fn app_inspect(archive: &Path) -> Result<(), CompileError> {
+    use hologram_space::AppManifest;
+    let bytes = std::fs::read(archive).map_err(|_| CompileError::SourceParse("read archive"))?;
+    let plan = hologram_archive::HoloLoader::from_bytes(&bytes)
+        .map_err(CompileError::Archive)?
+        .into_plan()
+        .map_err(CompileError::Archive)?;
+    let manifest_bytes = plan.app_manifest().ok_or(CompileError::SourceParse(
+        "not a .holo v3 application (no manifest section)",
+    ))?;
+    let manifest = AppManifest::decode(manifest_bytes)
+        .map_err(|_| CompileError::SourceParse("malformed app manifest"))?;
+    println!(
+        "app κ: {}",
+        String::from_utf8_lossy(manifest.kappa().as_array())
+    );
+    match manifest.primary {
+        Some(i) => println!("primary layer: {i}"),
+        None => println!("primary layer: none (non-executable / degenerate archive)"),
+    }
+    println!("layers: {}", manifest.layers.len());
+    for (i, l) in manifest.layers.iter().enumerate() {
+        let aux = if l.aux.is_empty() {
+            String::new()
+        } else {
+            format!(" aux={:?}", l.aux)
+        };
+        println!("  [{i}] {:?} entry={:?}{aux}", l.kind, l.entry);
+    }
+    println!("children: {}", manifest.children.len());
+    Ok(())
+}
+
+/// Convert `input` to a **thin** `.holo` (manifest + certificates only) at `output`. The app κ is
+/// unchanged — fat↔thin is packaging, never identity (spec 03 §Fat and thin).
+fn app_thin(input: &Path, output: &Path) -> Result<(), CompileError> {
+    let bytes = std::fs::read(input).map_err(|_| CompileError::SourceParse("read archive"))?;
+    let thin = thin_archive_bytes(&bytes)?;
+    std::fs::write(output, &thin).map_err(|_| CompileError::SourceParse("write archive"))?;
+    println!(
+        "thinned {} bytes → {} bytes at {}",
+        bytes.len(),
+        thin.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+/// Pure core of `app thin`: keep only the manifest + certificate sections, re-framed (spec 03).
+fn thin_archive_bytes(bytes: &[u8]) -> Result<Vec<u8>, CompileError> {
+    use hologram_archive::format::SectionKind;
+    use hologram_archive::{HoloLoader, HoloWriter};
+    let plan = HoloLoader::from_bytes(bytes)
+        .map_err(CompileError::Archive)?
+        .into_plan()
+        .map_err(CompileError::Archive)?;
+    let manifest = plan
+        .app_manifest()
+        .ok_or(CompileError::SourceParse(
+            "not a .holo v3 application (no manifest section)",
+        ))?
+        .to_vec();
+    let mut sections: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+    sections.push((SectionKind::AppManifest, manifest));
+    if let Ok(certs) = plan.section(SectionKind::Certificates) {
+        sections.push((SectionKind::Certificates, certs.to_vec()));
+    }
+    Ok(HoloWriter::assemble(sections))
 }
 
 struct CompileArgs {
@@ -436,5 +546,31 @@ mod tests {
             Some("encoder")
         );
         assert_eq!(source_options(None).graph_name(), None);
+    }
+
+    #[test]
+    fn app_thin_keeps_manifest_and_drops_payload() {
+        use hologram_archive::format::SectionKind;
+        use hologram_archive::{HoloLoader, HoloWriter};
+        use hologram_space::{address_bytes, AppManifest, Layer, Realization};
+
+        let manifest = AppManifest {
+            primary: Some(0),
+            requires: address_bytes(b"caps"),
+            layers: vec![Layer::wasm(address_bytes(b"w"), "_start")],
+            children: vec![],
+        };
+        let manifest_bytes = manifest.canonicalize();
+        let mut w = HoloWriter::new();
+        w.set_app_manifest(manifest_bytes.clone());
+        w.add_extension("tokenizer", vec![1, 2, 3]); // a payload section to be dropped
+        let fat = w.finish().unwrap();
+
+        let thin = thin_archive_bytes(&fat).unwrap();
+        assert!(thin.len() < fat.len(), "thin drops the extension payload");
+        let plan = HoloLoader::from_bytes(&thin).unwrap().into_plan().unwrap();
+        // The manifest (the app κ) is preserved byte-for-byte; the payload is gone.
+        assert_eq!(plan.app_manifest(), Some(manifest_bytes.as_slice()));
+        assert!(plan.section(SectionKind::Extension).is_err());
     }
 }

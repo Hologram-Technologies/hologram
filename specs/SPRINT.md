@@ -415,9 +415,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `Client::thin` drops blobs (manifest + certificates only); `is_fat` checks self-containment via
       `resolve_closure` over the archive's own blobs. **The manifest κ — the app's identity — is
       invariant across fat↔thin** (packaging, not identity; tested). ContentBlob added to the archive
-      parser-hardening fuzz. Native + wasm32 green. (The `hologram app --fat/--thin` CLI is thin
-      plumbing over these Client methods.)
-    - [ ] out-of-tree cargo-fuzz targets (the deterministic in-tree mutation suites are live).
+      parser-hardening fuzz. Native + wasm32 green.
+    - [x] **`hologram app` CLI** (2026-07-17) — `app inspect <archive>` prints the app κ + primary +
+      per-layer descriptors + children (store-free; decodes the manifest realization); `app thin
+      --input --output` re-frames to manifest + certificates only (app κ unchanged). Both wrap the
+      same archive/space primitives as `Client::inspect`/`thin`. `app fat` needs the node's content
+      store — a follow-on. `thin_archive_bytes` unit-tested (manifest preserved, payload dropped).
+    - [ ] `hologram app fat` (needs the node content store) + out-of-tree cargo-fuzz targets (the
+      deterministic in-tree mutation suites are live).
   - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
     ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
