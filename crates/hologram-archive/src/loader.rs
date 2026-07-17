@@ -15,7 +15,15 @@ impl<'a> LoadedPlan<'a> {
         for s in &self.sections {
             if s.kind == kind {
                 let start = s.offset as usize;
-                let end = start + s.length as usize;
+                // Checked: offset/length are attacker-controlled u64s from the archive header, and
+                // `usize` is 32-bit on wasm32 / bare-metal — `start + length` would otherwise
+                // overflow on a forged section (parser-hardening, spec 03).
+                let end = start
+                    .checked_add(s.length as usize)
+                    .ok_or(ArchiveError::Truncated {
+                        needed: usize::MAX,
+                        actual: self.bytes.len(),
+                    })?;
                 return self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
                     needed: end,
                     actual: self.bytes.len(),
@@ -48,7 +56,13 @@ impl<'a> LoadedPlan<'a> {
                 continue;
             }
             let start = s.offset as usize;
-            let end = start + s.length as usize;
+            // Checked (see `section`): a forged u64 offset/length must not overflow `usize`.
+            let end = start
+                .checked_add(s.length as usize)
+                .ok_or(ArchiveError::Truncated {
+                    needed: usize::MAX,
+                    actual: self.bytes.len(),
+                })?;
             let payload = self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
                 needed: end,
                 actual: self.bytes.len(),

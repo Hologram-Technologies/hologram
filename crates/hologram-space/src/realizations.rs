@@ -921,10 +921,13 @@ impl AppManifest {
         let n_layers = read_u32(&payload, &mut cur)? as usize;
         // refs = [requires, layer κ × n_layers, (app κ, caps κ) × n_children].
         let requires = *refs.first().ok_or(RealizationError::Malformed)?;
-        let layer_refs = refs
-            .get(1..1 + n_layers)
-            .ok_or(RealizationError::Malformed)?;
-        let mut layers = Vec::with_capacity(n_layers);
+        // Bounds use checked arithmetic: `n_layers`/`n_children` are attacker-controlled u32s and
+        // `usize` is 32-bit on wasm32 / bare-metal, where `1 + n_layers` (etc.) would otherwise
+        // overflow on hostile bytes (parser-hardening, spec 03). Allocation is bounded by the real
+        // ref count, never the declared count — no unbounded inflation.
+        let layers_end = n_layers.checked_add(1).ok_or(RealizationError::Malformed)?;
+        let layer_refs = refs.get(1..layers_end).ok_or(RealizationError::Malformed)?;
+        let mut layers = Vec::with_capacity(layer_refs.len());
         for content in layer_refs {
             let kind = LayerKind::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
             cur += 1;
@@ -938,10 +941,11 @@ impl AppManifest {
             });
         }
         let n_children = read_u32(&payload, &mut cur)? as usize;
-        let child_refs = refs
-            .get(1 + n_layers..)
+        let child_refs = refs.get(layers_end..).ok_or(RealizationError::Malformed)?;
+        let expected_child_refs = n_children
+            .checked_mul(2)
             .ok_or(RealizationError::Malformed)?;
-        if child_refs.len() != 2 * n_children {
+        if child_refs.len() != expected_child_refs {
             return Err(RealizationError::Malformed);
         }
         let children = child_refs
@@ -1067,7 +1071,11 @@ impl Network {
             .ok_or(RealizationError::Malformed)?
             .to_vec();
         let policy = *refs.get(n_membership).ok_or(RealizationError::Malformed)?;
-        let parent = refs.get(n_membership + 1).copied();
+        // Overflow-safe (attacker-controlled n_membership; 32-bit usize on wasm/bare-metal).
+        let parent = n_membership
+            .checked_add(1)
+            .and_then(|i| refs.get(i))
+            .copied();
         Ok(Network {
             membership,
             policy,

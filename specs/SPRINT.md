@@ -400,7 +400,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       LAW-4); `is_complete()` ⇒ a **fat** closure. This is "load = resolve the manifest's closure"
       (03 §Fat and thin) and `resolve_closure(app κ)` migration. 2 tests (fat + thin); native +
       wasm32 + thumbv7em green. Unblocks HF-3 (inspection resolves + verifies layers).
-    - [ ] fat/thin conversion tooling (`hologram app --fat/--thin`) + parser fuzz targets (CI-permanent).
+    - [x] **parser hardening** (2026-07-17, spec 03 §Parser hardening — standing requirement). Audit
+      + fix of the network-facing parsers: `AppManifest::decode` (`1 + n_layers` ×2, `2 * n_children`)
+      and `LoadedPlan::section`/`extensions` (`start + length` on forged u64 offsets) overflowed
+      `usize` on 32-bit targets (wasm32/bare-metal) on hostile bytes — now checked arithmetic (Err,
+      never overflow/OOM), allocation bounded by real ref count not declared count. CI-permanent
+      deterministic mutation suites (`hologram-space` + `hologram-archive` `tests/parser_hardening.rs`)
+      prove every P4–P6 decoder + the section parser + the generic `references()` dispatch never panic
+      over truncations / byte-mutations / noise + forged oversized counts.
+    - [ ] fat/thin conversion tooling (`hologram app --fat/--thin`) + out-of-tree cargo-fuzz targets.
   - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
     ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
