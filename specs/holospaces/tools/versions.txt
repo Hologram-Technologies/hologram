@@ -1,0 +1,13 @@
+java	openjdk 21.0.11 2026-04-21
+ruby	ruby 3.4.9 (2026-03-11 revision 76cca827ab) +PRISM [x86_64-linux]
+bundler	Bundler version 2.6.9
+docker	Docker version 29.4.3-1, build 055a478ea9010a19d0d4674c0d0e87ade37a4223
+docker-compose	2.40.3
+structurizr.war	2026.04.19
+structurizr-reported	2026.04.19
+cmark-gfm	0.29.0.gfm.13
+cmark-gfm-reported	cmark-gfm 0.29.0.gfm.13 - CommonMark with GitHub Flavored Markdown converter
+pandoc	3.9.0.2
+pandoc-reported	pandoc 3.9.0.2
+arc42-template	b29e08928644af7ae49f51d729d14313db0d934c
+graphviz-reported	dot - graphviz version 2.43.0 (0)

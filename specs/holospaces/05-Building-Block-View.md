@@ -1,0 +1,218 @@
+# Building Block View
+
+## Whitebox Overall System
+
+holospaces, opened, is a thin set of building blocks over the
+[hologram](https://github.com/Hologram-Technologies/hologram) substrate.
+None of them re-implement substrate functionality; they compose it.
+
+<figure>
+<img src="images/c4-l2-holospaces-containers.svg"
+alt="Level 2: Containers" />
+</figure>
+
+| Building block           | Responsibility                                                                                                                                                                                                                                                                                                                                                                                      |
+|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Realizations**         | holospaces' canonical-form types — chiefly the **holospace** (the κ-addressed bootable unit). Each is IRI-tagged canonical bytes, κ-addressed and verified by re-derivation, using [UOR-ADDR](https://github.com/UOR-Foundation/uor-addr).                                                                                                                                                          |
+| **Boot Layer**           | The environment-agnostic core: resolve a holospace κ, fetch and verify its parts, and spawn it through hologram’s ContainerRuntime with its capabilities; drive the lifecycle.                                                                                                                                                                                                                      |
+| **.holo Engine**         | Runs `.holo` (tensor) compute artifacts via the [hologram](https://github.com/Hologram-Technologies/hologram) executor (`hologram-exec`) — a compute path distinct from the container runtime. Native, and compiled to Wasm for the browser peer.                                                                                                                                                   |
+| **Execution Surface**    | The κ-addressed Wasm code-module contract a holospace’s code binds — the `hologram` host ABI and the container ABI — defined and enforced here; the substrate’s `ContainerRuntime` (over a per-environment `ContainerEngine`) boots it. (ADR-008’s contract, generalized by ADR-009.)                                                                                                               |
+| **System Emulator**      | The execution codemodule for a general operating system (ADR-009): a system emulator compiled to Wasm and bound to the host ABI, computing an **arbitrary** OS from κ-addressed content — the OS image as content-addressed blocks, console/input/network as hologram channels, running state as a κ snapshot. Imported and verified like any κ. Starts with Linux; generalizes to any OS it boots. |
+| **Identity**             | Self-sovereign sign-in key and the multi-instance sync keying (an operator’s instances discover and synchronise their holospaces over the substrate).                                                                                                                                                                                                                                               |
+| **Platform Manager**     | The management **projection** (Chapter 8): the operator GUI — served from GitHub Pages — that signs in, provisions, and manages holospaces. Itself a holospace.                                                                                                                                                                                                                                     |
+| **Configuration**        | The control plane’s **reconfiguration as content** (ADR-018): a κ-addressed directive set (lifecycle / storage / network / account-user) the panel publishes over the substrate and a running instance resolves, verifies (Law L5), and applies — its state changes, no server, no RPC (`CC-28`).                                                                                                   |
+| **Workspace Projection** | The Codespaces/Gitpod **projection** (ADR-009; Chapter 8): a browser editor, file tree, and terminal over a **running** holospace — reading its environment content by κ and publishing operator input as canonical events on its channels. A view + intent surface over content, not a server.                                                                                                     |
+
+## Level 2
+
+The Boot Layer is the hub: it depends on Realizations (to resolve a
+holospace), on the Execution Surface (the host-ABI contract a
+holospace’s code binds) and the **System Emulator** codemodule it boots
+for a general OS, on the .holo Engine (for a holospace whose code is a
+`.holo`), and on the hologram substrate (storage / network / runtime).
+The Platform Manager projection drives the Boot Layer; a Workspace
+Projection renders and drives a running holospace; Identity scopes what
+the operator’s instances share and sync. The substrate’s contracts —
+KappaStore, KappaSync, ContainerRuntime + its `ContainerEngine`
+backends, the content-addressed import (`get_with_fetch`), and the
+`.holo` executor — are defined in
+[hologram](https://github.com/Hologram-Technologies/hologram) and
+consumed here by reference.
+
+## Level 3
+
+The Level-3 (component) responsibilities of the building blocks follow
+from the design:
+
+**Boot Layer** — an *Ingestor* that canonicalizes a provisioning source
+at the boundary into κ-addressed content (Law L2). For a devcontainer
+the Ingestor is the pipeline of the in-zoom OPD **SD5**, each stage a
+composition of substrate operations (no git binary, no container daemon,
+no out-of-substrate registry client):
+
+- a *Repository Fetcher* — retrieves a **repository** by URL + reference
+  from its git host over the internet (the import boundary, ADR-013 — an
+  untrusted gateway), ingesting its content as κ content verified by
+  re-derivation (Laws L1/L5); a repository with no `devcontainer.json`
+  gets a **default Dev Container**;
+
+- a *Config Parser* — reads and validates `devcontainer.json` against
+  the Dev Container spec (`CC-4`), yielding the config κ and the
+  base-image reference;
+
+- an *Image Fetcher / Ingestor* — pulls the referenced OCI image from
+  its container registry over the internet (the OCI distribution
+  protocol; the import boundary, ADR-013) and verifies every blob by
+  re-derivation against its OCI digest (`CC-10`), storing manifest +
+  config + layers as κ content (shared layers dedupe, Law L3);
+
+- a *Layer Assembler* — stacks the image’s layers per the OCI
+  image-layer whiteout / opaque-directory rules into a single root
+  filesystem and writes it to a **κ-disk** (an `ext4` image, each sector
+  κ-addressed over the store — `CC-7`, Law L4), yielding the bootable
+  rootfs κ.
+
+  A *Resolver* resolves a holospace κ, fetching and verifying its parts
+  (Law L5); a *Boot Orchestrator* generates the device tree (memory,
+  CLINT, PLIC, and the `virtio-mmio` block-device node) and hands the
+  kernel + device tree + κ-disk to the **Spawner**, which instantiates
+  the holospace through the substrate runtime with its capabilities; and
+  a *Lifecycle* component (suspend → κ snapshot, resume, migrate,
+  terminate). (For a holo-file the Ingestor is the trivial identity —
+  the `.holo` κ *is* the content.)
+
+**.holo Engine** — binds hologram’s `.holo` executor
+(`` hologram-exec’s `InferenceSession ``) to run a tensor `.holo` and
+content-address its outputs. This is a distinct compute path, **not**
+the runtime’s `ContainerEngine` (hologram’s runtime does not link the
+tensor engine); see
+[hologram](https://github.com/Hologram-Technologies/hologram) for the
+executor contract. In the browser peer this binding is the executor
+compiled to Wasm.
+
+**Execution Surface** — the κ-addressed Wasm code-module form and a
+*surface validator* (a code module imports only the `hologram` host ABI
+and presents the container ABI). It is the contract any holospace’s code
+binds, without a second execution medium (ADR-008’s contract,
+generalized by ADR-009); the code κ feeds the Boot Layer’s Spawner,
+which boots it through hologram’s `ContainerRuntime` over the peer’s
+`ContainerEngine` — Wasmtime natively, the `wasmi` interpreter in the
+browser and on bare-metal.
+
+**System Emulator** — for a general operating system, the execution
+codemodule (ADR-009): a real RISC-V machine (RV64GC (= IMAFDC) + Zicsr,
+machine/supervisor traps, Sv39/Sv48/Sv57 paging, CLINT interrupts, SBI)
+bound to the host ABI and verified against the official riscv-tests
+conformance suite (`CC-9`). For real devices it adds a *PLIC* (the
+RISC-V platform-level interrupt controller, routing device interrupts to
+the hart’s external-interrupt line) and a *VirtIO transport*
+(`virtio-mmio`, modern/v1 per the OASIS VirtIO 1.2 spec) carrying a
+*\`virtio-blk\` device* whose backing store is the *κ-disk* — a
+`KappaStore`-backed block device (the OS image and repository as
+κ-addressed blocks, `CC-7`); the guest kernel mounts its root filesystem
+over `virtio-blk` (`CC-14`). The device set is declared to the guest by
+the device tree the Boot Orchestrator generates. Its console / input /
+network are bound to hologram channels: a *\`virtio-9p\` device* serves
+the shared workspace filesystem (`CC-15`), and a *\`virtio-net\` device*
+carries the guest’s Ethernet frames into a *userspace TCP/IP NAT* (ARP +
+DHCP + the guest-facing TCP state machine) whose streams flow out over a
+*pluggable egress transport* — a direct host socket natively, a
+WebSocket tunnel to a relay in the browser (no raw NIC in a tab;
+`CC-16`, ADR-014); its running state is a κ snapshot, and that snapshot
+has an *inverse* (`restore`) so a suspended machine **resumes
+byte-identically** (`CC-30`) — the substrate primitive a second launch
+resumes from instead of cold-booting. Because the interpreter is the
+deployed peer’s hot loop, it is tuned for **throughput** without
+changing a single observable byte: a software TLB caches address
+translations (no page-table walk per access), a RAM fast path skips the
+device-MMIO range checks for the common case, bulk native-endian memory
+replaces per-byte loops, and redundant interrupt-latch writes are elided
+— so a real Linux boot runs ~2.5× faster while staying byte-identical to
+the `qemu-system-riscv64` oracle (`CC-9`/`CC-14`). It is itself a
+κ-addressed code module satisfying the Execution Surface — imported and
+verified trustlessly (`get_with_fetch`). It computes an arbitrary OS
+image; holospaces starts with Linux. It is not bound to one ISA:
+alongside RV64GC it has a second target, a real *AArch64 (ARMv8-A)*
+machine (the A64 instruction set + the EL0/EL1 exception model,
+VMSAv8-64 paging, and the ARM `virt` platform — a *GICv2* interrupt
+controller, the generic timer, *PSCI* over SMC, and a *PL011* console),
+reusing the *same* substrate-backed `virtio` device bus unchanged (one
+κ-disk/9p/NAT servicing, two thin MMIO transports — Law L4). A real,
+unmodified `arm64` Linux boots to userspace on it and an `arm64`
+devcontainer runs the ecosystem's stock `linux-arm64` binaries, verified
+against `qemu-system-aarch64 -M virt` (`CC-35`/`CC-36`/`CC-37`,
+ADR-021). The guest architecture is the operator's selection at
+provisioning and is part of the holospace's content-addressed identity,
+so it is fixed for the holospace's lifetime (Law L1).
+
+**Identity** — a *Key store* (the self-sovereign sign-in key) and a
+*Sync binding* (scopes which content an operator’s instances announce
+and resolve over the substrate).
+
+**Platform Manager** — the **management console** (ADR-010): the
+operator signs in to a self-sovereign identity (`CC-1`), and the console
+organizes their holospaces and presents the lifecycle as first-class
+operations — provision (`CC-4`), **enter**, suspend, resume, terminate —
+the same shape as any platform/infrastructure manager. A *View* (a
+projection of the operator’s holospaces and the substrate, with status)
+and an *Intent* surface (the lifecycle actions); it holds no state of
+its own — the holospaces and roster are canonical κ in the store (Laws
+L2, L3). The management projection (Chapter 8); witnessed by `CC-12`.
+
+**Configuration** — the control plane’s **reconfigure intent**, realized
+as content (ADR-018). A *Configuration* is a hologram `Realization`
+embedding the issuing *operator* identity (Law L3 — the authority is the
+operator’s, scoped to them) and the *target instance* κ, plus an ordered
+set of *directives* across the four operation classes — *lifecycle*
+(start/suspend/resume/terminate), *storage* (quota), *network*
+(forward/unforward a port, fetch/announce), and *account/user* (grant
+another operator access). The Platform Manager’s *Configure* intent
+publishes one over the substrate (store + record, like a roster); the
+running instance *resolves* it (verify-by-re-derivation, Law L5), checks
+it targets this instance and the operator is authorized, and *applies*
+it — the effective capability set is replaced (a new κ, Law L1), a
+lifecycle transition is driven, and a live *network* directive forwards
+a port on the **running** machine (`Machine::forward_port`, the `CC-21`
+ingress dual bound live). No control-plane→instance RPC: the
+configuration is content, the substrate carries it. Witnessed by
+`CC-28`.
+
+**Workspace Projection** — the **VS Code devcontainer experience**
+(ADR-010), launched in a new tab when the operator *enters* a holospace.
+Built from the **real** VS Code editor and terminal components — the
+Monaco editor and the xterm.js terminal (the libraries VS Code /
+Codespaces / Gitpod are built from), pinned and verified by
+re-derivation (Law L5) — bound to the running holospace: an *Editor / FS
+view* (Monaco + a file tree over the environment’s content, read and
+edited by κ) and a *Terminal / Intent* surface (xterm.js over the booted
+OS’s console, operator input published as canonical events on the
+holospace’s channels). It holds no state of its own (Law L3); a
+uor-native rendering of a running holospace — the Codespaces/Gitpod
+experience (ADR-009, ADR-010; Chapter 8, *Projection*); witnessed by
+`CC-13`. It grows into the **real VS Code web workbench** (ADR-012): the
+κ-verified workbench in the tab, driving a *Remote Extension Host* over
+VS Code’s remote protocol carried on a substrate channel (`CC-17`).
+
+**Remote Extension Host** — where the workbench’s **extensions** run
+(ADR-015). Its placement is per-peer, matching VS Code’s two real
+models: a **server-capable** peer (native/remote) runs the host **inside
+the devcontainer OS** (`CC-14`) over the remote-server protocol, exactly
+as a Codespace; the **browser** peer, whose emulated OS does not host
+the Node-based `vscode-server`, runs the host in the browser’s web
+worker (the `vscode.dev` model) with the editor’s files served from the
+wasm peer’s `virtio-9p` workspace. It exposes the holospace to
+extensions through VS Code’s published APIs backed by holospaces'
+primitives — the *filesystem* is the `virtio-9p` workspace (`CC-15`),
+the *terminal/process* surface is the holospace console and the running
+OS (`CC-11`/`CC-14`), and the *network* — a GitHub API call, an OAuth
+token exchange, a `git push` — is the OS’s own stack over the userspace
+NAT and tunnelled egress (`CC-16`). So extensions and their integrations
+work as in a Codespace (sign in to GitHub, manage pull requests and
+issues) because the architecture *is* a Codespace’s — a browser
+workbench over a remote extension host — only the remote is a holospace
+and the transport is the substrate (Laws L1/L3/L4); language servers
+(`CC-18`), debug adapters, and extension integrations (`CC-19`) all run
+here.
+
+Each component realizes the Architecture Decisions of Chapter 9 and
+applies the Concepts of Chapter 8.

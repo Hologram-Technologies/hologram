@@ -33,3 +33,16 @@ sdk/typescript/**/dist/
 # @vscode/test-web downloads a VS Code web build here (CC-17 fetched-by-pin); the browser
 # suites mutate it — never track it.
 spaces/holospaces-browser/web/.vscode-test-web/
+
+# holospaces docs V&V (Phase G): install-tools.sh materializes ~1.6G of tools here (Structurizr.war,
+# cmark-gfm, pandoc, playwright); the 7 source pins (tools/*.txt|*.ebnf|*.rb) stay tracked. The
+# arc42-generator vendor tree + the generated build/ are never committed.
+specs/holospaces/tools/bin/
+specs/holospaces/tools/cmark-gfm-src/
+specs/holospaces/tools/cmark-prefix/
+specs/holospaces/tools/pandoc-*.deb
+specs/holospaces/tools/pandoc-prefix/
+specs/holospaces/tools/playwright-browsers/
+specs/holospaces/tools/structurizr.war
+specs/holospaces/build/
+specs/holospaces/vendor/arc42-generator/
