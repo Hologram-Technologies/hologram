@@ -273,10 +273,19 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     - [ ] **G1** import docs source → `specs/holospaces/` (105 files + the arc42-generator submodule);
       gitignore the 1.6G tool downloads; `install-tools.sh` materializes them (mirrors `vv-fetch.sh`).
     - [ ] **G2** adapt the V1–V8 validators' paths to the new home; `install-tools.sh` in-tree.
-    - [ ] **G3** add a non-BDD **`CS`** class (CS-1..CS-6) to `CONFORMANCE.md` witnessed by V1–V8;
-      un-gate `run.sh`'s CS block (drop the `CC_ONLY` default) so `vv/run.sh` runs CS+CC.
-    - [ ] **G4** docs-conformance CI job (JDK 21 · Ruby 3 · Structurizr · cmark-gfm · pandoc → V1–V8).
-    - [ ] **G5** shape **MG-8** (pending) witnessing CS absorption; enforce when G4 is green.
+    - [x] **G1** docs source imported → `specs/holospaces/` (104 tracked files, 1.2M; via `git
+      archive` — no downloads/submodule content; .gitignore guards the 1.6G tool tree) — `61d5429`.
+    - [x] **G2** validators verified **self-contained** (all paths relative to `REPO_ROOT` =
+      `specs/holospaces/`; only a comment mentions holospaces) — no path adaptation needed. The
+      arc42-generator submodule (pin `46bd7cea`) is CI-only (V2/arc42-build) → added in G4.
+    - [x] **G3** non-BDD **`CS`** class + CS-1..CS-6 in `CONFORMANCE.md`, witnessed by V1–V8
+      (`specs/holospaces/scripts/v*-*`); `run.sh` CS block repointed to
+      `specs/holospaces/scripts/build.sh` (`CC_ONLY` still defaults on locally — no toolchain; G4
+      sets it off). Rows 🟡. meta_gate green (CS ignored) — `7307b99`.
+    - [ ] **G4** docs-conformance CI job (JDK 21 · Ruby 3 · Structurizr · cmark-gfm · pandoc → V1–V8)
+      + add the arc42-generator submodule + set `CC_ONLY=0` there.
+    - [x] **G5** shaped **MG-8** (`@status:pending`) + CONFORMANCE row (⛔) witnessing CS absorption;
+      enforces when G4 is green. bdd bijective (MG-8 skipped, non-gating).
 - [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).
