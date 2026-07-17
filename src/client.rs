@@ -12,14 +12,15 @@
 
 use alloc::vec::Vec;
 
+use hologram_archive::HoloLoader;
 use hologram_compiler::{compile, BackendKind, CompileError};
 use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, ExecError, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
 use hologram_runtime::Session;
 use hologram_space::{
-    verify_kappa, Bytes, GarbageCollect, KappaLabel71, KappaStore, KappaSync, Space, StoreError,
-    SyncError, REGISTRY,
+    verify_kappa, AppManifest, Bytes, GarbageCollect, KappaLabel71, KappaStore, KappaSync,
+    LayerKind, Realization, Space, StoreError, SyncError, REGISTRY,
 };
 use prism::vocabulary::WittLevel;
 
@@ -197,6 +198,46 @@ impl<S: Space> Client<S> {
         verify_kappa(bytes, kappa).unwrap_or(false)
     }
 
+    /// **Inspect** a `.holo` v3 application without running it (spec 03): decode its manifest and
+    /// check every layer's certificate. A layer's certificate is its κ-identity **bound into the
+    /// app's committed identity** — the manifest κ is the content address of the canonical bytes
+    /// that embed every layer κ, so removing, swapping, or altering a layer changes the app κ. The
+    /// check is **thin**: it needs only the manifest, never the payload (fat) profile, and returns
+    /// one verdict per layer — certificates travel with the manifest and inspection never strips
+    /// them. (Deep content authenticity — re-deriving each payload — is the fat verify-on-receipt
+    /// path, `resolve_closure` + [`verify`](Self::verify), not this inspection.)
+    ///
+    /// # Errors
+    ///
+    /// [`InspectError`] if the bytes are not a loadable `.holo`, carry no manifest (a bare tensor
+    /// container), or the manifest is malformed.
+    pub fn inspect(&self, holo: &Holo) -> Result<AppInspection, InspectError> {
+        let plan = HoloLoader::from_bytes(holo.as_bytes())
+            .map_err(|_| InspectError::NotLoadable)?
+            .into_plan()
+            .map_err(|_| InspectError::NotLoadable)?;
+        let manifest_bytes = plan.app_manifest().ok_or(InspectError::NotAnApplication)?;
+        let manifest =
+            AppManifest::decode(manifest_bytes).map_err(|_| InspectError::MalformedManifest)?;
+        // The reachability closure of the manifest bytes IS the set of committed operand κs; a
+        // layer's certificate verifies iff its κ is bound into that closure (and hence the app κ).
+        let refs = <AppManifest as Realization>::references(manifest_bytes)
+            .map_err(|_| InspectError::MalformedManifest)?;
+        let layers = manifest
+            .layers
+            .iter()
+            .map(|l| LayerCertVerdict {
+                layer: l.content,
+                kind: l.kind,
+                verified: refs.contains(&l.content),
+            })
+            .collect();
+        Ok(AppInspection {
+            app: manifest.kappa(),
+            layers,
+        })
+    }
+
     /// **Resolve** a κ: the space's network [`KappaSync`] seam first (verify-on-receipt, Law L5),
     /// else the local store — the **async** network seam (law 4).
     ///
@@ -254,6 +295,47 @@ where
     pub fn gc(&self) -> Result<usize, StoreError> {
         self.space.store().gc(REGISTRY)
     }
+}
+
+/// The result of [`Client::inspect`] — a `.holo` v3 application's κ-identity plus a per-layer
+/// certificate verdict. Every layer of the manifest appears here, in boot order (certificates are
+/// never stripped by inspection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppInspection {
+    /// The application's κ-identity (the manifest's content address).
+    pub app: KappaLabel71,
+    /// One verdict per layer, in manifest (boot) order.
+    pub layers: Vec<LayerCertVerdict>,
+}
+
+impl AppInspection {
+    /// Whether every layer's certificate verified — the whole application's provenance is intact.
+    #[must_use]
+    pub fn all_verified(&self) -> bool {
+        self.layers.iter().all(|l| l.verified)
+    }
+}
+
+/// One layer's per-layer certificate verdict from [`Client::inspect`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerCertVerdict {
+    /// The layer's content κ — its identity and its certificate.
+    pub layer: KappaLabel71,
+    /// The layer's kind (wasm-codemodule / tensor-plan / rootfs-image / view).
+    pub kind: LayerKind,
+    /// Whether the certificate verifies — the layer κ is bound into the app's committed identity.
+    pub verified: bool,
+}
+
+/// Why [`Client::inspect`] failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectError {
+    /// The bytes are not a loadable `.holo` archive.
+    NotLoadable,
+    /// The archive carries no AppManifest section — it is a bare tensor container, not an app.
+    NotAnApplication,
+    /// The AppManifest section is malformed.
+    MalformedManifest,
 }
 
 /// Why [`ClientBuilder::build`] failed.

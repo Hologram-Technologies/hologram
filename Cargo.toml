@@ -197,7 +197,7 @@ space = ["dep:hologram-space"]
 # `client` (D4) — the single programmatic surface `hologram::Client<S: Space>` that composes
 # compile → provision → store/resolve/run over any space contract. The CLI, C ABI, and SDKs
 # all wrap this one type (05-tooling.md §law-6). Pulls the space contract + the compute path.
-client = ["space", "compiler", "graph", "exec", "backend", "dep:hologram-runtime", "dep:uor-prism"]
+client = ["space", "compiler", "graph", "exec", "backend", "archive", "dep:hologram-runtime", "dep:uor-prism"]
 
 archive-compression = ["archive", "hologram-archive/compression"]
 archive-model-formats = ["archive", "hologram-archive/model-formats"]

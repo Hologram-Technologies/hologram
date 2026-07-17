@@ -104,4 +104,7 @@ pub mod space {
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "client")]
-pub use client::{BuildError, Client, ClientBuilder, Holo, RunError};
+pub use client::{
+    AppInspection, BuildError, Client, ClientBuilder, Holo, InspectError, LayerCertVerdict,
+    RunError,
+};

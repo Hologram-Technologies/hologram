@@ -75,4 +75,8 @@ pub struct ConformanceWorld {
     /// HF-2: `(child_admitted, refs_subset, overbroad_refused)` from nesting a child app by κ ref
     /// with a delegated CapabilitySet — capability-attenuation holds iff `(true, true, true)`.
     pub hf2_attenuation: Option<(bool, bool, bool)>,
+    /// HF-3: `(all_verified, inspected_layer_count)` from inspecting a `.holo` v3 through the
+    /// `Client` surface — every per-layer certificate must verify and every layer be returned
+    /// (none stripped), so this is `(true, expected_layer_count)`.
+    pub hf3_inspection: Option<(bool, usize)>,
 }

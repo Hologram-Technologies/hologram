@@ -401,7 +401,8 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       (03 §Fat and thin) and `resolve_closure(app κ)` migration. 2 tests (fat + thin); native +
       wasm32 + thumbv7em green. Unblocks HF-3 (inspection resolves + verifies layers).
     - [ ] fat/thin conversion tooling (`hologram app --fat/--thin`) + parser fuzz targets (CI-permanent).
-  - [~] **P4.4** — drive HF-1/2/3 (+HF-4/5) scenarios ⛔→✅ with executable steps.
+  - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
+    ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
     - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
       (a real v3 archive whose AppManifest section carries `single_tensor_plan`) yields the
       degenerate single-layer case (1 tensor-plan layer, no primary). Witnessed end-to-end through
@@ -410,8 +411,14 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       by κ ref `(app κ, delegated caps κ)`; `Capabilities::admits` witnesses the delegated set ⊆
       parent (refs + budgets), and an over-broad child is refused. `nesting.feature` @status:enforced,
       HF-2 ✅. bdd now **13 passed / 20 skipped**; meta-gate bijection + status agreement green.
-    - [ ] **HF-3** — per-layer certificates verify + never stripped by inspection (needs per-layer
-      certs in the archive + a Client inspection API).
+    - [x] **HF-3** (2026-07-17) — per-layer certificates verify + never stripped: `Client::inspect`
+      decodes a `.holo` v3 manifest and returns one `LayerCertVerdict` per layer. A layer's cert is
+      its κ-identity **bound into the app κ** (the manifest κ addresses the bytes embedding every
+      layer κ — stripping/swapping any layer changes the app κ); verification is **thin** (manifest
+      only, no payload — witnessed on a manifest-only archive), so certs travel with the manifest and
+      inspection never strips them. `client` feature now enables `archive`. `certificates.feature`
+      @status:enforced, HF-3 ✅. **All 3 HF rows green — P4's conformance surface complete.** bdd 14
+      passed.
   - [ ] **P5** — networks (Network realization, restricted-tier, wire-version, bounded-resolve, TCK
     battery); drive NW-1/2 (+NW-3/4) ⛔→✅.
   - [ ] **P6** — encryption/governance (AttestationKey / RevocationEvent / NetworkPolicy /

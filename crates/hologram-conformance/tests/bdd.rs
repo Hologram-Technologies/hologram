@@ -15,7 +15,7 @@ use hologram_space::{CapabilitySet, ContainerManifest};
 // real archive container, so opening a tensor-only archive and nesting a child are witnessed
 // end-to-end through the shipping format.
 use hologram_archive::{HoloLoader, HoloWriter};
-use hologram_space::{AppManifest, LayerKind};
+use hologram_space::{AppManifest, Layer, LayerKind};
 // SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
 // public API (external witness: the shipping reference impls in `hologram-space`).
 use hologram_space::{
@@ -598,6 +598,55 @@ fn hf2_assert(w: &mut ConformanceWorld) {
         Some((true, true, true)),
         "the delegated child must be admitted (caps ⊆ parent), its refs a subset of the parent's, \
          and an over-broad child refused — attenuation only, amplification unrepresentable"
+    );
+}
+
+// ───────────────────────────── HF-3 — per-layer certificates ─────────────────────────────
+// A `.holo` v3's per-layer certificate is each layer's κ-identity, bound into the app's committed
+// identity (the manifest κ addresses the bytes that embed every layer κ). Inspecting through the
+// Client surface returns one verdict per layer, each verifying, from a **thin** archive (manifest
+// only, no payload) — so certificates travel with the manifest and inspection never strips them.
+
+#[given("a .holo v3 with per-layer certificates")]
+fn hf3_given(w: &mut ConformanceWorld) {
+    // A four-layer app; each layer κ is its per-layer certificate, bound into the manifest κ.
+    let manifest = AppManifest {
+        primary: Some(0),
+        requires: address_bytes(b"hf3-requires"),
+        layers: vec![
+            Layer::wasm(address_bytes(b"hf3-wasm"), "_start"),
+            Layer::tensor(address_bytes(b"hf3-plan"), "sess"),
+            Layer::rootfs(address_bytes(b"hf3-rootfs"), "boot", "riscv64"),
+            Layer::view(address_bytes(b"hf3-view"), "portable"),
+        ],
+        children: vec![],
+    };
+    // A THIN archive: the manifest section only, no payloads — verification must not need the fat
+    // profile, and certificates travel with the manifest.
+    let mut writer = HoloWriter::new();
+    writer.set_app_manifest(manifest.canonicalize());
+    w.canonical = writer
+        .finish()
+        .expect("write a thin .holo v3 with per-layer certs");
+}
+
+#[when("I inspect it through the Client surface")]
+fn hf3_inspect(w: &mut ConformanceWorld) {
+    let client = Client::new(SpikeSpace::new());
+    let holo = hologram::Holo::from_bytes(w.canonical.clone());
+    let inspection = client
+        .inspect(&holo)
+        .expect("inspect the .holo v3 through the Client");
+    w.hf3_inspection = Some((inspection.all_verified(), inspection.layers.len()));
+}
+
+#[then("every certificate verifies and none is stripped")]
+fn hf3_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.hf3_inspection,
+        Some((true, 4)),
+        "inspecting a .holo v3 must return a verified certificate for every one of its layers \
+         (none stripped) — from the thin profile, so certs travel with the manifest"
     );
 }
 
