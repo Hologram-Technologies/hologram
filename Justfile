@@ -24,7 +24,7 @@ vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).
 conformance:
     cargo test -p hologram-archive --test conformance --test model_address --features model-formats
-    cargo test -p hologram-backend --test conformance --features cpu
+    cargo test -p hologram-compute --test conformance --features cpu
     cargo test -p hologram-exec --test conformance
 
 # BDD conformance suite (refactor classes LAW/SP/HF/NW/TL/MG/GV). Runs the cucumber
@@ -41,13 +41,13 @@ conformance-report:
 # byte-identical + deterministic. Runs the kernel suites with the in-tree
 # worker pool active so the parallel lattice-recursion frontier is exercised.
 parallel:
-    cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+    cargo test -p hologram-compute --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
 
 # Performance V&V (class PV) — release-only budgets; no silent bottleneck.
 # `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
 # Also runs the deployment-substrate SP-class criterion floors (G1/G2 native store, mem zero-copy).
 perf:
-    cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+    cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
     cargo test --release -p hologram-exec --test performance -- --nocapture
     cargo bench -p hologram-store-native --bench sp_floors -- --quick
     cargo bench -p hologram-tck --bench sp_floors -- --quick
@@ -74,7 +74,7 @@ clippy:
 
 # Build the no_std library stack for wasm32 (hologram-ai's deploy target).
 # `--no-default-features` deactivates every crate's `std` feature, so the
-# `#![no_std]` path is exercised; `hologram-backend` adds its CPU kernels.
+# `#![no_std]` path is exercised; `hologram-compute` adds its CPU kernels.
 wasm:
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-types -p hologram-ops -p hologram-graph \
@@ -84,22 +84,22 @@ wasm:
     cargo build --target wasm32-unknown-unknown --no-default-features \
         -p hologram-space -p hologram-spike-sp3
     cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
-        -p hologram-backend
+        -p hologram-compute
     # SIMD tiers: baseline simd128 (the witnessed browser kernel) and the
     # relaxed-SIMD tier (i8 relaxed dot — same exact function, engine-fast
     # path). Building both keeps the cfg'd kernels from bit-rotting.
     RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu -p hologram-backend
+        --no-default-features --features cpu -p hologram-compute
     RUSTFLAGS="-Ctarget-feature=+simd128,+relaxed-simd" cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu -p hologram-backend
+        --no-default-features --features cpu -p hologram-compute
     # Embedder-worker pool (shared-memory build; imports the embedder futex).
     RUSTFLAGS="-Ctarget-feature=+simd128,+atomics,+bulk-memory,+mutable-globals" \
         cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu,wasm-threads -p hologram-backend
+        --no-default-features --features cpu,wasm-threads -p hologram-compute
     # Threaded lane (wasip1-threads carries atomics in its target spec); the
     # fork-join bit-identity test runs under `wasmtime -W threads=y -S threads`.
     RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-wasip1-threads \
-        --no-default-features --features cpu,std,wasm-threads -p hologram-backend
+        --no-default-features --features cpu,std,wasm-threads -p hologram-compute
     # Deployment substrate (TR class): the consolidated space/tck/net/runtime crates build
     # no_std for the browser, and the wasmi engine (browser/iOS interpreter) builds for wasm32.
     cargo build --target wasm32-unknown-unknown --no-default-features \
@@ -113,7 +113,7 @@ embedded:
         -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target thumbv7em-none-eabi --no-default-features --features cpu \
-        -p hologram-backend
+        -p hologram-compute
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
         -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime -p hologram-store-bare

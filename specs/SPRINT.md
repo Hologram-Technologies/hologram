@@ -63,7 +63,7 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
   (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
   rustup toolchain for cross-builds).
 - [ ] **P1 — substrate dissolution** (in progress; non-colliding order chosen so it avoids
-  Sprint 39's active `hologram-backend` work; perf baselines deferred until kernels settle):
+  Sprint 39's active `hologram-compute` work; perf baselines deferred until kernels settle):
   - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
     absorbed as `hologram_space::hal`; 4 dependents redirected; `substrate/hologram-bare-hal`
     deleted. All 7 scenarios + golden vectors + native/wasm builds + clippy/fmt green.
@@ -127,7 +127,11 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
     collision — that IS the active kernel crate) and the P2 store moves remain. Remaining:
     stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
     perf baselines; crates.io tokens/org ownership (human, P3).
-  - [ ] deferred to a Sprint 39 lull: `hologram-backend`→`hologram-compute` (the last library rename).
+  - [x] **`hologram-backend` → `hologram-compute`** (2026-07-17, D3 — the last library rename;
+    "backend" retired). `git mv` the crate + a mechanical sweep of 233 refs across 110 files
+    (crate name in Cargo.toml/CI/Justfile/deny; `hologram_backend`→`hologram_compute` imports;
+    KC witness paths + specs). Green: workspace build + test, conformance gates, clippy -D, fmt.
+    **P1 in-repo restructure now fully complete.**
 - [~] **P2 core DONE** (2026-07-15, commit `094af14`) — holospaces imported into `spaces/`
   (clean snapshot) and ported onto the consolidated crates; plan in
   [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md). `holospaces` + `holospaces-node` are root
@@ -714,7 +718,7 @@ orchestration crate (chain → plan → execute, addressing, buffer).
   clean across migration-affected crates
 - [x] **1.8 (post-migration sweep)**: 9 pre-existing clippy errors
   in non-migration files cleaned up — `hologram-shape/tensor_shape.rs`
-  (×2 no-op), `hologram-backend/src/cpu.rs` + `metal.rs` (×5 loop
+  (×2 no-op), `hologram-compute/src/cpu.rs` + `metal.rs` (×5 loop
   / approx_constant), `hologram-exec/src/buffer/scatter_gather.rs`
   + `tests/constrained_bench.rs` (×3 io / unit_arg). Workspace
   `cargo clippy --workspace --tests -- -D warnings` is now
@@ -886,7 +890,7 @@ they don't get lost.
 - [x] **3.5**: Backend executors over the same `CompiledPlan` shipped
   in PR #6 (canonical layer). `CanonicalBackend` trait + `CpuBackend`
   adapter live in `hologram-transform`; `WgpuBackend` in
-  `hologram-backend/src/canonical/wgpu.rs` covers **51 variants** with
+  `hologram-compute/src/canonical/wgpu.rs` covers **51 variants** with
   real WGSL compute pipelines (binary/unary elementwise families,
   reductions, softmax/log-softmax, all 5 norm forwards, MatMul +
   grads, full Pool family, Conv2d, ConvTranspose2d, FusedSwiGlu,
@@ -981,7 +985,7 @@ plan → execute is fully connected.
   (two scratches: `probs` + `dp`); future work can extend the same
   pattern. im2col Conv2d remains a future scratch consumer.
 - [x] Backend executors over the same `CompiledPlan` — done. `WgpuBackend`
-  in `hologram-backend/src/canonical/wgpu.rs` ships in PR #6 with 51
+  in `hologram-compute/src/canonical/wgpu.rs` ships in PR #6 with 51
   GPU-implemented variants conformance-validated against `CpuBackend`.
 
 ---
@@ -1159,7 +1163,7 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   check that needs the TinyLlama weight + tokenizer files to run.
   Re-open when artefacts land in the test-fixtures bucket.
 
-### Phase 5: Propagate to hologram-backend
+### Phase 5: Propagate to hologram-compute
 - [x] **5.1**: Wire `infer_output_shape` into `execute_on_backend` (parallel
   shape table seeded from arena's `ShapeRegistry`, output shape inferred
   per dispatch + debug-assert that inferred volume × dtype size matches
@@ -1180,15 +1184,15 @@ heuristic shape resolution failures in the 848-instruction execution chain.
 
 ---
 
-## Sprint 32: hologram-backend + hologram-exec Cleanup (COMPLETE)
+## Sprint 32: hologram-compute + hologram-exec Cleanup (COMPLETE)
 
 **Plan:** [plans/067-compute-backend-rewrite.md](plans/067-compute-backend-rewrite.md)
 
-Goal: create `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>`
+Goal: create `hologram-compute` crate with `ComputeMemory` + `ComputeBackend<M>`
 traits. Clean up hologram-exec by removing the old backend/ module and GPU
 dispatch infrastructure. All GPU execution routes through the new backend.
 
-- [x] Create hologram-backend crate (CpuBackend + MetalBackend)
+- [x] Create hologram-compute crate (CpuBackend + MetalBackend)
 - [x] CpuBackend: all 60+ FloatOp variants with Accelerate BLAS
 - [x] MetalBackend: tiled SGEMM, im2col Conv2d, elementwise, norms, ring LUT
 - [x] Fix Metal SGEMM dispatch (dispatch_thread_groups)
@@ -1198,7 +1202,7 @@ dispatch infrastructure. All GPU execution routes through the new backend.
 - [x] Consolidate 35 trivial dispatch_kernel arms via dispatch_float_into
 - [x] Upgrade CpuBackend Gemm to use Accelerate BLAS with transpose
 
-**Result:** hologram-exec -5,500 lines. hologram-backend 3,969 lines. 535 tests pass.
+**Result:** hologram-exec -5,500 lines. hologram-compute 3,969 lines. 535 tests pass.
 
 ---
 
@@ -2297,10 +2301,10 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 
 Goal: single-device execution — all data lives on one device (Metal/WebGPU/CPU),
 all computation happens on that device. No CPU↔GPU transfers during execution.
-New `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
+New `hologram-compute` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
 
 ### Phase 1: Traits + CpuMemory (non-breaking)
-- [ ] Create `hologram-backend` crate
+- [ ] Create `hologram-compute` crate
 - [ ] Define `ComputeMemory` trait (alloc, upload, download, reshape)
 - [ ] Define `ComputeBackend<M>` trait (dispatch, load_ring_tables, flush)
 - [ ] Implement `CpuMemory` + `CpuBackend` (wraps existing CPU dispatch)
@@ -2311,7 +2315,7 @@ New `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
 - [ ] Load UOR LUT tables onto Metal device
 
 ### Phase 3: Single-path executor
-- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-backend
+- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-compute
 - [ ] All ops dispatch through `backend.dispatch()` — no CPU fallback
 - [ ] Single flush at end of execution
 

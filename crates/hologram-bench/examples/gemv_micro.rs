@@ -8,7 +8,7 @@
 //!   cargo run --release --example gemv_micro -p hologram-bench                 # 1 thread
 //!   cargo run --release --example gemv_micro -p hologram-bench --features parallel  # pool
 
-use hologram_backend::cpu::simd::{matmul_e8cb_omajor, matmul_i4_pc_omajor, matmul_i8_pc_omajor};
+use hologram_compute::cpu::simd::{matmul_e8cb_omajor, matmul_i4_pc_omajor, matmul_i8_pc_omajor};
 use std::hint::black_box;
 use std::time::Instant;
 

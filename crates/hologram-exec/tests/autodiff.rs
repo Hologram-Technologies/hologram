@@ -8,8 +8,8 @@
 //! difference `(L(x+ε) − L(x−ε)) / 2ε`. Agreement to tolerance proves the VJP
 //! pipeline is mathematically correct end-to-end on the real kernels.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, compile_with_backward, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

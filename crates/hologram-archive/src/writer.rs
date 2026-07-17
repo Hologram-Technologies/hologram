@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 use crate::weight::WeightStore;
-use hologram_backend::KernelCall;
+use hologram_compute::KernelCall;
 use hologram_graph::{Schedule, ShapeRegistry};
 
 /// A graph input/output port's identity: which workspace slot the runtime

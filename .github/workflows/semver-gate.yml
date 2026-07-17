@@ -63,4 +63,4 @@ jobs:
           # compared until it exists on both sides. Check the established
           # library crates here and add the facade itself in a follow-up once it
           # ships on the baseline branch.
-          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-backend,hologram-archive,hologram-ffi,hologram-bench"
+          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-compute,hologram-archive,hologram-ffi,hologram-bench"

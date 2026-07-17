@@ -18,7 +18,7 @@ hologram-ops      = { workspace = true }
 hologram-graph    = { workspace = true }
 hologram-compiler = { workspace = true, features = ["std"] }
 hologram-exec     = { workspace = true, features = ["std"] }
-hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-compute  = { workspace = true, features = ["std", "cpu"] }
 hologram-archive  = { workspace = true, features = ["std"] }
 uor-prism         = { workspace = true }
 
@@ -26,7 +26,7 @@ uor-prism         = { workspace = true }
 # Multi-core: run the benches with the backend's worker pool engaged
 # (`cargo bench -p hologram-bench --features parallel`) to measure the
 # UOR hierarchical model leveraging the whole processor surface.
-parallel = ["hologram-backend/parallel", "hologram-exec/parallel"]
+parallel = ["hologram-compute/parallel", "hologram-exec/parallel"]
 
 [dev-dependencies]
 criterion = { workspace = true }

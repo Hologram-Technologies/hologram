@@ -62,7 +62,7 @@ deployment guarantees:
 | Space | Prism Definition | Hologram Crates |
 |-------|-----------------|-----------------|
 | **kernel** | Deployment-immutable; contains foundation operations and algebraic laws | `hologram-host`, `hologram-types`, `hologram-ops`, `hologram-graph`, `hologram-archive` |
-| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-backend` |
+| **bridge** | Prism-computed; derives from kernel crates via explicit composition laws | `hologram-exec`, `hologram-compiler`, `hologram-compute` |
 | **user** | Application-configurable; exposed at system boundaries | `hologram` facade, `hologram-ffi`, `hologram-cli`, `hologram-bench` |
 
 **Rule**: kernel crates must not depend on bridge or user crates. Bridge crates must not depend on
@@ -87,7 +87,7 @@ hologram-types ┤
                └── hologram-ops (kernel: canonical op vocabulary)
                        └── hologram-graph (kernel: tensor graph IR)
                                └── hologram-archive (kernel: .holo format, κ-labels)
-                                       ├── hologram-backend (bridge: CPU/GPU kernels)
+                                       ├── hologram-compute (bridge: CPU/GPU kernels)
                                        └── hologram-exec (bridge: content-addressed executor)
                                                └── hologram-compiler (bridge: graph → .holo)
                                                        ├── hologram-ffi (user: C ABI)
@@ -137,7 +137,7 @@ the parallelism ratio `total_nodes / critical_path_length`.
 ### Stage 3: Compilation — Ops Become `KernelCall`s
 
 The compiler lowers each scheduled graph op (`OpKind`, and its per-op marker type in
-`hologram-ops`) into a variant of the `KernelCall` enum (`hologram-backend/src/kernel_call.rs`).
+`hologram-ops`) into a variant of the `KernelCall` enum (`hologram-compute/src/kernel_call.rs`).
 A `KernelCall` is a fully-resolved, self-describing instruction: it carries the operand κ-labels,
 the resolved shapes/dtypes, and the output label. There is no boxed trait object and no runtime
 shape-inference module — shapes are resolved at compile time and travel inside the `KernelCall`.
@@ -152,7 +152,7 @@ class labels, calibration tables, provenance) as a length-prefixed `key` + arbit
 (`Graph::add_extension`, `InferenceSession::extension`/`extension_keys`).
 
 **Key types**: `OpKind` and per-op marker types (`hologram-ops`), `KernelCall`
-(`hologram-backend/src/kernel_call.rs`), `.holo` archive (`hologram-archive`)
+(`hologram-compute/src/kernel_call.rs`), `.holo` archive (`hologram-archive`)
 
 ### Stage 4: Load — Decode + Fuse
 
@@ -176,7 +176,7 @@ one aligned buffer; a slot *binds* to it by κ-label. The pool holds two buffer 
 | pinned | model constants/weights, deduped by content κ-label | session lifetime |
 | transient | activations, byte-bounded so memory holds for arbitrary models | reused/recycled |
 
-The CPU backend (`CpuBackend`, `hologram-backend/src/cpu.rs`) dispatches by an **exhaustive `match`
+The CPU backend (`CpuBackend`, `hologram-compute/src/cpu.rs`) dispatches by an **exhaustive `match`
 over `KernelCall`** — no virtual dispatch, no function-pointer tables, no runtime algorithm
 selection. Before computing, the pool checks whether the output κ-label is already resident
 (pinned or transient); if so the compute is **elided** and the slot rebinds to the existing buffer
@@ -188,7 +188,7 @@ transient buffer reclaimed from the pool rather than allocating a fresh one. Ide
 across nodes (or across runs, via warm-start) is an O(1) rebind.
 
 **Key types**: `BufferArena` (`hologram-exec/src/buffer.rs`), `CpuBackend`
-(`hologram-backend/src/cpu.rs`)
+(`hologram-compute/src/cpu.rs`)
 
 ### Refinement Execution Strategy
 
@@ -339,7 +339,7 @@ epilogue variants (`MatMulActivation`, `MatMulAddActivation`), the quantized var
 (`MatMulDequant`, `DequantActivation`), and `BroadcastBinary` — so the backend sees fully resolved
 instructions with **zero pattern-detection overhead** at runtime.
 
-**Key types**: `KernelCall` (`hologram-backend/src/kernel_call.rs`); load-time fusion in
+**Key types**: `KernelCall` (`hologram-compute/src/kernel_call.rs`); load-time fusion in
 `InferenceSession::load` (`hologram-exec/src/session.rs`)
 
 ### Prism Grounding
@@ -396,7 +396,7 @@ subset mirrors the other host frontends through helper-call options:
 literal shape/dtype/value metadata and the shared source op-attribute table.
 
 No source-language metadata, parser spans, dynamic attribute maps, or frontend
-dispatch survives into `hologram-graph`, `.holo` archives, `hologram-backend`,
+dispatch survives into `hologram-graph`, `.holo` archives, `hologram-compute`,
 or `hologram-exec`; those layers see only the closed graph/`KernelCall`
 vocabulary.
 
@@ -464,7 +464,7 @@ Hologram implements UOR's quantum level hierarchy for ring-arithmetic accelerati
 | Q3 | 32 | Z/4294967296Z | Algorithmic only (17 GB full LUT infeasible) |
 | Q4+ | 40+ | Z/2^nZ | Algorithmic with optional LRU cache |
 
-Q0 and Q1 are fully realised as lookup tables in `hologram-backend` (`cpu::lut`).
+Q0 and Q1 are fully realised as lookup tables in `hologram-compute` (`cpu::lut`).
 Q2+ are computed algorithmically.
 
 ---

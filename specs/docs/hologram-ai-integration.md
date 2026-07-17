@@ -35,7 +35,7 @@ surface.
 |---|---|---|
 | `hologram::compiler` | `hologram-compiler` | `Graph` → `.holo` archive (`Compiler` / `compile`). |
 | `hologram::exec` | `hologram-exec` | Load + run an archive (`InferenceSession`, `BufferArena`, `InputBuffer`/`OutputBuffer`). |
-| `hologram::backend` | `hologram-backend` | Compute backends (`CpuBackend`, plus optional GPU). |
+| `hologram::backend` | `hologram-compute` | Compute backends (`CpuBackend`, plus optional GPU). |
 | `hologram::archive` | `hologram-archive` | `.holo` format + content addressing (`address_ring`, `compose_model`); model-file realization under the `archive-model-formats` feature. |
 | `hologram::graph` | `hologram-graph` | The op graph (`Graph`, `Node`, `GraphOp`, `OpKind`). Re-exported through the compiler's inputs. |
 

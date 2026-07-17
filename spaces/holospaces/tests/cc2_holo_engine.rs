@@ -30,8 +30,8 @@
 //!
 //! Run by `vv/run.sh`; also `cargo test -p holospaces --test cc2_holo_engine`.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::constant::ConstantEntry;
 use hologram_graph::node::Node;

@@ -7,7 +7,7 @@
 //! The codec is total-roundtrip: `decode(encode(c)) == c`.
 
 use alloc::vec::Vec;
-use hologram_backend::{
+use hologram_compute::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, Conv2dCall, DecodeAttentionCall,
     DecodeAttentionValidCall, DequantActivationCall, DequantizeCall, ExpandCall, GatherCall,
     GemmCall, Im2ColCall, KernelCall, KvCacheWriteCall, LayoutCall, LrnCall, MatMulCall,

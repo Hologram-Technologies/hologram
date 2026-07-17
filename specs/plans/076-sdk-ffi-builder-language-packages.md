@@ -54,7 +54,7 @@ C / FFI builder API               -> SourceProgram -> Graph -> Compiler
 - Executing arbitrary Python, TypeScript, or Rust code to build graphs.
 - Making SDK objects part of the `.holo` runtime archive format.
 - Introducing dynamic op dispatch or callback registries into
-  `hologram-backend` or `hologram-exec`.
+  `hologram-compute` or `hologram-exec`.
 - Requiring Node native addons in browsers; browser support must use a WASM
   package with documented limitations.
 

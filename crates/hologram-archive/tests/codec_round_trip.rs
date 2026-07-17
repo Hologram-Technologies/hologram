@@ -1,7 +1,7 @@
 //! KernelCall codec round-trip tests.
 
 use hologram_archive::{decoder, kernel_codec};
-use hologram_backend::{
+use hologram_compute::{
     BinaryCall, BufferRef, Conv2dCall, GemmCall, KernelCall, LayoutCall, MatMulCall, UnaryCall,
 };
 
@@ -118,7 +118,7 @@ fn matmul_round_trip() {
 
 #[test]
 fn matmul_activation_round_trip() {
-    use hologram_backend::{fused_activation, MatMulActivationCall};
+    use hologram_compute::{fused_activation, MatMulActivationCall};
     let calls = vec![KernelCall::MatMulActivation(MatMulActivationCall {
         mm: MatMulCall {
             a: ref_buf(0),
@@ -147,7 +147,7 @@ fn matmul_activation_round_trip() {
 
 #[test]
 fn broadcast_binary_round_trip() {
-    use hologram_backend::{broadcast_op, BroadcastBinaryCall};
+    use hologram_compute::{broadcast_op, BroadcastBinaryCall};
     let calls = vec![KernelCall::BroadcastBinary(BroadcastBinaryCall {
         small: ref_buf(0),
         other: ref_buf(1),
@@ -175,7 +175,7 @@ fn broadcast_binary_round_trip() {
 
 #[test]
 fn matmul_dequant_round_trip() {
-    use hologram_backend::MatMulDequantCall;
+    use hologram_compute::MatMulDequantCall;
     let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
         a: ref_buf(0),
         bq: ref_buf(1),
@@ -219,7 +219,7 @@ fn matmul_dequant_round_trip() {
 
 #[test]
 fn matmul_dequant_omajor_w8a8_round_trip() {
-    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    use hologram_compute::{mm_act_quant, MatMulDequantCall};
     let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
         a: ref_buf(0),
         bq: ref_buf(1),
@@ -259,7 +259,7 @@ fn matmul_dequant_omajor_w8a8_round_trip() {
 
 #[test]
 fn dequant_activation_round_trip() {
-    use hologram_backend::{lut_act, DequantActivationCall};
+    use hologram_compute::{lut_act, DequantActivationCall};
     let calls = vec![KernelCall::DequantActivation(DequantActivationCall {
         input: ref_buf(0),
         output: ref_buf(1),
@@ -288,7 +288,7 @@ fn dequant_activation_round_trip() {
 
 #[test]
 fn matmul_add_activation_round_trip() {
-    use hologram_backend::{fused_activation, MatMulAddActivationCall};
+    use hologram_compute::{fused_activation, MatMulAddActivationCall};
     let calls = vec![KernelCall::MatMulAddActivation(MatMulAddActivationCall {
         mm: MatMulCall {
             a: ref_buf(0),
@@ -318,7 +318,7 @@ fn matmul_add_activation_round_trip() {
 
 #[test]
 fn im2col_col2im_round_trip() {
-    use hologram_backend::Im2ColCall;
+    use hologram_compute::Im2ColCall;
     let geom = Im2ColCall {
         input: ref_buf(0),
         output: ref_buf(1),
@@ -420,7 +420,7 @@ fn layout_round_trip() {
             element_count: 100,
             dtype: 0,
         }),
-        KernelCall::Transpose(hologram_backend::TransposeCall {
+        KernelCall::Transpose(hologram_compute::TransposeCall {
             input: ref_buf(2),
             output: ref_buf(3),
             rank: 2,
@@ -465,7 +465,7 @@ fn warm_start_round_trip() {
 
 #[test]
 fn gather_round_trip() {
-    use hologram_backend::GatherCall;
+    use hologram_compute::GatherCall;
     let calls = vec![KernelCall::Gather(GatherCall {
         data: ref_buf(0),
         indices: ref_buf(1),
@@ -497,7 +497,7 @@ fn gather_round_trip() {
 
 #[test]
 fn kv_cache_write_round_trip() {
-    use hologram_backend::KvCacheWriteCall;
+    use hologram_compute::KvCacheWriteCall;
     let calls = vec![KernelCall::KvCacheWrite(KvCacheWriteCall {
         cache: ref_buf(0),
         new: ref_buf(1),
@@ -527,7 +527,7 @@ fn kv_cache_write_round_trip() {
 
 #[test]
 fn decode_attention_valid_round_trip() {
-    use hologram_backend::DecodeAttentionValidCall;
+    use hologram_compute::DecodeAttentionValidCall;
     let calls = vec![KernelCall::DecodeAttentionValid(DecodeAttentionValidCall {
         q: ref_buf(0),
         k_past: ref_buf(1),
@@ -567,7 +567,7 @@ fn decode_attention_valid_round_trip() {
 
 #[test]
 fn cast_round_trip() {
-    use hologram_backend::CastCall;
+    use hologram_compute::CastCall;
     let calls = vec![KernelCall::Cast(CastCall {
         input: ref_buf(0),
         output: ref_buf(1),
@@ -594,7 +594,7 @@ fn cast_round_trip() {
 /// operand must survive the round-trip.
 #[test]
 fn matmul_dequant_with_codebook_round_trips_on_its_own_discriminant() {
-    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    use hologram_compute::{mm_act_quant, MatMulDequantCall};
     let calls = vec![KernelCall::MatMulDequant(MatMulDequantCall {
         a: ref_buf(0),
         bq: ref_buf(1),
@@ -641,14 +641,14 @@ fn matmul_dequant_with_codebook_round_trips_on_its_own_discriminant() {
 /// differently, and a codebook-free call's operand order must be unchanged.
 #[test]
 fn codebook_participates_in_the_operand_set() {
-    use hologram_backend::MatMulDequantCall;
+    use hologram_compute::MatMulDequantCall;
     let mut c = match &decode_calls_of_vq()[0] {
         KernelCall::MatMulDequant(c) => *c,
         _ => unreachable!(),
     };
-    let with = hologram_backend::buffers(&KernelCall::MatMulDequant(c));
+    let with = hologram_compute::buffers(&KernelCall::MatMulDequant(c));
     c.codebook = MatMulDequantCall::NO_CODEBOOK;
-    let without = hologram_backend::buffers(&KernelCall::MatMulDequant(c));
+    let without = hologram_compute::buffers(&KernelCall::MatMulDequant(c));
     assert_eq!(
         with.len(),
         without.len() + 1,
@@ -661,7 +661,7 @@ fn codebook_participates_in_the_operand_set() {
 }
 
 fn decode_calls_of_vq() -> Vec<KernelCall> {
-    use hologram_backend::{mm_act_quant, MatMulDequantCall};
+    use hologram_compute::{mm_act_quant, MatMulDequantCall};
     vec![KernelCall::MatMulDequant(MatMulDequantCall {
         a: ref_buf(0),
         bq: ref_buf(1),

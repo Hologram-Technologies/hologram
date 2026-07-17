@@ -1460,7 +1460,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "hashbrown 0.15.5",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
  "hologram-types",
  "memmap2",
@@ -1473,33 +1473,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-backend"
-version = "0.10.0"
-dependencies = [
- "bytemuck",
- "hologram-ops",
- "hologram-types",
- "libm",
- "metal 0.29.0",
- "objc",
- "pollster",
- "smallvec",
- "thiserror 2.0.18",
- "uor-foundation",
- "uor-foundation-sdk",
- "uor-prism",
- "uor-prism-tensor",
- "wgpu",
-]
-
-[[package]]
 name = "hologram-bench"
 version = "0.10.0"
 dependencies = [
  "criterion",
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-exec",
  "hologram-graph",
  "hologram-ops",
@@ -1514,8 +1494,8 @@ version = "0.10.0"
 dependencies = [
  "clap",
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-exec",
  "hologram-graph",
  "hologram-net",
@@ -1535,7 +1515,7 @@ version = "0.10.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
  "hologram-ops",
  "hologram-types",
@@ -1550,6 +1530,26 @@ dependencies = [
  "tracing",
  "uor-foundation",
  "uor-prism",
+]
+
+[[package]]
+name = "hologram-compute"
+version = "0.10.0"
+dependencies = [
+ "bytemuck",
+ "hologram-ops",
+ "hologram-types",
+ "libm",
+ "metal 0.29.0",
+ "objc",
+ "pollster",
+ "smallvec",
+ "thiserror 2.0.18",
+ "uor-foundation",
+ "uor-foundation-sdk",
+ "uor-prism",
+ "uor-prism-tensor",
+ "wgpu",
 ]
 
 [[package]]
@@ -1580,8 +1580,8 @@ version = "0.10.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-graph",
  "hologram-ops",
  "hologram-types",
@@ -1596,8 +1596,8 @@ name = "hologram-ffi"
 version = "0.10.0"
 dependencies = [
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-exec",
  "hologram-graph",
  "hologram-types",
@@ -1732,8 +1732,8 @@ dependencies = [
  "blake3",
  "flate2",
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-emulator",
  "hologram-exec",
  "hologram-graph",
@@ -4213,10 +4213,10 @@ version = "0.10.0"
 dependencies = [
  "async-trait",
  "hologram-archive",
- "hologram-backend",
  "hologram-bench",
  "hologram-cli",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-exec",
  "hologram-ffi",
  "hologram-graph",

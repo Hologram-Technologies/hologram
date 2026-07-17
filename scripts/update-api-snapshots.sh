@@ -29,7 +29,7 @@ CRATES=(
   hologram-host
   hologram-ops
   hologram-graph
-  hologram-backend
+  hologram-compute
   hologram-archive
   hologram-exec
   hologram-compiler

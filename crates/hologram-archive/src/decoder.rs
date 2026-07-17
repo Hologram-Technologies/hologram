@@ -2,7 +2,7 @@
 
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
-use hologram_backend::{
+use hologram_compute::{
     AttentionCall, BinaryCall, BroadcastBinaryCall, BufferRef, CastCall, Conv2dCall,
     DecodeAttentionCall, DecodeAttentionValidCall, DequantActivationCall, DequantizeCall,
     ExpandCall, GatherCall, GemmCall, Im2ColCall, KernelCall, KvCacheWriteCall, LayoutCall,

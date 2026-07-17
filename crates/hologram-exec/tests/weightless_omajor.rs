@@ -29,8 +29,8 @@ use std::sync::Arc;
 use hologram_archive::{
     decoder, format::SectionKind, HoloLoader, WeightFingerprint, WeightProvider,
 };
-use hologram_backend::{CpuBackend, KernelCall};
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::{CpuBackend, KernelCall};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     constant::ConstantEntry,

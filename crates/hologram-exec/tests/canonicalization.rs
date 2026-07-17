@@ -6,8 +6,8 @@
 //! recognized as already-resident and its compute is elided — UOR's algebra
 //! turned into runtime reuse, not just a compile-time graph property.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 

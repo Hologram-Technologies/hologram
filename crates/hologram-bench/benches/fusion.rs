@@ -12,8 +12,8 @@
 //! f32 views and reused scratch are exercised exactly as in production.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::cpu::dtype::DTYPE_F32;
-use hologram_backend::{
+use hologram_compute::cpu::dtype::DTYPE_F32;
+use hologram_compute::{
     broadcast_op, Backend, BinaryCall, BroadcastBinaryCall, BufferRef, CpuBackend, DequantizeCall,
     ExpandCall, KernelCall, MatMulCall, MatMulDequantCall,
 };

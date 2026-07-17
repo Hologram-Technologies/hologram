@@ -132,8 +132,8 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
         Command::Execute { archive } => {
             let bytes =
                 std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
-            let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
-                hologram_backend::CpuBackend::new();
+            let backend: hologram_compute::CpuBackend<hologram_exec::BufferArena> =
+                hologram_compute::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
                 .map_err(|_| CompileError::SourceParse("load archive"))?;
             let zeros = zero_inputs_for(&session);
@@ -186,8 +186,8 @@ pub fn run(cli: Cli) -> Result<(), CompileError> {
         } => {
             let bytes =
                 std::fs::read(&archive).map_err(|_| CompileError::SourceParse("read archive"))?;
-            let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
-                hologram_backend::CpuBackend::new();
+            let backend: hologram_compute::CpuBackend<hologram_exec::BufferArena> =
+                hologram_compute::CpuBackend::new();
             let mut session = hologram_exec::InferenceSession::load(&bytes, backend)
                 .map_err(|_| CompileError::SourceParse("load archive"))?;
             let zeros = zero_inputs_for(&session);
@@ -322,8 +322,8 @@ fn maybe_warm_fold(archive: Vec<u8>, no_warm: bool) -> Result<Vec<u8>, CompileEr
     if no_warm {
         return Ok(archive);
     }
-    let backend: hologram_backend::CpuBackend<hologram_exec::BufferArena> =
-        hologram_backend::CpuBackend::new();
+    let backend: hologram_compute::CpuBackend<hologram_exec::BufferArena> =
+        hologram_compute::CpuBackend::new();
     hologram_exec::fold_archive(&archive, backend)
         .map_err(|_| CompileError::SourceParse("warm fold"))
 }
@@ -380,7 +380,7 @@ fn source_options(graph: Option<&str>) -> source::SourceParseOptions {
 /// length comes from the archive's declared shape × dtype, not a fixed cap.
 fn zero_inputs_for(
     session: &hologram_exec::InferenceSession<
-        hologram_backend::CpuBackend<hologram_exec::BufferArena>,
+        hologram_compute::CpuBackend<hologram_exec::BufferArena>,
     >,
 ) -> Vec<Vec<u8>> {
     (0..session.input_count())

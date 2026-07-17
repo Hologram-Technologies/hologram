@@ -2,8 +2,8 @@
 //! queryable by name (so a caller maps `input_ids`/… to the right `execute`
 //! position) — the multi-input model requirement.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

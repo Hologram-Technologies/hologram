@@ -6,8 +6,8 @@
 //! Both compile to a `KernelCall::Dequantize` and execute through the
 //! CPU dequant kernel, producing F32 output bytes.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::constant::ConstantEntry;
 use hologram_graph::node::Node;

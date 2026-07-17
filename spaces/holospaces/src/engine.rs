@@ -11,7 +11,7 @@
 //! yield identical output bytes, hence identical output κ-labels under the
 //! substrate's σ-axis (Conformance `CC-2`).
 
-use hologram_backend::CpuBackend;
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 
 use crate::realizations::{address, Kappa};

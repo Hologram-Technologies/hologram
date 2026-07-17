@@ -4,8 +4,8 @@
 //! Constructs graphs programmatically (not through the line parser) to
 //! exercise the shape-resolution and dtype-aware byte-sizing paths.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::{

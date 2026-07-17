@@ -15,7 +15,7 @@
 //! previously-addressable computation just changed identity.
 
 use hologram_archive::kernel_codec::encode_calls;
-use hologram_backend::{BufferRef, KernelCall, MatMulCall, MatMulDequantCall};
+use hologram_compute::{BufferRef, KernelCall, MatMulCall, MatMulDequantCall};
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()

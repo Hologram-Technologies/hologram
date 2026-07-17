@@ -29,9 +29,9 @@ pub mod archive {
 
 #[cfg(feature = "backend")]
 pub mod backend {
-    //! Facade for the `hologram-backend` crate.
+    //! Facade for the `hologram-compute` crate.
 
-    pub use hologram_backend::*;
+    pub use hologram_compute::*;
 }
 
 #[cfg(feature = "bench")]

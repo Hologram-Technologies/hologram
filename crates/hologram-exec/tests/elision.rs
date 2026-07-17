@@ -6,8 +6,8 @@
 //! padded with redundant ops produces bit-for-bit the same result as its
 //! reduced form, while compiling to strictly fewer nodes.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 

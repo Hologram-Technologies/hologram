@@ -5,8 +5,8 @@
 //! emitted through `prism::pipeline::run`. The attestation's content
 //! fingerprint is deterministic for a fixed inference unit.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{AttestedExecution, BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

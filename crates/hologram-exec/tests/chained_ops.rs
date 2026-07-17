@@ -1,8 +1,8 @@
 //! Multi-op chained pipelines verifying that intermediate kernel outputs
 //! correctly feed downstream kernels.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     node::Node,

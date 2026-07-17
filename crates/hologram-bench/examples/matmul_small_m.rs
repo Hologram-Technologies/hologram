@@ -17,10 +17,10 @@
 //!   cargo run --release --example matmul_small_m -p hologram-bench
 //!
 //! The wasm SIMD128 lane — the one that actually ships — is pinned by the
-//! `small-m sweep` section of `wasm_matmul_timing` in hologram-backend, since
+//! `small-m sweep` section of `wasm_matmul_timing` in hologram-compute, since
 //! criterion (a hologram-bench dependency) does not build for wasm.
 
-use hologram_backend::cpu::simd::matmul_f32_blocked;
+use hologram_compute::cpu::simd::matmul_f32_blocked;
 use std::hint::black_box;
 use std::time::Instant;
 

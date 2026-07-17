@@ -5,8 +5,8 @@
 //! the full pipeline (compile → archive → load → execute).
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile_from_source, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 

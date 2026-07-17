@@ -28,7 +28,7 @@ use crate::address::{derive_label, ContentLabel};
 use crate::error::ArchiveError;
 use alloc::vec::Vec;
 use hashbrown::{HashMap, HashSet};
-use hologram_backend::{buffers, KernelCall};
+use hologram_compute::{buffers, KernelCall};
 use smallvec::SmallVec;
 
 /// One constant-only-cone node: its output slot, its lattice κ-label (the

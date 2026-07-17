@@ -277,7 +277,7 @@ Design constraints:
   `O(items + edges + literal_bytes)`, no repeated graph scans.
 - **No runtime source metadata dependency.** Spans, AST nodes, source-language
   tags, and symbol names are compiler diagnostics. They must not be required by
-  `hologram-exec`, `hologram-backend`, or `KernelCall` dispatch. Optional
+  `hologram-exec`, `hologram-compute`, or `KernelCall` dispatch. Optional
   provenance can be emitted as archive extensions, never as execution input.
 - **Resolve all names before archive build.** Source identifiers lower to
   `InputSource` / `NodeId` / `ConstantId` during compilation. No string lookup,
@@ -303,7 +303,7 @@ Design constraints:
 
 Validation should include source-lowering microbenchmarks for large linear
 graphs and large constants, plus negative checks that no `source::*` types are
-referenced from `hologram-exec`, `hologram-backend`, or `hologram-archive`
+referenced from `hologram-exec`, `hologram-compute`, or `hologram-archive`
 execution structures.
 
 ## Native Hologram DSL

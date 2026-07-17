@@ -35,7 +35,7 @@ use core::ptr::NonNull;
 use hashbrown::HashMap;
 use hashbrown::HashSet;
 use hologram_archive::{ContentLabel, WeightFingerprint, WeightProvider};
-use hologram_backend::{BufferRef, SplitReads, Workspace};
+use hologram_compute::{BufferRef, SplitReads, Workspace};
 
 /// A lazily-resident model weight: known by content label and fingerprint,
 /// its body paged from the provider on first use and evictable under the

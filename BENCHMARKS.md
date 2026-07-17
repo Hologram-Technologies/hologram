@@ -9,7 +9,7 @@ Captured at v0.5.0 (criterion, release, 100
 samples/bench; CPU). Absolute times are machine-dependent (a shared CI VM); the
 **ratios** — content-addressing reuse and matmul scaling efficiency — are the
 load-bearing results. Re-run with `cargo bench -p hologram-bench` and the
-release perf-floor V&V with `cargo test --release -p hologram-backend --test
+release perf-floor V&V with `cargo test --release -p hologram-compute --test
 performance --features cpu -- --nocapture`.
 
 
@@ -83,7 +83,7 @@ that is physics, not a defect, and the pin says so.
 
 Decode (`m = 1`) is untouched: one row has nothing to amortize over, and it keeps
 the pooled dispatch. Pinned by
-`cargo run --release --example i8_m_scaling -p hologram-backend`.
+`cargo run --release --example i8_m_scaling -p hologram-compute`.
 
 **Reordering is free here, and only here.** Every output cell is one whole dot
 over the same `k`-vector; only the order in which cells are visited changes. The
@@ -297,7 +297,7 @@ with and without the feature.
 ### Roofline verdicts: the kernels have no headroom left (captured at v0.8.2)
 
 "Faster than yesterday" cannot answer *are we done*. `cargo run --release
---example roofline -p hologram-backend` measures the machine's ceilings in the
+--example roofline -p hologram-compute` measures the machine's ceilings in the
 same process and places each kernel against them. This host (EPYC, shared VM):
 
 | kernel | achieved | ceiling | verdict |
@@ -373,7 +373,7 @@ wasmtime, `m = 1`, best-of-3:
 
 plus `m = 2` 0.429 → 0.227 ms (1.89×) and `m = 3` 0.634 → 0.317 ms (2.00×) at
 `k = n = 1024`. Pinned by the `small-m sweep` section of
-`cargo run --release --example wasm_matmul_timing -p hologram-backend --target
+`cargo run --release --example wasm_matmul_timing -p hologram-compute --target
 wasm32-wasip1` (criterion, a hologram-bench dependency, does not build for wasm).
 The `k = n = 512` blocked row is ~11% *slower*: at 1 MB the weight is
 cache-resident, so the extra tier is overhead rather than latency cover. Recorded,
@@ -557,7 +557,7 @@ iteration signals; acceptance is witnessed downstream by hologram-ai's
 performance contract, which exercises the deployed browser build. Re-run:
 `cargo bench -p hologram-bench --bench decode_gemv` (native) and
 `RUSTFLAGS="-Ctarget-feature=+simd128" cargo run --release --example
-wasm_matmul_timing --target wasm32-wasip1 -p hologram-backend --features
+wasm_matmul_timing --target wasm32-wasip1 -p hologram-compute --features
 std,cpu` under wasmtime.
 
 ## Regression gate (CI)

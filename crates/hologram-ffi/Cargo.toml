@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 hologram-compiler = { workspace = true, features = ["std"] }
 hologram-exec     = { workspace = true, features = ["std"] }
 hologram-archive  = { workspace = true, features = ["std"] }
-hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-compute  = { workspace = true, features = ["std", "cpu"] }
 hologram-graph    = { workspace = true }
 uor-prism         = { workspace = true }
 

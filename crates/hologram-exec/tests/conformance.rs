@@ -6,8 +6,8 @@
 //! (graph-memo hit) is **byte-identical** to the first — proving the reuse
 //! path returns the true result at scale, not a degenerate stand-in.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     constant::ConstantEntry,
@@ -799,7 +799,7 @@ fn fu2_fusion_is_semantics_preserving_and_guarded() {
 #[test]
 fn ws1_warm_lattice_matches_runtime_derivation_and_is_complete() {
     use hologram_archive::{address_bytes, decoder, derive_label, format::SectionKind, HoloLoader};
-    use hologram_backend::buffers as call_buffers;
+    use hologram_compute::buffers as call_buffers;
 
     let n = 8usize;
     let a = fill(n * n, 0xA1);
@@ -1531,7 +1531,7 @@ fn fu5_matmul_add_activation_fuses_and_conforms() {
 #[test]
 fn wl1_constant_weight_is_panel_packed_and_conforms() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::KernelCall;
+    use hologram_compute::KernelCall;
 
     let (m, k, n) = (16usize, 32usize, 48usize); // n not a multiple of 16 → padding
     let a = fill(m * k, 0x9A);
@@ -1762,7 +1762,7 @@ fn const_i8_matmul_graph(
 #[test]
 fn wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::{mm_act_quant, KernelCall};
+    use hologram_compute::{mm_act_quant, KernelCall};
 
     let (m, k, n) = (1usize, 67usize, 33usize); // decode shape, off-multiples
     let a = fill(m * k, 0xA1);
@@ -1833,7 +1833,7 @@ fn wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms() {
 #[test]
 fn wl2_undeclared_const_weight_keeps_w8a32_and_does_not_fuse() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::KernelCall;
+    use hologram_compute::KernelCall;
 
     // Same shape as `wl2_const_i8_decode_weight_fuses_omajor_w8a8_and_conforms`:
     // everything the fusion wants, except the opt-in.
@@ -1887,7 +1887,7 @@ fn const_weight_declaring_output_major_is_rejected_at_compile_time() {
 #[test]
 fn wl2_prefill_m_keeps_runtime_w8a32_fusion() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::KernelCall;
+    use hologram_compute::KernelCall;
 
     // m = 8 is above the decode gate: the archive must carry the unfused
     // Dequantize + MatMul pair (load-time fusion then serves it as W8A32
@@ -1936,7 +1936,7 @@ fn wl2_prefill_m_keeps_runtime_w8a32_fusion() {
 #[test]
 fn wl2_asymmetric_zero_points_do_not_compile_time_fuse() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::KernelCall;
+    use hologram_compute::KernelCall;
 
     // Nonzero per-channel zero-points break the symmetric condition: the
     // compiler must leave the pair for the (W8A32) load-time fusion.
@@ -2412,7 +2412,7 @@ fn ref_w4a8(a: &[f32], wq_packed: &[u8], scales: &[f32], m: usize, k: usize, n: 
 #[test]
 fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::{mm_act_quant, KernelCall};
+    use hologram_compute::{mm_act_quant, KernelCall};
     use hologram_graph::QuantAttrs;
     const DTYPE_I4: u8 = 10;
 
@@ -2541,7 +2541,7 @@ fn wl3_const_i4_decode_weight_fuses_lut_tier_and_conforms() {
 #[test]
 fn wl3_odd_k_i4_stays_on_generic_path() {
     use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-    use hologram_backend::KernelCall;
+    use hologram_compute::KernelCall;
     use hologram_graph::QuantAttrs;
     const DTYPE_I4: u8 = 10;
 
@@ -2664,12 +2664,12 @@ fn wl3_odd_k_i4_stays_on_generic_path() {
 // (not only f32), because the fused kernel narrows the matmul product to the
 // storage dtype and reads it back before the epilogue — byte-identical to the
 // unfused chain (proven at the kernel layer in
-// `hologram-backend/tests/fused_epilogue_dtype.rs`). The 3-op
+// `hologram-compute/tests/fused_epilogue_dtype.rs`). The 3-op
 // `matmul → add → activation` is deliberately NOT fused for bf16/f16 (it would
 // skip narrowing the sum before the activation), so it must stay two kernels.
 #[test]
 fn fu6_bf16_epilogue_fuses_two_op_only() {
-    use hologram_backend::cpu::dtype::{read_bf16, write_bf16};
+    use hologram_compute::cpu::dtype::{read_bf16, write_bf16};
     const DTYPE_BF16: u8 = 7;
     let bf = DTypeId(DTYPE_BF16);
     let n = 16usize;

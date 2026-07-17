@@ -2,8 +2,8 @@
 //! `KernelCall::Cast` and executes through the CPU cast kernel — the general
 //! int→float conversion (distinct from `Dequantize`), value-preserving.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

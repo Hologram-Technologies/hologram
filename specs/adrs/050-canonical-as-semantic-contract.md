@@ -39,7 +39,7 @@ execution path:
   the documentation of op semantics. Anyone implementing op X for
   any backend conforms to this kernel's behaviour.
 - `hologram-exec/src/float_dispatch/` and any future
-  `hologram-backend` (Metal, WebGPU, Atlas) provide *optimised
+  `hologram-compute` (Metal, WebGPU, Atlas) provide *optimised
   implementations* that conform to the canonical contract. They are
   not required to call canonical kernels at runtime.
 - **Conformance is enforced by tests**, not by call-graph topology.

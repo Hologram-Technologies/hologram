@@ -14,7 +14,7 @@ Backends are selected by **Cargo feature**, not by `build.rs` autodetection.
 
 ## Crate feature flags
 
-### hologram-backend
+### hologram-compute
 
 | Feature | Description | Default |
 |---------|-------------|---------|
@@ -34,7 +34,7 @@ intra-kernel (a single `dispatch` fans its disjoint output tiles across cores).
 |---------|-------------|---------|
 | `std` | Host std error surface; forwards `std` to backend/archive/compiler | on |
 | `tiered-exec` | PM_7 memory-affinity tier classification + observability | off |
-| `parallel` | Forwards to `hologram-backend/parallel` (intra-kernel multi-core) | off |
+| `parallel` | Forwards to `hologram-compute/parallel` (intra-kernel multi-core) | off |
 
 ### hologram-archive
 
@@ -97,7 +97,7 @@ content-addressed buffer pool (`crates/hologram-exec/src/buffer.rs`): a value
 lives in one aligned buffer and a slot binds to it; reuse rebinds, constants
 are pinned, and residency checks elide redundant compute. The compiler lowers
 the graph IR (`hologram_graph::OpKind`) into a sequence of `KernelCall`s
-(`crates/hologram-backend/src/kernel_call.rs`) that the CPU backend dispatches
+(`crates/hologram-compute/src/kernel_call.rs`) that the CPU backend dispatches
 by exhaustive match.
 
 ## Build recipes
@@ -107,13 +107,13 @@ by exhaustive match.
 cargo build
 
 # WebGPU on desktop
-cargo build -p hologram-backend --features wgpu
+cargo build -p hologram-compute --features wgpu
 
 # Apple GPU (macOS)
-cargo build -p hologram-backend --features metal
+cargo build -p hologram-compute --features metal
 
 # no_std core (wasm / embedded): default-features off, no std
-cargo build -p hologram-backend --no-default-features --features cpu
+cargo build -p hologram-compute --no-default-features --features cpu
 
 # WebAssembly FFI
 cargo build -p hologram-ffi --features wasm

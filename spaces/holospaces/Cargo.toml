@@ -19,10 +19,10 @@ std = [
     "dep:wasmparser",
     "dep:ruzstd",
     "dep:hologram-exec",
-    "dep:hologram-backend",
+    "dep:hologram-compute",
     "hologram-space/std",
     "hologram-exec/std",
-    "hologram-backend/std",
+    "hologram-compute/std",
     "hologram-emulator/std",
     "hologram-runtime/std",
 ]
@@ -76,7 +76,7 @@ ruzstd = { workspace = true, optional = true }
 # float math needs std today, so the engine is a `std` surface (the bare-metal
 # core still drives the Wasm-container lifecycle).
 hologram-exec = { workspace = true, optional = true }
-hologram-backend = { workspace = true, features = ["cpu"], optional = true }
+hologram-compute = { workspace = true, features = ["cpu"], optional = true }
 # Host-side provisioning surfaces, gated by `std`: the Dev Container ingestor
 # (CC-4) parses devcontainer.json; the Wasm validator (CC-5) checks modules.
 serde_json = { version = "1", optional = true }

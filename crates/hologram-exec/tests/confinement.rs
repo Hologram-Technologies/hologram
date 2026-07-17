@@ -10,8 +10,8 @@
 //! bytes, including the promotion case (bytes whose label has aged into the
 //! previous generation re-intern with no copy and are guaranteed bindable).
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::{
     node::Node,

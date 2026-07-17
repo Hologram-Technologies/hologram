@@ -110,7 +110,7 @@ All other target names are FREE:
 
 Notes:
 - `hologram-conformance` and `hologram-spike-sp3` are `publish = false` (not released).
-- Retired names need no reservation: `hologram-host` (→ types), `hologram-backend`
+- Retired names need no reservation: `hologram-host` (→ types), `hologram-compute`
   (→ compute), and every `hologram-substrate-*` / `hologram-store-*` / `hologram-runtime-*`
   / `hologram-net-*` / `hologram-bare-hal` (absorbed per `01-crate-map.md`).
 - Still TODO: publish tokens + org ownership (Hologram-Technologies), and re-confirm the

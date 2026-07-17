@@ -19,8 +19,8 @@
 
 use hologram_archive::address::{address_ring, compose_model};
 use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-use hologram_backend::CpuBackend;
 use hologram_compiler::{source, BackendKind, Compiler};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use prism::vocabulary::WittLevel;
 

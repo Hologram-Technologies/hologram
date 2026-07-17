@@ -26,7 +26,7 @@ on:
       - ".github/workflows/benchmarks.yml"
       - ".github/workflows/perf-gate.yml"
       - "crates/hologram-archive/**"
-      - "crates/hologram-backend/**"
+      - "crates/hologram-compute/**"
       - "crates/hologram-bench/**"
       - "crates/hologram-compiler/**"
       - "crates/hologram-exec/**"

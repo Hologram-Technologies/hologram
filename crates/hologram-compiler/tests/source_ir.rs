@@ -1118,7 +1118,7 @@ fn source_types_do_not_leak_into_runtime_crates() {
     let root = workspace_root();
     for runtime_crate in [
         "crates/hologram-exec/src",
-        "crates/hologram-backend/src",
+        "crates/hologram-compute/src",
         "crates/hologram-archive/src",
     ] {
         assert_no_source_type_refs(&root.join(runtime_crate));

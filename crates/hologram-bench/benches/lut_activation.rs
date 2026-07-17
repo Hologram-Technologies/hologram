@@ -6,10 +6,10 @@
 //! the genuine speedup PM_7's CpuL2 tier names.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::cpu::dtype::{read_bf16, write_bf16, DTYPE_BF16};
-use hologram_backend::cpu::lut::unary_lut;
-use hologram_backend::kernel_call::{lut_act, UnaryCall};
-use hologram_backend::{BufferRef, Workspace};
+use hologram_compute::cpu::dtype::{read_bf16, write_bf16, DTYPE_BF16};
+use hologram_compute::cpu::lut::unary_lut;
+use hologram_compute::kernel_call::{lut_act, UnaryCall};
+use hologram_compute::{BufferRef, Workspace};
 use hologram_exec::{BufferArena, SlotSpan};
 
 fn rb(slot: u32) -> BufferRef {

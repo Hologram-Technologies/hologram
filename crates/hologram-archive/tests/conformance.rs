@@ -146,7 +146,7 @@ fn as5_streaming_equals_one_shot() {
 fn ov_codec_roundtrips_beyond_u32_without_truncation() {
     use hologram_archive::decoder::decode_calls;
     use hologram_archive::kernel_codec::encode_calls;
-    use hologram_backend::{BufferRef, KernelCall, MatMulCall, UnaryCall};
+    use hologram_compute::{BufferRef, KernelCall, MatMulCall, UnaryCall};
 
     let big_len: u64 = 5_000_000_000; // > 4 GiB byte length/offset
     let big_count: u64 = u32::MAX as u64 + 1_000; // > 4.29 B elements

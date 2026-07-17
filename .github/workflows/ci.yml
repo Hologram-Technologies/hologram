@@ -134,7 +134,7 @@ jobs:
   # Cross-compilation targets (wasm32, aarch64).
   #
   # The no_std crates form the portable core that must build for every
-  # supported target. std-only crates (hologram-backend / -exec /
+  # supported target. std-only crates (hologram-compute / -exec /
   # -compiler / -ffi / -cli / -bench / -archive) depend on libc / threads
   # / mmap and are intentionally NOT cross-targeted; their CI coverage
   # is the matrix-`test` job.
@@ -220,15 +220,15 @@ jobs:
       - name: External-authority + scaling conformance (model-formats)
         run: |
           cargo test -p hologram-archive --test conformance --test model_address --features model-formats
-          cargo test -p hologram-backend --test conformance --features cpu
+          cargo test -p hologram-compute --test conformance --features cpu
           cargo test -p hologram-exec --test conformance
 
       - name: Parallel-execution conformance (--features parallel)
-        run: cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+        run: cargo test -p hologram-compute --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
 
       - name: Performance floors (release-only, PV class)
         run: |
-          cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+          cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
           cargo test --release -p hologram-exec --test performance -- --nocapture
 
   # Job 10: Quality-gate tooling tests — the gates' own Python/shell logic

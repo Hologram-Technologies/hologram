@@ -9,11 +9,11 @@
 //! through the session's dispatch counters and the retired label.
 
 use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-use hologram_backend::{
+use hologram_compiler::{compile, BackendKind};
+use hologram_compute::{
     Backend, BufferRef, CpuBackend, DecodeAttentionCall, KernelCall, KvCacheWriteCall, SplitReads,
     Workspace,
 };
-use hologram_compiler::{compile, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     node::Node,

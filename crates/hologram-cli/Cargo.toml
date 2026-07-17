@@ -15,7 +15,7 @@ path = "src/main.rs"
 # back into `std` and selects the CPU backend.
 hologram-compiler = { workspace = true, features = ["std"] }
 hologram-exec     = { workspace = true, features = ["std"] }
-hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-compute  = { workspace = true, features = ["std", "cpu"] }
 hologram-archive  = { workspace = true, features = ["std"] }
 hologram-graph    = { workspace = true }
 hologram-types     = { workspace = true, features = ["std"] }

@@ -12,8 +12,8 @@
 
 use alloc::vec::Vec;
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind, CompileError};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, ExecError, InferenceSession, InputBuffer};
 use hologram_graph::Graph;
 use hologram_runtime::Session;

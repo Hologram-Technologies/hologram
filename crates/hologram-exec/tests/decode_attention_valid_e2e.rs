@@ -8,11 +8,11 @@
 //! against the kernels dispatched directly.
 
 use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-use hologram_backend::{
+use hologram_compiler::{compile, BackendKind, CompileError};
+use hologram_compute::{
     Backend, BufferRef, CpuBackend, DecodeAttentionValidCall, KernelCall, KvCacheWriteCall,
     SplitReads, Workspace,
 };
-use hologram_compiler::{compile, BackendKind, CompileError};
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::{
     node::Node,

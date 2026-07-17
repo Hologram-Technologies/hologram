@@ -22,7 +22,7 @@ depends transitively on `uor-prism`. The architecture must reconcile this honest
 
 1. **New crate family** under `substrate/` (same workspace) that **reuses hologram's optimal,
    externally-validated κ-native primitives** — `hologram-host` (σ-axis) + `uor-addr` (witnessed
-   composition) — directly. **Not** `hologram-archive` (it depends on `hologram-backend`, the tensor
+   composition) — directly. **Not** `hologram-archive` (it depends on `hologram-compute`, the tensor
    kernel engine; G-E1). `address_bytes`/`derive_label` are byte-identical reimpls over the same
    `HologramHasher`. The compute engine (`hologram-exec`/`-backend`/`-archive`/`-ops`/`-graph`/
    `-compiler`) is a *container* dependency, never in the store/route host path — `cargo tree` CI

@@ -6,8 +6,8 @@
 //! compile→load→execute chain, not just the kernel.
 
 use hologram_archive::{decoder, format::SectionKind, HoloLoader};
-use hologram_backend::{Backend, BufferRef, CpuBackend, KernelCall, SplitReads, Workspace};
 use hologram_compiler::{compile, BackendKind, CompileError};
+use hologram_compute::{Backend, BufferRef, CpuBackend, KernelCall, SplitReads, Workspace};
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     node::Node,
