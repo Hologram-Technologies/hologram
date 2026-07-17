@@ -1,4 +1,4 @@
-@class:GV @id:GV-4 @spec:07-governance @phase:P5 @status:pending
+@class:GV @id:GV-4 @spec:07-governance @phase:P6 @status:enforced
 Feature: R4 data governance
   Scenario: capability checks at the boundary
     Given a network capability policy with quotas

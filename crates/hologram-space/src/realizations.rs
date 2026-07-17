@@ -1078,6 +1078,51 @@ impl Network {
 }
 realization!(Network, "https://hologram.foundation/realization/network");
 
+// ─────────────────── attestation keys (P6, spec 07 R3) ───────────────────
+
+/// `https://hologram.foundation/realization/attestation-key` — a signing key **bound to a
+/// κ-addressed identity as published content** (spec 07 R3). The key's identity IS its κ (the
+/// address of this realization) — self-sovereign key material published as content, exactly like
+/// Operator identity, never a second identity surface smuggled in through certificates (law 2
+/// applies to attestation too). Operands: **none** — a key is a leaf identity (like `PeerEndpoint`).
+/// Payload: `scheme:u8 ‖ public_key_bytes`, so the key is self-describing.
+///
+/// **Rotation** publishes a *new* key as new content (a new κ); old attestations stay verifiable
+/// against the key κ that made them. **Revocation** is an append-only event, never deletion — you
+/// cannot remove a key from a κ-store, only publish its revocation and require verifiers to check
+/// the chain.
+pub struct AttestationKey {
+    /// Signature-scheme id (e.g. ed25519), kept in the payload so the key is self-describing.
+    pub scheme: u8,
+    /// The public key material — published as content; its κ is the key's one identity.
+    pub public_key: Vec<u8>,
+}
+
+impl AttestationKey {
+    pub fn new(scheme: u8, public_key: Vec<u8>) -> Self {
+        Self { scheme, public_key }
+    }
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        let mut payload = Vec::with_capacity(1 + self.public_key.len());
+        payload.push(self.scheme);
+        payload.extend_from_slice(&self.public_key);
+        (Vec::new(), payload) // no operands — a key is a leaf identity
+    }
+    /// Recover `(scheme, public_key)` from a canonical attestation-key form.
+    pub fn decode(bytes: &[u8]) -> Result<(u8, Vec<u8>), RealizationError> {
+        let payload = payload_of(
+            "https://hologram.foundation/realization/attestation-key",
+            bytes,
+        )?;
+        let scheme = *payload.first().ok_or(RealizationError::Truncated)?;
+        Ok((scheme, payload[1..].to_vec()))
+    }
+}
+realization!(
+    AttestationKey,
+    "https://hologram.foundation/realization/attestation-key"
+);
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1136,6 +1181,11 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     (AppManifest::IRI, <AppManifest as Realization>::references),
     // Networks (P5, spec 04).
     (Network::IRI, <Network as Realization>::references),
+    // Attestation keys (P6, spec 07 R3).
+    (
+        AttestationKey::IRI,
+        <AttestationKey as Realization>::references,
+    ),
 ];
 
 #[cfg(test)]
@@ -1542,6 +1592,78 @@ mod tests {
                 NetworkTier::Restricted.admits(op, false)
             );
         }
+    }
+
+    // ── AttestationKey (P6 GV-3) + per-capability boundary (P6 GV-4) ──
+
+    #[test]
+    fn attestation_key_identity_is_its_kappa_single_surface() {
+        // GV-3: the signing key is published as content; its identity IS its κ — never a second
+        // identity surface. Same key content ⇒ same κ (one identity); a different key ⇒ different κ.
+        let key = AttestationKey::new(0, alloc::vec![1, 2, 3, 4]);
+        let bytes = key.canonicalize();
+        let kappa = key.kappa();
+        // The identity is verifiable content (SPINE-1): its canonical form re-derives to its κ.
+        assert!(crate::verify_kappa(&bytes, &kappa).unwrap());
+        // Deterministic single surface: republishing the same key yields the same κ.
+        assert_eq!(
+            AttestationKey::new(0, alloc::vec![1, 2, 3, 4]).kappa(),
+            kappa
+        );
+        // A rotated key is new content with a new κ (old attestations still name the old κ).
+        assert_ne!(
+            AttestationKey::new(0, alloc::vec![9, 9, 9, 9]).kappa(),
+            kappa
+        );
+        // A key is a leaf identity — no operands (references empty).
+        assert!(AttestationKey::references(&bytes).unwrap().is_empty());
+        assert_eq!(
+            AttestationKey::decode(&bytes).unwrap(),
+            (0, alloc::vec![1, 2, 3, 4])
+        );
+    }
+
+    #[test]
+    fn capability_admits_network_op_at_the_boundary_per_capability() {
+        use crate::Capabilities;
+        // GV-4: a capability policy with a per-capability quota; the check is decided from the
+        // capability alone (boundary), and the budget is this capability's own (not global).
+        let policy = Capabilities {
+            storage_roots: alloc::vec![],
+            storage_quota_bytes: 1000,
+            network_fetch: true,
+            network_announce: false,
+            publish_channels: alloc::vec![],
+            subscribe_channels: alloc::vec![],
+            memory_max_bytes: 0,
+            cpu_time_per_event_ms: 0,
+            priority_weight: 0,
+        };
+        assert!(
+            policy.admits_network_op(NetworkOp::Fetch, 0),
+            "fetch granted"
+        );
+        assert!(
+            !policy.admits_network_op(NetworkOp::Announce, 0),
+            "announce not granted"
+        );
+        assert!(
+            policy.admits_network_op(NetworkOp::Store, 500),
+            "store within quota"
+        );
+        assert!(
+            !policy.admits_network_op(NetworkOp::Store, 2000),
+            "store over quota refused"
+        );
+        // Per-capability accounting: a second capability's quota is independent, not global.
+        let other = Capabilities {
+            storage_quota_bytes: 5000,
+            ..policy.clone()
+        };
+        assert!(
+            other.admits_network_op(NetworkOp::Store, 2000),
+            "the other cap has its own budget"
+        );
     }
 
     #[test]

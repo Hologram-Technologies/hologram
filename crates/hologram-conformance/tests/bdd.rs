@@ -19,6 +19,9 @@ use hologram_space::{AppManifest, Layer, LayerKind};
 // NW-1/NW-2: a Network is a κ-realization (membership + policy operands); its tier gates capability
 // at the protocol boundary (spec 04).
 use hologram_space::{Network, NetworkOp, NetworkTier};
+// GV-3/GV-4: a signing key bound to a κ-addressed identity as content; a capability policy gating
+// network ops at the boundary with per-capability accounting (spec 07 R3/R4).
+use hologram_space::AttestationKey;
 // SP-4/SP-5: the reference HAL + Surface seams, exercised directly through the contract's
 // public API (external witness: the shipping reference impls in `hologram-space`).
 use hologram_space::{
@@ -725,6 +728,92 @@ fn nw2_assert(w: &mut ConformanceWorld) {
         Some(true),
         "every op's admission must be decided from (tier, membership) alone — a protocol-boundary \
          gate: public admits anyone, restricted/private require membership, never business logic"
+    );
+}
+
+// ───────────────────────────── GV-3 — R3 attestation: keys bind to κ-identity ─────────────────────────────
+// A signing key is self-sovereign key material published as content; its identity IS its κ (the
+// address of its canonical form) — verifiable by re-derivation, deterministic (one identity), never
+// a second identity surface smuggled in through a certificate. Witnessed against `AttestationKey`.
+
+#[given("a space signing a session attestation")]
+fn gv3_given(w: &mut ConformanceWorld) {
+    // The space's signing key (ed25519 = scheme 0, key material as content).
+    let key = AttestationKey::new(0, b"gv3-ed25519-public-key".to_vec());
+    w.canonical = key.canonicalize();
+}
+
+#[when("the signing key is published")]
+fn gv3_publish(w: &mut ConformanceWorld) {
+    // Publishing binds the key to a κ-addressed identity: its κ is the address of its content.
+    let key_kappa = address_bytes(&w.canonical);
+    let identity_is_kappa = verify_kappa(&w.canonical, &key_kappa).unwrap_or(false);
+    // One identity surface: republishing the same key content yields the same κ; a leaf identity
+    // has no operand κs and no separate certificate identity.
+    let deterministic = address_bytes(&w.canonical) == key_kappa;
+    let single_surface = AttestationKey::references(&w.canonical)
+        .map(|r| r.is_empty())
+        .unwrap_or(false);
+    w.gv3_key_bound = Some(identity_is_kappa && deterministic && single_surface);
+}
+
+#[then("it is bound to a κ-addressed identity as content, never a second identity surface")]
+fn gv3_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.gv3_key_bound,
+        Some(true),
+        "a published signing key's identity must BE its κ — verifiable content, deterministic, with \
+         no operand or certificate second identity surface (law 2 applies to attestation, R3)"
+    );
+}
+
+// ───────────────────────────── GV-4 — R4 data governance: capability at the boundary ─────────────────────────────
+// Governance is capability policies with quotas: who may store/fetch/announce, decided at the
+// import/protocol boundary from the capability alone, with per-capability (not global) accounting.
+// Witnessed against `Capabilities::admits_network_op`.
+
+#[given("a network capability policy with quotas")]
+fn gv4_given(w: &mut ConformanceWorld) {
+    // Stash the policy as CapabilitySet bytes so the World stays free of domain types.
+    let policy = Capabilities {
+        storage_roots: vec![],
+        storage_quota_bytes: 1000,
+        network_fetch: true,
+        network_announce: false,
+        publish_channels: vec![],
+        subscribe_channels: vec![],
+        memory_max_bytes: 0,
+        cpu_time_per_event_ms: 0,
+        priority_weight: 0,
+    };
+    w.canonical = CapabilitySet::new(policy).canonicalize();
+}
+
+#[when("a peer stores, fetches, or announces content")]
+fn gv4_attempt(w: &mut ConformanceWorld) {
+    let policy = CapabilitySet::to_capabilities(&w.canonical).expect("decode the policy");
+    // The check is at the boundary — decided from the capability alone, per op.
+    let fetch_ok = policy.admits_network_op(NetworkOp::Fetch, 0);
+    let announce_refused = !policy.admits_network_op(NetworkOp::Announce, 0);
+    let store_within = policy.admits_network_op(NetworkOp::Store, 500);
+    let store_over = !policy.admits_network_op(NetworkOp::Store, 2000);
+    // Accounting is per-capability: a second capability's quota is independent, not a global counter.
+    let other = Capabilities {
+        storage_quota_bytes: 5000,
+        ..policy.clone()
+    };
+    let per_capability = other.admits_network_op(NetworkOp::Store, 2000);
+    w.gv4_boundary =
+        Some(fetch_ok && announce_refused && store_within && store_over && per_capability);
+}
+
+#[then("the capability check is at the import/protocol boundary and accounting is per-capability")]
+fn gv4_assert(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.gv4_boundary,
+        Some(true),
+        "store/fetch/announce must be admitted from the capability alone (a boundary check), with \
+         each capability's quota its own — per-capability accounting, never a global counter (R4)"
     );
 }
 

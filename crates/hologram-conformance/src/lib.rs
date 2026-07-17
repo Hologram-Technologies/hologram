@@ -83,4 +83,11 @@ pub struct ConformanceWorld {
     /// `(tier, is_member)` alone — a protocol-boundary check (public admits all; restricted/private
     /// require membership), never business logic.
     pub nw2_boundary: Option<bool>,
+    /// GV-3: `true` once a published signing key is shown to be bound to a κ-addressed identity as
+    /// content (its identity IS its κ — verifiable, deterministic, single surface), never a second
+    /// identity surface.
+    pub gv3_key_bound: Option<bool>,
+    /// GV-4: `true` once a capability policy with quotas is shown to gate store/fetch/announce at
+    /// the boundary with per-capability (not global) accounting.
+    pub gv4_boundary: Option<bool>,
 }

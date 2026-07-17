@@ -392,6 +392,23 @@ impl Capabilities {
             && (!derived.network_fetch || self.network_fetch)
             && (!derived.network_announce || self.network_announce)
     }
+
+    /// The **import/protocol-boundary** capability check for a network op (spec 07 R4 / GV-4):
+    /// whether *this* capability admits `op` on `bytes_len` bytes. Decided from the capability
+    /// alone — fetch requires `network_fetch`, announce requires `network_announce`, store must fit
+    /// the **per-capability** `storage_quota_bytes` (`0` = unbounded, spec §7.6). The budget is this
+    /// capability's own, never a global counter, so per-network / per-operator accounting composes.
+    #[must_use]
+    pub fn admits_network_op(&self, op: crate::NetworkOp, bytes_len: u64) -> bool {
+        use crate::NetworkOp;
+        match op {
+            NetworkOp::Fetch => self.network_fetch,
+            NetworkOp::Announce => self.network_announce,
+            NetworkOp::Store => {
+                self.storage_quota_bytes == 0 || bytes_len <= self.storage_quota_bytes
+            }
+        }
+    }
 }
 
 // ───────────────────────────── KappaStore (sync, spec §8.1) ─────────────────────────────
