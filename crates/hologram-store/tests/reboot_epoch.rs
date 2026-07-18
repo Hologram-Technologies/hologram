@@ -1,3 +1,4 @@
+#![cfg(feature = "bare")]
 //! B1 / G-C1 witness — **reboot-monotonic ordering across reboots**.
 //!
 //! UorTime is "since boot" and resets across reboots; bare-metal §4.5 / §5.5 needs a way to order
@@ -8,7 +9,7 @@
 use hologram_space::RamBlockDevice;
 use hologram_space::RuntimeStateRegion;
 use hologram_space::{address_bytes, KappaStore, Realization};
-use hologram_store_bare::BareMetalKappaStore;
+use hologram_store::bare::BareMetalKappaStore;
 
 /// On a brand-new device the first `open` is reboot epoch 1.
 #[test]

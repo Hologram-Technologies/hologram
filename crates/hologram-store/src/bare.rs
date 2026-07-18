@@ -1,5 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-//! # hologram-store-bare
+//! # `hologram_store::bare` — bare-metal `KappaStore`
 //!
 //! The bare-metal [`KappaStore`] over a raw [`BlockDevice`] (spec §5 + arch §11.3). No filesystem,
 //! sectors are the only substrate. Layout:
@@ -21,8 +20,6 @@
 //! `KappaStore` is sync but [`BlockDevice`] I/O is async, so device futures are driven by a minimal
 //! `no_std` `block_on` (busy-poll) — immediately-ready on a RAM disk, interrupt-completing on real
 //! hardware.
-
-extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;

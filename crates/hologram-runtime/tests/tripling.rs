@@ -23,8 +23,8 @@ use hologram_runtime::WasmtimeEngine;
 use hologram_space::ContainerManifest;
 use hologram_space::RamBlockDevice;
 use hologram_space::{Capabilities, ContainerRuntime, KappaLabel71, KappaStore, Realization};
-use hologram_store_bare::BareMetalKappaStore;
-use hologram_store_native::NativeKappaStore;
+use hologram_store::bare::BareMetalKappaStore;
+use hologram_store::native::NativeKappaStore;
 use hologram_tck::MemKappaStore;
 
 /// A deterministic container exercising the full host-import surface that produces κs:

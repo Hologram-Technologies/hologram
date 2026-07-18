@@ -2,7 +2,7 @@
 //!
 //! A browser tab's store is RAM (lost on reload); a flashed node has durable
 //! flash/SD. The node opens a persistent, file-backed `KappaStore`
-//! ([`hologram_store_native::NativeKappaStore`]) and serves it over the
+//! ([`hologram_store::native::NativeKappaStore`]) and serves it over the
 //! substrate's **HTTP-CAS** protocol — `GET /cas/{κ}`, the *same* protocol the
 //! browser peer fetches by (its `fetch()` → `Console::receive`, `CC-20`) and the
 //! same a peer fetches over `get_with_fetch`. So the operator's content survives
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use hologram_net::http::live::{serve_addr, CasServer};
 use hologram_space::{KappaStore, StoreError};
-use hologram_store_native::NativeKappaStore;
+use hologram_store::native::NativeKappaStore;
 
 /// Open the node's **persistent** content store at `path` (the device's
 /// flash/SD). Content put here survives a restart — the durable half of

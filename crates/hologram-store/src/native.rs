@@ -1,4 +1,4 @@
-//! # hologram-store-native
+//! # hologram_store::native — WASI/std redb-backed KappaStore
 //!
 //! The WASI/native [`KappaStore`] backend (spec §5.5), on a **redb** B-tree index.
 //!

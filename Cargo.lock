@@ -1667,7 +1667,7 @@ dependencies = [
  "hologram-net",
  "hologram-runtime",
  "hologram-space",
- "hologram-store-native",
+ "hologram-store",
  "hologram-tck",
  "hologram-types",
  "pollster",
@@ -1816,8 +1816,7 @@ dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
  "hologram-space",
- "hologram-store-bare",
- "hologram-store-native",
+ "hologram-store",
  "hologram-tck",
  "pollster",
  "rand_chacha",
@@ -1857,25 +1856,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-store-bare"
+name = "hologram-store"
 version = "0.10.0"
 dependencies = [
+ "criterion",
  "hashbrown 0.15.5",
  "hologram-space",
  "hologram-tck",
  "hologram-types",
  "pollster",
- "spin",
-]
-
-[[package]]
-name = "hologram-store-native"
-version = "0.10.0"
-dependencies = [
- "criterion",
- "hologram-space",
- "hologram-tck",
  "redb",
+ "spin",
 ]
 
 [[package]]
@@ -1914,7 +1905,7 @@ dependencies = [
  "hologram-net",
  "hologram-runtime",
  "hologram-space",
- "hologram-store-native",
+ "hologram-store",
  "hologram-tck",
  "jsonschema",
  "libm",
@@ -1940,7 +1931,7 @@ version = "0.10.0"
 dependencies = [
  "hologram-net",
  "hologram-space",
- "hologram-store-native",
+ "hologram-store",
  "tungstenite",
  "ureq",
 ]

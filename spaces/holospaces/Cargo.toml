@@ -96,7 +96,7 @@ hologram-space = { workspace = true, features = ["std"] }
 # CC-3 — the conformance battery (dev-only; `MemKappaStore` itself now comes from
 # hologram-space, so the test kit is not a runtime dependency).
 hologram-tck = { workspace = true, features = ["std"] }
-hologram-store-native = { workspace = true }
+hologram-store = { workspace = true, features = ["native"] }
 # Real container runtime — the e2e tier boots a real hologram.* Wasm container
 # (no mocks). The consolidated hologram-runtime carries both engine backends:
 # `engine-wasmtime` (native JIT) and `engine-wasmi` (the no_std interpreter that

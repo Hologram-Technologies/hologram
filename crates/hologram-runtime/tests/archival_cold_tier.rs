@@ -10,7 +10,7 @@
 use async_trait::async_trait;
 use hologram_space::RamBlockDevice;
 use hologram_space::{Bytes, FederatedKappaSync, KappaLabel71, KappaStore, KappaSync, SyncError};
-use hologram_store_bare::BareMetalKappaStore;
+use hologram_store::bare::BareMetalKappaStore;
 use hologram_tck::MemKappaStore;
 use std::sync::Arc;
 

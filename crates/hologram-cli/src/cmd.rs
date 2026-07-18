@@ -512,7 +512,7 @@ fn app_fat(input: &Path, output: &Path, store_dir: &Path) -> Result<(), CompileE
     use hologram_archive::format::SectionKind;
     use hologram_archive::{HoloLoader, HoloWriter};
     use hologram_space::{resolve_closure, KappaStore, REGISTRY};
-    use hologram_store_native::NativeKappaStore;
+    use hologram_store::native::NativeKappaStore;
 
     let bytes = std::fs::read(input).map_err(|_| CompileError::SourceParse("read archive"))?;
     let plan = HoloLoader::from_bytes(&bytes)
@@ -888,7 +888,7 @@ mod tests {
         use hologram_archive::format::SectionKind;
         use hologram_archive::{HoloLoader, HoloWriter};
         use hologram_space::{AppManifest, KappaStore, Layer, Realization};
-        use hologram_store_native::NativeKappaStore;
+        use hologram_store::native::NativeKappaStore;
 
         let dir = std::env::temp_dir().join(format!("holo-fat-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

@@ -49,7 +49,7 @@ parallel:
 perf:
     cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
     cargo test --release -p hologram-exec --test performance -- --nocapture
-    cargo bench -p hologram-store-native --bench sp_floors -- --quick
+    cargo bench -p hologram-store --features native --bench sp_floors -- --quick
     cargo bench -p hologram-tck --bench sp_floors -- --quick
 
 # Run all tests
@@ -116,18 +116,20 @@ embedded:
         -p hologram-compute
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime -p hologram-store-bare
+        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime
+    cargo build --target thumbv7em-none-eabi --no-default-features --features bare -p hologram-store
 
 # Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
 # + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
-    cargo test -p hologram-space -p hologram-tck -p hologram-store-native \
-        -p hologram-net -p hologram-runtime -p hologram-store-bare
+    cargo test -p hologram-space -p hologram-tck \
+        -p hologram-net -p hologram-runtime
+    cargo test -p hologram-store --features bare,native   # the merged store's backend TCK tests
     cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
     cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-tck hologram-store-native hologram-store-bare hologram-net hologram-runtime; do \
+    @for c in hologram-tck hologram-store hologram-net hologram-runtime; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done

@@ -20,8 +20,7 @@ wasmi = { version = "2.0.0-beta.2", default-features = false, optional = true }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
-hologram-store-bare = { workspace = true }
-hologram-store-native = { workspace = true }
+hologram-store = { workspace = true, features = ["bare", "native"] }
 pollster = { workspace = true }
 async-trait = { workspace = true }
 uor-addr = { workspace = true, features = ["alloc"] }

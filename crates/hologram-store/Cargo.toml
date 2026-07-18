@@ -1,0 +1,34 @@
+[package]
+name = "hologram-store"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "The hologram KappaStore backends in one crate — feature-gated per platform: `bare` (no_std BlockDevice, no filesystem), `native` (std redb B-tree with sharding + read-through cache), `opfs` (wasm32 browser OPFS). Every backend passes the shared TCK identically to the in-memory reference. Consolidates hologram-store-{bare,native,opfs}."
+
+[dependencies]
+hologram-space = { workspace = true }
+# `bare` (no_std BlockDevice store): the σ-axis Hasher (hologram-types) + no_std maps/locks.
+hologram-types = { workspace = true, optional = true }
+hashbrown = { workspace = true, optional = true }
+spin = { workspace = true, optional = true }
+# `native` (std redb B-tree store).
+redb = { workspace = true, optional = true }
+
+[dev-dependencies]
+hologram-tck = { workspace = true }
+pollster = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = []
+std = ["hologram-space/std"]
+# no_std bare-metal BlockDevice backend (`bare` module).
+bare = ["dep:hologram-types", "dep:hashbrown", "dep:spin"]
+# std redb B-tree backend (`native` module).
+native = ["std", "dep:redb"]
+
+[[bench]]
+name = "sp_floors"
+harness = false
+required-features = ["native"]

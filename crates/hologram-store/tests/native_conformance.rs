@@ -1,9 +1,10 @@
+#![cfg(feature = "native")]
 //! The native redb backend runs the *same* TCK as the in-memory reference (TR: one conformance
 //! definition, validated identically per substrate) plus the reachability-GC witness (ST/§10.8).
 
 use hologram_space::{ContainerManifest, REGISTRY};
 use hologram_space::{KappaStore, Realization};
-use hologram_store_native::NativeKappaStore;
+use hologram_store::native::NativeKappaStore;
 use hologram_tck::store_battery;
 
 #[test]

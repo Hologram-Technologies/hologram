@@ -1,10 +1,11 @@
+#![cfg(feature = "bare")]
 //! The bare-metal block-device store runs the **same TCK** as mem/redb (integration), plus
 //! format/reachability/**reboot persistence** end-to-end over a RAM block device.
 
 use hologram_space::{BlockDevice, RamBlockDevice};
 use hologram_space::{ContainerManifest, REGISTRY};
 use hologram_space::{KappaStore, Realization};
-use hologram_store_bare::BareMetalKappaStore;
+use hologram_store::bare::BareMetalKappaStore;
 use hologram_tck::store_battery;
 
 fn dev() -> RamBlockDevice {

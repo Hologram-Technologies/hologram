@@ -10,7 +10,7 @@ use hologram_runtime::WasmBlockDevice;
 use hologram_space::{
     address_bytes, get_with_fetch, Bytes, KappaLabel71, KappaStore, KappaSync, SyncError,
 };
-use hologram_store_bare::BareMetalKappaStore;
+use hologram_store::bare::BareMetalKappaStore;
 use hologram_tck::MemKappaStore;
 use std::collections::HashMap;
 

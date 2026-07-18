@@ -28,7 +28,7 @@ tungstenite = "0.24"
 # Storage-sync: a persistent, file-backed KappaStore on the device's flash/SD,
 # served over the substrate's HTTP-CAS protocol (the same /cas/{κ} the browser
 # peer fetches by), so the node is a durable content peer (CC-38).
-hologram-store-native = { workspace = true }
+hologram-store = { workspace = true, features = ["native"] }
 hologram-net = { workspace = true, features = ["live"] }
 hologram-space = { workspace = true, features = ["std"] }
 # OTA: the node fetches its own κ-addressed updates from the Pages site and

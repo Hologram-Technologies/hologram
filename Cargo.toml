@@ -32,9 +32,8 @@ members = [
     "crates/hologram-spike-sp3",
     "crates/hologram-tck",
     "crates/hologram-net",
-    "crates/hologram-store-native",
+    "crates/hologram-store",
     "crates/hologram-runtime",
-    "crates/hologram-store-bare",
     "crates/hologram-emulator",
     "spaces/holospaces",
     "spaces/holospaces-node",
@@ -58,9 +57,8 @@ default-members = [
     "crates/hologram-spike-sp3",
     "crates/hologram-tck",
     "crates/hologram-net",
-    "crates/hologram-store-native",
+    "crates/hologram-store",
     "crates/hologram-runtime",
-    "crates/hologram-store-bare",
     "crates/hologram-emulator",
     "spaces/holospaces",
     "spaces/holospaces-node",
@@ -106,9 +104,8 @@ hologram-spike-sp3 = { path = "crates/hologram-spike-sp3", default-features = fa
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
 hologram-tck            = { path = "crates/hologram-tck", default-features = false }
 hologram-net            = { path = "crates/hologram-net", default-features = false }
-hologram-store-native   = { path = "crates/hologram-store-native" }
+hologram-store          = { path = "crates/hologram-store", default-features = false }
 hologram-runtime        = { path = "crates/hologram-runtime", default-features = false }
-hologram-store-bare     = { path = "crates/hologram-store-bare", default-features = false }
 hologram-emulator       = { path = "crates/hologram-emulator", default-features = false }
 
 async-trait        = "0.1"

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::node::core::{parse_kappa, run as run_command, CliError, Command, Outcome};
 use clap::{Args, Subcommand};
-use hologram_store_native::NativeKappaStore;
+use hologram_store::native::NativeKappaStore;
 
 /// `hologram node …` — the deployment-substrate node (κ-label store / route).
 #[derive(Args, Debug)]

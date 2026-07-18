@@ -279,8 +279,9 @@ jobs:
         run: |
           cargo test \
             -p hologram-space -p hologram-tck \
-            -p hologram-store-native -p hologram-store-bare \
             -p hologram-net -p hologram-runtime -p hologram-cli
+          # hologram-store's backend tests are feature-gated (bare no_std / native std).
+          cargo test -p hologram-store --features bare,native
 
       - name: Live transports (NW class — HTTP-CAS + κ-XOR DHT + QUIC)
         # `tcp` so the tokio-backed uor-native DHT test compiles alongside the live HTTP-CAS
@@ -291,7 +292,7 @@ jobs:
       - name: RZ gate — compute engine absent from store/route crates
         run: |
           set -euo pipefail
-          for c in hologram-space hologram-tck hologram-store-native hologram-store-bare \
+          for c in hologram-space hologram-tck hologram-store \
                    hologram-net hologram-runtime; do
             if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
               echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
@@ -305,7 +306,9 @@ jobs:
           # metal. The runtime needs its engine-wasmi feature, so it builds as a separate invocation.
           for target in wasm32-unknown-unknown thumbv7em-none-eabi; do
             cargo build --target "$target" --no-default-features \
-              -p hologram-space -p hologram-net -p hologram-store-bare
+              -p hologram-space -p hologram-net
+            cargo build --target "$target" --no-default-features \
+              --features bare -p hologram-store
             cargo build --target "$target" --no-default-features \
               --features engine-wasmi -p hologram-runtime
           done

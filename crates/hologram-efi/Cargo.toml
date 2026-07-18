@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 hologram-space = { path = "../../crates/hologram-space", default-features = false }
-hologram-store-bare     = { path = "../hologram-store-bare", default-features = false }
+hologram-store          = { path = "../hologram-store", default-features = false, features = ["bare"] }
 uefi = { version = "0.35", features = ["alloc", "global_allocator", "panic_handler", "logger"] }
 # Force pure-Rust BLAKE3 (no x86 assembly .o) so the σ-axis links into a PE/UEFI binary.
 blake3 = { version = "1", default-features = false, features = ["pure"] }

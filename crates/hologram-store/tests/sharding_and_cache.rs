@@ -1,3 +1,4 @@
+#![cfg(feature = "native")]
 //! V&V witnesses for G1 (bounded LRU read-through cache) and G2 (file-sharding split per spec §5.5).
 //!
 //! These complement the shared TCK (`store_battery`) and the reachability-GC witness; they assert
@@ -8,7 +9,7 @@
 
 use hologram_space::REGISTRY;
 use hologram_space::{address_bytes, verify_kappa, KappaStore};
-use hologram_store_native::{CacheConfig, NativeKappaStore, SHARD_SIZE};
+use hologram_store::native::{CacheConfig, NativeKappaStore, SHARD_SIZE};
 use std::sync::Arc;
 
 /// G2-1 — round-trip a blob larger than [`SHARD_THRESHOLD`]: put returns the σ-axis address of
