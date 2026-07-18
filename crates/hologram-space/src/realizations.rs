@@ -1686,6 +1686,52 @@ impl KeyEpoch {
         self.wraps.iter().any(|w| &w.member == member)
     }
 
+    /// The enrolled members of this epoch, in order.
+    #[must_use]
+    pub fn members(&self) -> Vec<KappaLabel71> {
+        self.wraps.iter().map(|w| w.member).collect()
+    }
+
+    /// Seal `key` to each member `(member_κ, enrollment_public_key)` via `wrapper`, yielding the
+    /// per-member wraps an epoch carries. The shared building block for [`genesis`](Self::genesis)
+    /// and [`rekey`](Self::rekey) — the crypto is *injected* (`wrapper`), so the core stays dep-free.
+    pub fn wrap_for_members<W: crate::KeyWrapper>(
+        wrapper: &W,
+        members: &[(KappaLabel71, Vec<u8>)],
+        key: &[u8],
+    ) -> Vec<KeyWrap> {
+        members
+            .iter()
+            .map(|(member, enrollment_key)| KeyWrap {
+                member: *member,
+                wrapped: wrapper.wrap(enrollment_key, key),
+            })
+            .collect()
+    }
+
+    /// Cut the **next** epoch on a membership change: seal a fresh `new_key` to exactly `members`
+    /// (the post-change membership, each `(member_κ, enrollment_public_key)`), tag it `change`, and
+    /// link this epoch as predecessor. Any prior member absent from `members` — a removed member —
+    /// receives no wrap, so **forward secrecy holds by construction**; the epoch number increments by
+    /// one. This is the one correct way to rekey, so callers cannot accidentally re-wrap to a removed
+    /// member (a CLI `network rekey` or a space's membership hook calls exactly this).
+    #[must_use]
+    pub fn rekey<W: crate::KeyWrapper>(
+        &self,
+        wrapper: &W,
+        members: &[(KappaLabel71, Vec<u8>)],
+        change: MembershipChange,
+        new_key: &[u8],
+    ) -> KeyEpoch {
+        KeyEpoch::next(
+            self.network,
+            self.kappa(),
+            self.epoch.saturating_add(1),
+            change,
+            Self::wrap_for_members(wrapper, members, new_key),
+        )
+    }
+
     fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
         // refs: network, [predecessor?], then each member κ (in `wraps` order).
         let mut refs = alloc::vec![self.network];

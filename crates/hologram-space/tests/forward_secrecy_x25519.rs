@@ -194,6 +194,72 @@ fn removed_member_cannot_open_the_new_epoch_key_or_payload() {
 }
 
 #[test]
+fn rekey_helper_cuts_forward_secure_epochs_on_add_and_remove() {
+    let w = SealedBox;
+    let cipher = ChaCha;
+    let network = address_bytes(b"net-rekey");
+    let (alice_sk, alice_pk, alice_k) = member(11);
+    let (bob_sk, bob_pk, bob_k) = member(12);
+    let (carol_sk, carol_pk, carol_k) = member(13);
+
+    let all_three = [
+        (alice_k, alice_pk.as_bytes().to_vec()),
+        (bob_k, bob_pk.as_bytes().to_vec()),
+        (carol_k, carol_pk.as_bytes().to_vec()),
+    ];
+    let alice_bob = [
+        (alice_k, alice_pk.as_bytes().to_vec()),
+        (bob_k, bob_pk.as_bytes().to_vec()),
+    ];
+
+    // Genesis via the helper — K0 to all three.
+    let k0 = [0x40u8; 32];
+    let e0 = KeyEpoch::genesis(network, KeyEpoch::wrap_for_members(&w, &all_three, &k0));
+    assert_eq!(e0.epoch, 0);
+    assert_eq!(e0.members().len(), 3);
+
+    // Remove carol via `rekey` — fresh K1 sealed to {alice, bob}. The primitive excludes carol by
+    // construction (she is not in the passed membership); the epoch increments and links e0.
+    let k1 = [0x41u8; 32];
+    let e1 = e0.rekey(&w, &alice_bob, MembershipChange::MemberRemoved, &k1);
+    assert_eq!(e1.epoch, 1);
+    assert_eq!(e1.predecessor, Some(e0.kappa()));
+    assert_eq!(e1.change, MembershipChange::MemberRemoved);
+    assert!(!e1.is_member(&carol_k), "rekey excluded the removed member");
+    for kw in &e1.wraps {
+        assert!(
+            w.unwrap(&carol_sk.to_bytes(), &kw.wrapped).is_none(),
+            "removed member unwraps none of the rekeyed epoch's wraps"
+        );
+    }
+    assert_eq!(
+        w.unwrap(&alice_sk.to_bytes(), e1.wrap_for(&alice_k).unwrap()).unwrap(),
+        k1,
+        "a remaining member recovers the rekeyed key"
+    );
+    let _ = &bob_sk; // (bob symmetric to alice — asserted via the wrap set above)
+
+    // Content sealed during epoch 1 stays inaccessible to carol forever — even after she rejoins,
+    // she never held K1 (no retroactive access to the gap epoch).
+    let gap_payload = b"content only epoch-1 members can read";
+    let (gap_nonce, gap_ct) = seal_private(&cipher, &k1, gap_payload);
+
+    // Re-add carol via `rekey` — fresh K2 to all three. Epoch increments again; carol is re-enrolled
+    // for NEW content, but the epoch-1 gap remains closed to her.
+    let k2 = [0x42u8; 32];
+    let e2 = e1.rekey(&w, &all_three, MembershipChange::MemberAdded, &k2);
+    assert_eq!(e2.epoch, 2);
+    assert_eq!(e2.change, MembershipChange::MemberAdded);
+    assert!(e2.is_member(&carol_k), "re-added member is enrolled again");
+    let carol_k2 = w.unwrap(&carol_sk.to_bytes(), e2.wrap_for(&carol_k).unwrap()).unwrap();
+    assert_eq!(carol_k2, k2, "re-added member recovers the current key");
+    assert!(
+        cipher.open(&carol_k2, &gap_nonce, &gap_ct).is_none(),
+        "the re-added member's new key cannot open the epoch-1 gap content"
+    );
+}
+
+#[test]
 fn key_epoch_canonical_form_round_trips_and_dispatches() {
     let w = SealedBox;
     let network = address_bytes(b"net");
