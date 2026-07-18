@@ -67,7 +67,7 @@ impl<'a> Cursor<'a> {
 pub fn decode_calls(bytes: &[u8]) -> Result<Vec<KernelCall>, ArchiveError> {
     let mut cur = Cursor::new(bytes);
     let count = cur.u32()? as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(count.min(bytes.len())); // cap on untrusted count (DoS)
     for _ in 0..count {
         out.push(decode_one(&mut cur)?);
     }

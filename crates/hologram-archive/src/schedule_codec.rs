@@ -17,7 +17,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<Vec<u32>>, ArchiveError> {
         });
     }
     let level_count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
-    let mut levels = Vec::with_capacity(level_count);
+    let mut levels = Vec::with_capacity(level_count.min(bytes.len())); // cap on untrusted count (DoS)
     let mut cursor = 4usize;
     for _ in 0..level_count {
         if cursor + 4 > bytes.len() {
