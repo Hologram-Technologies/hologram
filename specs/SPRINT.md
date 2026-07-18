@@ -501,8 +501,15 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       now negotiate. **Verified with zero regression**: the whole DHT suite (fetch / find_node /
       get_providers / forgery-rejection — 8/8) passes with the handshake in the flow, proving the
       two-peer negotiate→fetch path works end-to-end. `no_std` core unaffected (tcp-gated).
-    - [ ] non-conformance P5 follow-on: iroh/WebRTC transports; `network join`/`delegate` (need the
-      node store); the live multi-node TCK battery on the heavy CI runner.
+    - [x] **transport inventory** (2026-07-17) — the frame protocol + wire-version handshake are
+      carried by **TCP** (`TcpKappaSync`, handshake both sides), **HTTP-CAS** (`http::live`), the
+      **bare-metal** NIC (`BareNetSync`), and **WebSocket** (browser-egress exit node in
+      `holospaces-node`, `tungstenite`, tested end-to-end — CC-16). `network delegate` shipped
+      (file-based Delegation w/ attenuation). `app fat`/`network create` use the persistent
+      `NativeKappaStore`.
+    - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): the **iroh**
+      native-NAT-traversal P2P transport (pump); WebRTC browser endpoint; `network join` (peer routing
+      state); the live multi-node TCK battery on the heavy CI runner.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
