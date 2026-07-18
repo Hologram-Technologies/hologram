@@ -524,7 +524,38 @@ jobs:
         working-directory: specs/holospaces
         run: bash scripts/build.sh
 
-  # Job 16: Verify all quality gates passed
+  # Job 16: Deep coverage-guided fuzz of the network-facing parsers (spec refactor/03 §Parser
+  # hardening — "fuzz targets ... CI-permanent"). Nightly + manual only: the per-PR always-green gate
+  # is the deterministic in-tree mutation suites (crates/{hologram-space,hologram-archive}/tests/
+  # parser_hardening.rs, run by the `test` job). Here the libfuzzer targets run under ASan for a
+  # bounded time; a discovered crash fails the nightly run.
+  fuzz:
+    name: Fuzz (nightly, manifest parsers)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/hologram-space/fuzz -> target
+          key: fuzz
+
+      - name: Build + deep-fuzz the manifest decoder and registry dispatch
+        working-directory: crates/hologram-space
+        run: |
+          cargo fuzz build
+          cargo fuzz run manifest_decode -- -max_total_time=300
+          cargo fuzz run references_dispatch -- -max_total_time=300
+
+  # Job 17: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()

@@ -426,8 +426,10 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       libfuzzer targets `manifest_decode` (`AppManifest::decode`/`references`) and
       `references_dispatch` (the generic registry dispatch — the network entry point). Both **build**
       under nightly+ASAN; `manifest_decode` ran **200k iterations with no crash**, independently
-      confirming the parser-hardening fixes. Generated corpus/artifacts gitignored. (A nightly CI job
-      runs them; the deterministic in-tree mutation suites remain the always-green gate.)
+      confirming the parser-hardening fixes. Generated corpus/artifacts gitignored. **CI job wired**:
+      `ci.yml` `fuzz` job (nightly `schedule` + `workflow_dispatch`) installs cargo-fuzz, builds the
+      targets under ASan, and deep-fuzzes each for 5 min — a discovered crash fails the nightly run.
+      The per-PR always-green gate stays the deterministic in-tree mutation suites.
     - [x] **`hologram app fat`** (2026-07-17) — `app fat --input --output --store <redb>` resolves
       the manifest closure over a persistent `NativeKappaStore` and embeds every reachable κ's content
       as a ContentBlob (self-contained); the app κ is unchanged. Completes the fat/thin CLI
