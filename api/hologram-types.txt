@@ -661,7 +661,7 @@ impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu
 impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu
 impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu
-pub type hologram_types::host::ActiveCpuBounds = hologram_types::HologramHostBoundsNeon
+pub type hologram_types::host::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu
 pub type hologram_types::host::HologramHasher = prism_crypto::hash::Blake3Hasher
 pub type hologram_types::host::HologramHostTypes = uor_foundation::DefaultHostTypes
 pub mod hologram_types::memory_tier
@@ -1531,6 +1531,6 @@ pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKin
 impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
 pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
 pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
-pub type hologram_types::ActiveCpuBounds = hologram_types::HologramHostBoundsNeon
+pub type hologram_types::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu
 pub type hologram_types::HologramHasher = prism_crypto::hash::Blake3Hasher
 pub type hologram_types::HologramHostTypes = uor_foundation::DefaultHostTypes

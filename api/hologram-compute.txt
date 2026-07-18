@@ -5,7 +5,7 @@ pub type hologram_compute::backend::Backend::Bounds: uor_foundation::HostBounds
 pub type hologram_compute::backend::Backend::WS: hologram_compute::workspace::Workspace
 pub fn hologram_compute::backend::Backend::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 impl<W: hologram_compute::workspace::Workspace> hologram_compute::backend::Backend for hologram_compute::cpu::CpuBackend<W>
-pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsNeon
+pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsCpu
 pub type hologram_compute::cpu::CpuBackend<W>::WS = W
 pub fn hologram_compute::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 pub mod hologram_compute::broadcast_op
@@ -76,7 +76,7 @@ impl<W: hologram_compute::workspace::Workspace> core::default::Default for holog
 pub fn hologram_compute::cpu::CpuBackend<W>::default() -> Self
 impl<W: hologram_compute::workspace::Workspace> core::marker::Copy for hologram_compute::cpu::CpuBackend<W>
 impl<W: hologram_compute::workspace::Workspace> hologram_compute::backend::Backend for hologram_compute::cpu::CpuBackend<W>
-pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsNeon
+pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsCpu
 pub type hologram_compute::cpu::CpuBackend<W>::WS = W
 pub fn hologram_compute::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 impl<W> core::marker::Freeze for hologram_compute::cpu::CpuBackend<W>
@@ -1373,7 +1373,7 @@ impl<W: hologram_compute::workspace::Workspace> core::default::Default for holog
 pub fn hologram_compute::cpu::CpuBackend<W>::default() -> Self
 impl<W: hologram_compute::workspace::Workspace> core::marker::Copy for hologram_compute::cpu::CpuBackend<W>
 impl<W: hologram_compute::workspace::Workspace> hologram_compute::backend::Backend for hologram_compute::cpu::CpuBackend<W>
-pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsNeon
+pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsCpu
 pub type hologram_compute::cpu::CpuBackend<W>::WS = W
 pub fn hologram_compute::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 impl<W> core::marker::Freeze for hologram_compute::cpu::CpuBackend<W>
@@ -1997,7 +1997,7 @@ pub type hologram_compute::Backend::Bounds: uor_foundation::HostBounds
 pub type hologram_compute::Backend::WS: hologram_compute::workspace::Workspace
 pub fn hologram_compute::Backend::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 impl<W: hologram_compute::workspace::Workspace> hologram_compute::backend::Backend for hologram_compute::cpu::CpuBackend<W>
-pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsNeon
+pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsCpu
 pub type hologram_compute::cpu::CpuBackend<W>::WS = W
 pub fn hologram_compute::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>
 pub trait hologram_compute::Workspace
