@@ -559,6 +559,31 @@ jobs:
           cargo fuzz run manifest_decode -- -max_total_time=300
           cargo fuzz run references_dispatch -- -max_total_time=300
 
+  # Exit-criteria demos (spec 06): the P4/P5/P6 acceptance narratives, run in-process as
+  # deterministic examples (always-green). P4 = multi-layer .holo app; P5 = restricted network with
+  # a non-member refused at the protocol boundary; P6 = private-network confidentiality + dedup. The
+  # live browser-peer / multi-node transport variants remain the heavy-CI demos (holospaces-vv-heavy).
+  exit-criteria-demos:
+    name: Exit-criteria demos (P4/P5/P6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: exit-criteria-demos
+
+      - name: Run the P4/P5/P6 exit-criteria demos
+        run: |
+          cargo run -p hologram-space --example multi_layer_app
+          cargo run -p hologram-space --example restricted_network
+          cargo run -p hologram-space --example private_confidentiality
+
   # Job 17: Verify all quality gates passed
   ci-success:
     name: CI Success
@@ -577,6 +602,7 @@ jobs:
       - substrate-opfs
       - holospaces-vv-heavy
       - docs-conformance
+      - exit-criteria-demos
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

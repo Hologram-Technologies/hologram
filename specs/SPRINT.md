@@ -647,6 +647,19 @@ Measured with `cargo tree` / `cargo-machete`:
   (wasmtime/cranelift ~100 via `engine-wasmtime`; cucumber ~30, BDD dev-dep), both genuinely used.
   **Net dep work: 6 dead declarations removed; the opt-in QUIC surface documented as intentional.**
 
+## Exit-criteria demos (spec 06 §P4/P5/P6) — runnable + CI-gated (2026-07-17)
+
+The P4–P6 acceptance narratives are now **runnable, deterministic examples** (always-green), gated by
+a new blocking CI job `exit-criteria-demos` (in `ci-success.needs`):
+- [x] **P4** `hologram-space/examples/multi_layer_app.rs` — a 4-layer `.holo` v3 app (wasm + tensor +
+  rootfs + view), validated, round-tripped; `references()` recovers the migration closure.
+- [x] **P5** `.../restricted_network.rs` — a restricted network admits members and **refuses a
+  non-member at the protocol boundary** (`NetworkTier::admits`, inputs `(tier, is_member)` only).
+- [x] **P6** `.../private_confidentiality.rs` — a member seals, a non-member (wrong key) cannot open,
+  and two members sealing the same payload converge on one κ (**L3 dedup survives encryption**).
+- [ ] The **live** variants remain heavy-CI: browser-peer ↔ native-peer over a real transport (P5),
+  multi-space boot over live nodes (P4) — they witness the same rules with real I/O.
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
