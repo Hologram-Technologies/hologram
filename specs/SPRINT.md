@@ -694,8 +694,10 @@ CI status breakdown on PR #45:
 - **Expected-breaking (need a follow-up, not a code bug)**: Semver compliance + Public-API snapshot
   (the refactor changes the public API / removes crates — the snapshot needs regenerating).
 - **Known follow-up**: CS docs conformance (arc42 V1–V8 — the G1/G2 docs import isn't done).
-- **Not refactor-caused**: Native N-API / Python Wheel SDK packaging reference no removed crate;
-  pre-existing / unrelated.
+- **SDK format guards (refactor-caused, FIXED)**: Native N-API + Python Wheel smoke tests threw
+  `AbiMismatchError: unsupported Hologram archive format 3` — the TS (`native`/`wasm` `index.ts`) and
+  Python (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped it to 3. Updated all
+  three to 3 (same class as the `c_abi` fix).
 - [ ] **Archive parser hardening (follow-up)**: `hologram-archive`'s `decoder`/`certificate_codec`/
   `constant_codec`/`schedule_codec` share the untrusted-u32 `with_capacity` pattern (pre-existing,
   passed CI). Cap them to a buffer-derived bound like `extract_refs`.
