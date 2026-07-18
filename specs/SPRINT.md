@@ -11,31 +11,47 @@ holospaces becomes the space contract's implementations, `.holo` becomes the app
 container, one `hologram` facade + `Client` under everything. Phased always-green
 (P0.5 spike → P0 → P1 → P2 → P3 hard stop → P4–P6 follow-on). Decisions D1–D29.
 
-### STATUS (2026-07-15) — the refactor is functionally complete on `chore/refactor`
+### STATUS (2026-07-17) — the refactor's IMPLEMENTABLE SCOPE IS COMPLETE on `chore/refactor`
 
-`chore/refactor` is **71 commits ahead of `main`, 0 behind** (Sprint 39's backend work merged
-in 2026-07-15). End state, every gate green at every commit:
+`chore/refactor` is **151 commits ahead of `main`, 0 behind**. Every gate green at every commit
+(`cargo check --workspace`, CI clippy `-D warnings`, conformance meta-gate + cc_gate + bdd,
+tri-target native/wasm32/thumbv7em). End state:
 
-- **`crates/`** holds every `hologram-*` crate: the compute stack + `hologram-space` (the
-  contract), `hologram-net`, `hologram-runtime` (with the generic `lifecycle::Session`, D7),
-  the four `hologram-store-*` backends, `hologram-efi`, and **`hologram-emulator`** + its
-  codemodule (the 20.6k-LOC system emulator, hoisted out of holospaces).
-- **`spaces/`** holds only the space impls: `holospaces{,-browser,-node}` (~10k LOC — the
-  boot/provisioning/peer/platform layer after the emulator hoist).
-- `substrate/` **eliminated**; no git-pins; **no LGPL** (rustpython → in-tree parser);
-  **`uor-hologram` facade** with a real **`Client<S: Space>`** (D4, MVP); verified **MSRV 1.85**;
-  **`cargo deny` green with zero license exceptions**; RZ invariant holds throughout.
-- **P1** (consolidation) ✅ · **P2** (holospaces import + port) ✅ · **P3**: generic lifecycle
-  hoisted ✅, Client MVP ✅ — remaining P3 = `open→Session` (needs the Space contract to expose a
-  `ContainerRuntime`) + naming-review gate + first release (crates.io, human-gated).
+- **`crates/` (20 workspace members, down from 24 after consolidation)** — the compute stack +
+  `hologram-space` (the contract + σ-axis core), `hologram-net` (5 transports), `hologram-runtime`
+  (generic `lifecycle::Session`), **`hologram-store`** (one crate, feature-gated `bare`/`native`/
+  `opfs` backends — was 3), **`hologram-emulator`** (with the wasm `codemodule` feature — absorbed
+  its codemodule crate), `hologram-conformance` (absorbed the spike-sp3 reference `Space`),
+  `hologram-efi`. Every crate has a `README.md`.
+- **`spaces/`** — the space impls only: `holospaces{,-browser,-node}`.
+- `substrate/` **eliminated**; no git-pins; no LGPL; **`uor-hologram` facade + `Client<S: Space>`**;
+  MSRV 1.85; `cargo deny` green; RZ invariant holds.
+- **P0** ✅ · **P1** (consolidation) ✅ · **P2** (holospaces import + port) ✅ · **P3** lifecycle +
+  Client ✅ (remaining: naming-review gate + first release) · **P4** (.holo v3: HF-1/2/3, fat/thin,
+  parser fuzz) ✅ · **P5** (networks NW-1/2, tiers, wire-version handshake, TCP/HTTP/bare/WebSocket/
+  **QUIC** + peer routing) ✅ · **P6** (governance GV-1/2/3/4, full key lifecycle, ChaCha20 Private
+  encryption, **forward secrecy** on membership change) ✅.
+- **Conformance: all P4–P6 rows enforced ✅** (HF-1/2/3, NW-1/2, GV-1/2/3/4) atop the earlier
+  LAW/SP/MG rows; honesty meta-gate green.
+- **Exit-criteria demos** (P4/P5/P6) runnable in-process + gated by CI (`exit-criteria-demos`).
+- **Dependency audit** done: 551 lock / 263 default; 6 dead declarations removed; QUIC kept
+  feature-gated (opt-in, no default-build cost) per user decision.
 
-**Next step: land it** (merge `chore/refactor` → `main`; window is optimal at 71/0). Then, in
-order: migrate hologram-ai + re-pin the external holospaces repo → expand the Space contract for
-`open→Session` → naming review → first `uor-hologram` release. Deferred: `backend→compute`
-(Sprint 39 lull); P2 tail (vv/ fixtures, OPFS dedup, V&V absorption → MG-7).
+**What GENUINELY REMAINS is not always-green code — it is release + live-I/O + external events:**
+1. **First `uor-hologram` release** (crates.io publish — human-gated: tokens/ownership, D26), then
+   **migrate hologram-ai** + re-pin the external holospaces repo (P0/P3 exit).
+2. **Live-I/O demo variants** (the in-process versions ship + are CI-gated): browser-peer ↔
+   native-peer over a real transport; multi-space boot over live nodes; the live multi-node TCK
+   battery (heavy runner). **iroh** stays blocked until `uor-prism-crypto` bumps its `blake3` pin.
+3. **G1/G2 docs-conformance import** (arc42 docs + V1–V8 validators; needs JDK/Ruby/Structurizr).
+4. Client **naming-review gate** (D29 — human review). (The two "V&V env issues" were *local-only*
+   false-negatives — CI already pins JDK 21 and uses rustup for cross-targets; no CI fix needed.)
 
-Conformance: **7 / 29 BDD scenarios enforced** (LAW-0/1/3, SP-1/3, MG-5, GV-1); honesty
-meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.)
+> NOTE: the large backlog further down this file (LUT-addressed transform chains, uor-foundation
+> 0.3.0, Metal/WebGPU backends, KV-cache quant, TinyLlama) is **Sprint 39 — a separate AI/tensor
+> optimization workstream, NOT part of this refactor.**
+
+**Next step: land it** (merge `chore/refactor` → `main`) then the release sequence above.
 
 - [x] **Spec suite** 00–08 + P0-PREP, decisions D1–D29.
 - [x] **P0.5 spike (D28)**: `hologram-space` (Space contract) + `hologram-spike-sp3`
@@ -62,8 +78,8 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
 - [ ] **P0 exit remainder** (non-blocking for P1): bridge tag cut; hologram-ai migrated
   (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
   rustup toolchain for cross-builds).
-- [ ] **P1 — substrate dissolution** (in progress; non-colliding order chosen so it avoids
-  Sprint 39's active `hologram-compute` work; perf baselines deferred until kernels settle):
+- [x] **P1 — substrate dissolution COMPLETE** (2026-07-17: `substrate/` is gone — verified absent;
+  every sub-crate absorbed into the core crates below):
   - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
     absorbed as `hologram_space::hal`; 4 dependents redirected; `substrate/hologram-bare-hal`
     deleted. All 7 scenarios + golden vectors + native/wasm builds + clippy/fmt green.
