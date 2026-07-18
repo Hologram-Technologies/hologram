@@ -691,8 +691,13 @@ CI status breakdown on PR #45:
 - **Core Rust gates green**: Clippy, Format, Docs, Cross wasm32/aarch64, Test (macOS), V&V
   (perf/parallel/model-formats), Security, **Exit-criteria demos**, Browser OPFS (Chromium), UEFI
   boot (QEMU), tooling tests. `Test (ubuntu)` + `Substrate V&V` re-running after the extract_refs fix.
-- **Expected-breaking (need a follow-up, not a code bug)**: Semver compliance + Public-API snapshot
-  (the refactor changes the public API / removes crates — the snapshot needs regenerating).
+- **Public-API snapshot (FIXED)**: regenerated all 9 snapshots for the refactored surface + fixed two
+  pre-existing tooling-debts (`hologram`→`uor-hologram` package rename; dropped consolidated
+  `hologram-host`) + deleted the stray empty `crates/hologram-host/` dir and orphan
+  `api/hologram-{host,backend}.txt`. `--check` passes.
+- **Semver compliance (expected-breaking — maintainer/release decision)**: `cargo-semver-checks`
+  flags the *intentional* breaking changes (removed crates, changed paths); signalled by the version
+  bump (0.10→0.11) at the human-gated first release (D26), not an auto-fix.
 - **Known follow-up**: CS docs conformance (arc42 V1–V8 — the G1/G2 docs import isn't done).
 - **SDK format guards (refactor-caused, FIXED)**: the TS (`native`/`wasm` `index.ts`) + Python
   (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped `.holo` to v3. The **native**
