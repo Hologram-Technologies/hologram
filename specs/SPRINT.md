@@ -638,9 +638,14 @@ Measured with `cargo tree` / `cargo-machete`:
   `hologram-ops` (bench). NOTE: cargo-machete false-positived heavily on `uor-prism`/`uor-foundation`
   (imported as `prism`/`uor_foundation`, not the crate name) — verified every removal against the
   compiler, not grep. These are hygiene; none orphan a package, so the lock stays 551.
-- [ ] **The real lever — the `quic` +42 tree** (user decision): keep feature-gated (no default-build
-  cost); trim `rcgen` (~6–8 pkgs) via a static far-future self-signed cert (TLS is confidentiality-
-  only here, integrity is κ); or drop the QUIC transport entirely (−42). Awaiting direction.
+- [x] **The `quic` +42 tree — decision: keep feature-gated** (user, 2026-07-17). It's enabled
+  nowhere by default (only CI's `--features quic` step), so its 42 packages never compile in default,
+  portable/no_std, or default-CI builds (those stay at 263). Trimming `rcgen` would embed a static
+  private key in-tree (secret-scanner smell) for only ~7 pkgs; dropping QUIC (−42) would discard a
+  working transport with no live consumer yet. Neither churn is worth it — the balloon is opt-in
+  lock surface, not default-build weight. The 551 is dominated by pre-existing gated trees
+  (wasmtime/cranelift ~100 via `engine-wasmtime`; cucumber ~30, BDD dev-dep), both genuinely used.
+  **Net dep work: 6 dead declarations removed; the opt-in QUIC surface documented as intentional.**
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
