@@ -129,9 +129,9 @@ pub mod hologram_compiler::lower
 pub struct hologram_compiler::lower::LoweredNode
 pub hologram_compiler::lower::LoweredNode::dtype: u8
 pub hologram_compiler::lower::LoweredNode::element_count: u64
-pub hologram_compiler::lower::LoweredNode::inputs: alloc::vec::Vec<hologram_backend::workspace::BufferRef>
+pub hologram_compiler::lower::LoweredNode::inputs: alloc::vec::Vec<hologram_compute::workspace::BufferRef>
 pub hologram_compiler::lower::LoweredNode::kind: hologram_ops::kind::OpKind
-pub hologram_compiler::lower::LoweredNode::output: hologram_backend::workspace::BufferRef
+pub hologram_compiler::lower::LoweredNode::output: hologram_compute::workspace::BufferRef
 pub hologram_compiler::lower::LoweredNode::quant: hologram_compiler::lower::QuantParams
 pub hologram_compiler::lower::LoweredNode::shape: hologram_compiler::lower::ShapeArgs
 pub hologram_compiler::lower::LoweredNode::witt_bits: u16
@@ -145,7 +145,7 @@ impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::LoweredN
 pub struct hologram_compiler::lower::QuantParams
 pub hologram_compiler::lower::QuantParams::act_quant: u8
 pub hologram_compiler::lower::QuantParams::channels: u32
-pub hologram_compiler::lower::QuantParams::codebook: hologram_backend::workspace::BufferRef
+pub hologram_compiler::lower::QuantParams::codebook: hologram_compute::workspace::BufferRef
 pub hologram_compiler::lower::QuantParams::inner: u32
 pub hologram_compiler::lower::QuantParams::quant_dtype: u8
 pub hologram_compiler::lower::QuantParams::scale_bits: u32
@@ -217,7 +217,7 @@ impl core::marker::Unpin for hologram_compiler::lower::ShapeArgs
 impl core::marker::UnsafeUnpin for hologram_compiler::lower::ShapeArgs
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::ShapeArgs
 impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::ShapeArgs
-pub fn hologram_compiler::lower::lower(&hologram_compiler::lower::LoweredNode) -> core::result::Result<hologram_backend::kernel_call::KernelCall, hologram_compiler::error::CompileError>
+pub fn hologram_compiler::lower::lower(&hologram_compiler::lower::LoweredNode) -> core::result::Result<hologram_compute::kernel_call::KernelCall, hologram_compiler::error::CompileError>
 pub mod hologram_compiler::pipeline
 pub struct hologram_compiler::pipeline::PerNodeUnit<'a>
 pub hologram_compiler::pipeline::PerNodeUnit::bindings: &'a [uor_foundation::enforcement::Binding]

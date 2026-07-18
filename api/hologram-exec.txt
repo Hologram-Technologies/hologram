@@ -36,10 +36,10 @@ impl core::default::Default for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
 impl core::fmt::Debug for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl hologram_backend::workspace::Workspace for hologram_exec::buffer::BufferArena
-pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_backend::workspace::BufferRef) -> &[u8]
-pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_backend::workspace::BufferRef], hologram_backend::workspace::BufferRef) -> core::option::Option<(hologram_backend::workspace::SplitReads<'a>, &'a mut [u8])>
-pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_backend::workspace::BufferRef) -> &mut [u8]
+impl hologram_compute::workspace::Workspace for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]
+pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]
 impl core::marker::Freeze for hologram_exec::buffer::BufferArena
 impl core::marker::Send for hologram_exec::buffer::BufferArena
 impl core::marker::Sync for hologram_exec::buffer::BufferArena
@@ -452,8 +452,8 @@ impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> wher
 impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin
 impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>
 impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>
-pub trait hologram_exec::session::SessionBackend: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>
-impl<B: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
+pub trait hologram_exec::session::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>
+impl<B: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
 pub mod hologram_exec::warm
 pub struct hologram_exec::warm::FileWarmStore
 impl hologram_exec::warm::FileWarmStore
@@ -693,10 +693,10 @@ impl core::default::Default for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
 impl core::fmt::Debug for hologram_exec::buffer::BufferArena
 pub fn hologram_exec::buffer::BufferArena::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl hologram_backend::workspace::Workspace for hologram_exec::buffer::BufferArena
-pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_backend::workspace::BufferRef) -> &[u8]
-pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_backend::workspace::BufferRef], hologram_backend::workspace::BufferRef) -> core::option::Option<(hologram_backend::workspace::SplitReads<'a>, &'a mut [u8])>
-pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_backend::workspace::BufferRef) -> &mut [u8]
+impl hologram_compute::workspace::Workspace for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]
+pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]
 impl core::marker::Freeze for hologram_exec::buffer::BufferArena
 impl core::marker::Send for hologram_exec::buffer::BufferArena
 impl core::marker::Sync for hologram_exec::buffer::BufferArena
@@ -973,8 +973,8 @@ impl core::marker::Unpin for hologram_exec::refinement::ValidatorOutcome
 impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorOutcome
 impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorOutcome
-pub trait hologram_exec::SessionBackend: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>
-impl<B: hologram_backend::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
+pub trait hologram_exec::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>
+impl<B: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
 pub trait hologram_exec::WarmStore
 pub fn hologram_exec::WarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
 pub fn hologram_exec::WarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])

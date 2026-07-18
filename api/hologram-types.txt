@@ -2,6 +2,8 @@ pub mod hologram_types
 pub use hologram_types::Digest
 pub use hologram_types::MatrixShape
 pub use hologram_types::VectorShape
+pub use hologram_types::prism
+pub use hologram_types::sdk
 pub mod hologram_types::act_quant
 pub const hologram_types::act_quant::W8A32: u8
 pub const hologram_types::act_quant::W8A8_TOKEN_SYM: u8
@@ -440,6 +442,228 @@ impl core::marker::Unpin for hologram_types::dtype_id::DTypeId
 impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId
 impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId
+pub mod hologram_types::host
+pub use hologram_types::host::prism
+pub use hologram_types::host::sdk
+pub struct hologram_types::host::HologramHostBoundsAvx2
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::clone(&self) -> hologram_types::HologramHostBoundsAvx2
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx2
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::eq(&self, &hologram_types::HologramHostBoundsAvx2) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::default() -> hologram_types::HologramHostBoundsAvx2
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx2
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx2
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx2
+pub const hologram_types::HologramHostBoundsAvx2::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx2::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx2::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx2
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx2
+pub struct hologram_types::host::HologramHostBoundsAvx512
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::clone(&self) -> hologram_types::HologramHostBoundsAvx512
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx512
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::eq(&self, &hologram_types::HologramHostBoundsAvx512) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::default() -> hologram_types::HologramHostBoundsAvx512
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx512
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx512
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx512
+pub const hologram_types::HologramHostBoundsAvx512::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx512::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx512::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx512
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx512
+pub struct hologram_types::host::HologramHostBoundsCpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::clone(&self) -> hologram_types::HologramHostBoundsCpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsCpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::eq(&self, &hologram_types::HologramHostBoundsCpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::default() -> hologram_types::HologramHostBoundsCpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsCpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsCpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsCpu
+pub const hologram_types::HologramHostBoundsCpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsCpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsCpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsCpu
+impl core::marker::Send for hologram_types::HologramHostBoundsCpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsCpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsCpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsCpu
+pub struct hologram_types::host::HologramHostBoundsMetal
+impl core::clone::Clone for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::clone(&self) -> hologram_types::HologramHostBoundsMetal
+impl core::cmp::Eq for hologram_types::HologramHostBoundsMetal
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::eq(&self, &hologram_types::HologramHostBoundsMetal) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::default() -> hologram_types::HologramHostBoundsMetal
+impl core::fmt::Debug for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsMetal
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsMetal
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsMetal
+pub const hologram_types::HologramHostBoundsMetal::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsMetal::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsMetal::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsMetal
+impl core::marker::Send for hologram_types::HologramHostBoundsMetal
+impl core::marker::Sync for hologram_types::HologramHostBoundsMetal
+impl core::marker::Unpin for hologram_types::HologramHostBoundsMetal
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsMetal
+pub struct hologram_types::host::HologramHostBoundsNeon
+impl core::clone::Clone for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::clone(&self) -> hologram_types::HologramHostBoundsNeon
+impl core::cmp::Eq for hologram_types::HologramHostBoundsNeon
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::eq(&self, &hologram_types::HologramHostBoundsNeon) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::default() -> hologram_types::HologramHostBoundsNeon
+impl core::fmt::Debug for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsNeon
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsNeon
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsNeon
+pub const hologram_types::HologramHostBoundsNeon::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsNeon::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsNeon::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsNeon
+impl core::marker::Send for hologram_types::HologramHostBoundsNeon
+impl core::marker::Sync for hologram_types::HologramHostBoundsNeon
+impl core::marker::Unpin for hologram_types::HologramHostBoundsNeon
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsNeon
+pub struct hologram_types::host::HologramHostBoundsWgpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::clone(&self) -> hologram_types::HologramHostBoundsWgpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsWgpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::eq(&self, &hologram_types::HologramHostBoundsWgpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::default() -> hologram_types::HologramHostBoundsWgpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsWgpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsWgpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsWgpu
+pub const hologram_types::HologramHostBoundsWgpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsWgpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsWgpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Send for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu
+pub type hologram_types::host::ActiveCpuBounds = hologram_types::HologramHostBoundsNeon
+pub type hologram_types::host::HologramHasher = prism_crypto::hash::Blake3Hasher
+pub type hologram_types::host::HologramHostTypes = uor_foundation::DefaultHostTypes
 pub mod hologram_types::memory_tier
 #[repr(u8)] pub enum hologram_types::memory_tier::MemoryTier
 pub hologram_types::memory_tier::MemoryTier::CpuL1 = 0
@@ -1002,6 +1226,222 @@ impl<const N: u64> core::marker::Unpin for hologram_types::shape::Dim<N>
 impl<const N: u64> core::marker::UnsafeUnpin for hologram_types::shape::Dim<N>
 impl<const N: u64> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Dim<N>
 impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Dim<N>
+pub struct hologram_types::HologramHostBoundsAvx2
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::clone(&self) -> hologram_types::HologramHostBoundsAvx2
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx2
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::eq(&self, &hologram_types::HologramHostBoundsAvx2) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::default() -> hologram_types::HologramHostBoundsAvx2
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx2
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx2
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx2
+pub const hologram_types::HologramHostBoundsAvx2::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx2::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx2::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx2
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx2
+pub struct hologram_types::HologramHostBoundsAvx512
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::clone(&self) -> hologram_types::HologramHostBoundsAvx512
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx512
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::eq(&self, &hologram_types::HologramHostBoundsAvx512) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::default() -> hologram_types::HologramHostBoundsAvx512
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx512
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx512
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx512
+pub const hologram_types::HologramHostBoundsAvx512::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx512::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx512::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx512
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx512
+pub struct hologram_types::HologramHostBoundsCpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::clone(&self) -> hologram_types::HologramHostBoundsCpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsCpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::eq(&self, &hologram_types::HologramHostBoundsCpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::default() -> hologram_types::HologramHostBoundsCpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsCpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsCpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsCpu
+pub const hologram_types::HologramHostBoundsCpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsCpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsCpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsCpu
+impl core::marker::Send for hologram_types::HologramHostBoundsCpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsCpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsCpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsCpu
+pub struct hologram_types::HologramHostBoundsMetal
+impl core::clone::Clone for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::clone(&self) -> hologram_types::HologramHostBoundsMetal
+impl core::cmp::Eq for hologram_types::HologramHostBoundsMetal
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::eq(&self, &hologram_types::HologramHostBoundsMetal) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::default() -> hologram_types::HologramHostBoundsMetal
+impl core::fmt::Debug for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsMetal
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsMetal
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsMetal
+pub const hologram_types::HologramHostBoundsMetal::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsMetal::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsMetal::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsMetal
+impl core::marker::Send for hologram_types::HologramHostBoundsMetal
+impl core::marker::Sync for hologram_types::HologramHostBoundsMetal
+impl core::marker::Unpin for hologram_types::HologramHostBoundsMetal
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsMetal
+pub struct hologram_types::HologramHostBoundsNeon
+impl core::clone::Clone for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::clone(&self) -> hologram_types::HologramHostBoundsNeon
+impl core::cmp::Eq for hologram_types::HologramHostBoundsNeon
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::eq(&self, &hologram_types::HologramHostBoundsNeon) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::default() -> hologram_types::HologramHostBoundsNeon
+impl core::fmt::Debug for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsNeon
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsNeon
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsNeon
+pub const hologram_types::HologramHostBoundsNeon::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsNeon::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsNeon::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsNeon
+impl core::marker::Send for hologram_types::HologramHostBoundsNeon
+impl core::marker::Sync for hologram_types::HologramHostBoundsNeon
+impl core::marker::Unpin for hologram_types::HologramHostBoundsNeon
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsNeon
+pub struct hologram_types::HologramHostBoundsWgpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::clone(&self) -> hologram_types::HologramHostBoundsWgpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsWgpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::eq(&self, &hologram_types::HologramHostBoundsWgpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::default() -> hologram_types::HologramHostBoundsWgpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsWgpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsWgpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsWgpu
+pub const hologram_types::HologramHostBoundsWgpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsWgpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsWgpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Send for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu
 pub struct hologram_types::Shape1<D0, const SITES: usize>(_)
 impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>
 pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self
@@ -1091,3 +1531,6 @@ pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKin
 impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
 pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
 pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+pub type hologram_types::ActiveCpuBounds = hologram_types::HologramHostBoundsNeon
+pub type hologram_types::HologramHasher = prism_crypto::hash::Blake3Hasher
+pub type hologram_types::HologramHostTypes = uor_foundation::DefaultHostTypes
