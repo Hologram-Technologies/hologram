@@ -15,4 +15,11 @@ extern crate alloc;
 pub mod emulator;
 pub mod machine;
 
+// The hologram Wasm **container codemodule** (ADR-009 execution surface), absorbed from the former
+// `hologram-emulator-codemodule` crate. Compiled only for the `codemodule` wasm32 `cdylib` build
+// (`scripts/build-emulator.sh`): its `#[panic_handler]` / `#[global_allocator]` must never enter a
+// normal (std) lib link, so it is gated to `feature = "codemodule"` on `wasm32`.
+#[cfg(all(feature = "codemodule", target_arch = "wasm32"))]
+mod codemodule;
+
 pub use emulator::Arch;

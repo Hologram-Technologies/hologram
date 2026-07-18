@@ -1,35 +1,31 @@
-//! The **system-emulator codemodule** — the RISC-V emulator core
-//! ([`hologram_emulator::emulator`]) compiled to a *hologram container*: a κ-addressed
-//! Wasm module that exports the container ABI (`hg_*`) and imports only the
-//! `hologram` host ABI, run by hologram's engine (Wasmtime / `wasmi`). This is
-//! the execution surface of ADR-009 — the emulator runs *on the substrate*, not
-//! as a parallel medium (Law L4).
+//! The **system-emulator codemodule** — the emulator core ([`crate::emulator`]) compiled to a
+//! *hologram container*: a κ-addressed Wasm module that exports the container ABI (`hg_*`) and
+//! imports only the `hologram` host ABI, run by hologram's engine (Wasmtime / `wasmi`). This is the
+//! execution surface of ADR-009 — the emulator runs *on the substrate*, not as a parallel medium
+//! (Law L4).
 //!
-//! It runs in one of two profiles, chosen by the initial state the host delivers
-//! at `hg_init` (written at memory offset 0, the engine's input convention):
+//! It runs in one of two profiles, chosen by the initial state the host delivers at `hg_init`
+//! (written at memory offset 0, the engine's input convention):
 //!
-//! * **batch** — the initial state is a flat RISC-V image; the emulator runs it
-//!   to completion and emits `[exit_code u64 LE][console]` via `storage_put`
-//!   (content-addressed, so the result κ is the guest's deterministic output).
-//! * **operating system** — the initial state is a small *boot descriptor*
-//!   (`b"HGOS"` + the kernel-image κ + the device-tree κ). The emulator reads
-//!   the kernel and the DTB back out of the substrate with `storage_get`
-//!   (content, by κ — Law L1/L4), becomes the SBI firmware, and boots a real OS
-//!   to userspace, emitting the same `[exit_code][console]` record. This is
-//!   ADR-009's claim fully realized: an arbitrary operating system boots *on the
-//!   substrate*, its image delivered as content and its result content-addressed.
+//! * **batch** — the initial state is a flat RISC-V image; the emulator runs it to completion and
+//!   emits `[exit_code u64 LE][console]` via `storage_put` (content-addressed, so the result κ is the
+//!   guest's deterministic output).
+//! * **operating system** — the initial state is a small *boot descriptor* (`b"HGOS"` + the
+//!   kernel-image κ + the device-tree κ). The emulator reads the kernel and the DTB back out of the
+//!   substrate with `storage_get` (content, by κ — Law L1/L4), becomes the SBI firmware, and boots a
+//!   real OS to userspace, emitting the same `[exit_code][console]` record.
 //!
-//! The container's κ snapshot is the runtime's own (it snapshots this module's
-//! linear memory), reproducible because the emulation is deterministic.
+//! The container's κ snapshot is the runtime's own (it snapshots this module's linear memory),
+//! reproducible because the emulation is deterministic.
+//!
+//! Compiled only for the `codemodule` wasm32 `cdylib` build (`scripts/build-emulator.sh`): the
+//! `#[panic_handler]` / `#[global_allocator]` below would conflict with a normal std lib link, so the
+//! module is gated to `cfg(all(feature = "codemodule", target_arch = "wasm32"))` in `lib.rs`.
 
-#![no_std]
-#![allow(unsafe_code)] // the host-ABI FFI + reading the offset-0 input region
-
-extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use hologram_emulator::emulator::{Emulator, Halt};
+use crate::emulator::{Emulator, Halt};
 
 /// The container's heap allocator (the emulator's guest RAM lives here).
 #[global_allocator]
