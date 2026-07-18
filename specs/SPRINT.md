@@ -604,16 +604,22 @@ wire-version + TCK battery (P5), payload encryption + key lifecycle chain (P6).
 ## Crate consolidation (simplification — user directive 2026-07-17)
 
 Reduce crate sprawl: one crate per concept, feature-gated backends instead of sibling crates.
-- [ ] **`hologram-store-{bare,native,opfs}` → `hologram-store`** — one crate, three feature-gated
-  backend modules (`bare` no_std/BlockDevice, `native` std/redb, `opfs` wasm32/web-sys). Repoint
-  reverse-deps (efi, runtime, cli, holospaces{,-node,-browser}, root), workspace members/exclude +
-  `[workspace.dependencies]`, imports (`hologram_store_native::` → `hologram_store::native::`), CI
-  crate lists. Must stay tri-target green (native + wasm32 + thumbv7em). Incremental always-green.
-- [ ] **`hologram-emulator-codemodule` → `hologram-emulator`** — the codemodule is a 1-file wasm32
-  `cdylib` wrapper with no lib dependents; fold in via `crate-type = ["lib","cdylib"]` + a
-  `#[cfg(target_arch="wasm32")]` `codemodule` module behind a feature. (Do first — contained.)
-- [ ] **`README.md` in every crate** — after the crate set is final (so none is written for a
-  crate about to be deleted).
+**Done (2026-07-17) — 24 crates → 20 members.**
+- [x] **`hologram-store-{bare,native,opfs}` → `hologram-store`** (5cf8c9c + 0099069) — one crate,
+  three feature-gated backend modules (`bare` no_std/BlockDevice, `native` std/redb, `opfs`
+  wasm32/web-sys + `js-api`). Repointed every reverse-dep (efi, runtime, cli, holospaces{,-node,
+  -browser}, root), workspace members/deps, imports, CI + Justfile. Tri-target green (native + wasm32
+  + thumbv7em); the opfs `js-api` bundle builds via `cargo rustc --crate-type cdylib` so the crate
+  stays a plain lib. 29 native tests + holospaces-browser wasm build verified.
+- [x] **`hologram-emulator-codemodule` → `hologram-emulator`** (e43ac39) — folded in as a
+  `codemodule` feature (`cfg(all(feature="codemodule", target_arch="wasm32"))`) built as a cdylib via
+  `scripts/build-emulator.sh` (`cargo rustc --crate-type cdylib`). Native lib + wasm32 lib + the
+  216 KB wasm codemodule all build.
+- [x] **`hologram-spike-sp3` → `hologram-conformance`** (d13528b) — the "spike" name was stale; the
+  reference `SpikeSpace` (LAW-3/SP-3 witness) is now `tests/common/mod.rs` shared test support, still
+  built from public API only so the LAW-3 witness holds. Conformance suite green.
+- [x] **`README.md` in every crate** — all 18 `crates/*` + 3 `spaces/*` now have a README derived
+  from each crate's Cargo.toml + `//!` doc (the root already had one).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
