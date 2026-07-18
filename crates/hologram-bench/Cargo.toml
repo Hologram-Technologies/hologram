@@ -14,12 +14,10 @@ bench = false
 
 [dependencies]
 hologram-types    = { workspace = true }
-hologram-ops      = { workspace = true }
 hologram-graph    = { workspace = true }
 hologram-compiler = { workspace = true, features = ["std"] }
 hologram-exec     = { workspace = true, features = ["std"] }
 hologram-compute  = { workspace = true, features = ["std", "cpu"] }
-hologram-archive  = { workspace = true, features = ["std"] }
 uor-prism         = { workspace = true }
 
 [features]

@@ -1624,7 +1624,6 @@ name = "hologram-archive"
 version = "0.10.0"
 dependencies = [
  "blake3",
- "bytemuck",
  "hashbrown 0.15.5",
  "hologram-compute",
  "hologram-graph",
@@ -1643,12 +1642,10 @@ name = "hologram-bench"
 version = "0.10.0"
 dependencies = [
  "criterion",
- "hologram-archive",
  "hologram-compiler",
  "hologram-compute",
  "hologram-exec",
  "hologram-graph",
- "hologram-ops",
  "hologram-types",
  "smallvec",
  "uor-prism",
@@ -1669,7 +1666,6 @@ dependencies = [
  "hologram-space",
  "hologram-store",
  "hologram-tck",
- "hologram-types",
  "pollster",
  "tokio",
  "uor-prism",
@@ -1806,7 +1802,6 @@ dependencies = [
  "hologram-types",
  "libm",
  "uor-foundation",
- "uor-foundation-sdk",
  "uor-prism",
 ]
 
@@ -1904,7 +1899,6 @@ dependencies = [
  "hologram-store",
  "hologram-tck",
  "jsonschema",
- "libm",
  "lsp-types",
  "miniz_oxide",
  "pollster",

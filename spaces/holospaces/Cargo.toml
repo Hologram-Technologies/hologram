@@ -63,7 +63,6 @@ async-trait = { workspace = true }
 spin = { workspace = true }
 # The emulator's F/D floating-point extension (CC-9) on hologram's no_std float
 # foundation (libm) — deterministic, reproducible across peers.
-libm = { workspace = true }
 # The Layer Assembler's gzip (DEFLATE) decoder for OCI `tar+gzip` layers
 # (no_std + alloc — part of the portable core, like the κ-disk it feeds).
 miniz_oxide = { workspace = true }

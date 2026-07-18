@@ -8,7 +8,6 @@ description = "Hologram operation markers + Term-tree emitters + reference evalu
 
 [dependencies]
 uor-foundation     = { workspace = true }
-uor-foundation-sdk = { workspace = true }
 uor-prism          = { workspace = true }
 hologram-types     = { workspace = true }
 libm               = { workspace = true }

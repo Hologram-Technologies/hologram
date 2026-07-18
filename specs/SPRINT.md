@@ -621,6 +621,27 @@ Reduce crate sprawl: one crate per concept, feature-gated backends instead of si
 - [x] **`README.md` in every crate** — all 18 `crates/*` + 3 `spaces/*` now have a README derived
   from each crate's Cargo.toml + `//!` doc (the root already had one).
 
+## Dependency audit (user directive 2026-07-17 — shrink the ballooned dep count)
+
+Measured with `cargo tree` / `cargo-machete`:
+- **551 packages in `Cargo.lock`, but only 263 in the DEFAULT (non-dev, default-feature) build** —
+  288 are dev-deps or feature-gated, so they never compile in portable/default builds.
+- **This refactor's growth is the `quic` transport: +42 packages** (quinn/rustls/rcgen/ring + tokio,
+  time, ring's ASN.1 stack, etc.), all behind the off-by-default `quic` feature. x25519 (forward
+  secrecy) is a dev-dep sharing curve25519 with the existing ed25519.
+- The other heavy trees are pre-existing + gated: **wasmtime/cranelift** (`engine-wasmtime`, ~100
+  pkgs), **cucumber** (BDD, dev-dep of hologram-conformance, ~30 pkgs). Version duplicates
+  (hashbrown ×3, thiserror v1+v2, nom v7+v8) are all forced transitively by wasmtime + cucumber +
+  tungstenite — not fixable without upstream.
+- [x] **Dead-declaration cleanup (compiler-verified)** — removed 6 unused deps: `uor-foundation-sdk`
+  (ops), `bytemuck` (archive), `libm` (holospaces), `hologram-types` (cli), `hologram-archive` +
+  `hologram-ops` (bench). NOTE: cargo-machete false-positived heavily on `uor-prism`/`uor-foundation`
+  (imported as `prism`/`uor_foundation`, not the crate name) — verified every removal against the
+  compiler, not grep. These are hygiene; none orphan a package, so the lock stays 551.
+- [ ] **The real lever — the `quic` +42 tree** (user decision): keep feature-gated (no default-build
+  cost); trim `rcgen` (~6–8 pkgs) via a static far-future self-signed cert (TLS is confidentiality-
+  only here, integrity is κ); or drop the QUIC transport entirely (−42). Awaiting direction.
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
