@@ -44,7 +44,10 @@ fn extract_refs(iri: &str, bytes: &[u8]) -> Result<References, RealizationError>
     }
     let mut cur = nul + 1;
     let n = read_u32(bytes, &mut cur)? as usize;
-    let mut refs = Vec::with_capacity(n);
+    // Cap the pre-allocation to what the remaining bytes could actually hold (each ref is KAPPA71
+    // bytes) — a hostile `n` (e.g. 2³²−1) must not reserve gigabytes before the bounds-checked loop
+    // rejects it. The loop below still fails fast on a truncated buffer.
+    let mut refs = Vec::with_capacity(n.min(bytes.len() / KAPPA71 + 1));
     for _ in 0..n {
         let end = cur
             .checked_add(KAPPA71)
