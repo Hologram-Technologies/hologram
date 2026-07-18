@@ -601,6 +601,20 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
 wire-version + TCK battery (P5), payload encryption + key lifecycle chain (P6).
 
+## Crate consolidation (simplification — user directive 2026-07-17)
+
+Reduce crate sprawl: one crate per concept, feature-gated backends instead of sibling crates.
+- [ ] **`hologram-store-{bare,native,opfs}` → `hologram-store`** — one crate, three feature-gated
+  backend modules (`bare` no_std/BlockDevice, `native` std/redb, `opfs` wasm32/web-sys). Repoint
+  reverse-deps (efi, runtime, cli, holospaces{,-node,-browser}, root), workspace members/exclude +
+  `[workspace.dependencies]`, imports (`hologram_store_native::` → `hologram_store::native::`), CI
+  crate lists. Must stay tri-target green (native + wasm32 + thumbv7em). Incremental always-green.
+- [ ] **`hologram-emulator-codemodule` → `hologram-emulator`** — the codemodule is a 1-file wasm32
+  `cdylib` wrapper with no lib dependents; fold in via `crate-type = ["lib","cdylib"]` + a
+  `#[cfg(target_arch="wasm32")]` `codemodule` module behind a feature. (Do first — contained.)
+- [ ] **`README.md` in every crate** — after the crate set is final (so none is written for a
+  crate about to be deleted).
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
