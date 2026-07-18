@@ -26,14 +26,19 @@ fn main() {
     };
 
     // Validated at load, before any layer boots (the execution invariants of the format).
-    manifest.validate().expect("a well-formed multi-layer app validates");
+    manifest
+        .validate()
+        .expect("a well-formed multi-layer app validates");
     println!(
         "built a {}-layer .holo v3 app — primary = layer {:?}",
         manifest.layers.len(),
         manifest.primary
     );
     for (i, layer) in manifest.layers.iter().enumerate() {
-        println!("  layer {i}: {:?}  entry={:?}  aux={:?}", layer.kind, layer.entry, layer.aux);
+        println!(
+            "  layer {i}: {:?}  entry={:?}  aux={:?}",
+            layer.kind, layer.entry, layer.aux
+        );
     }
 
     // One format: canonicalize → decode recovers every layer.
@@ -41,13 +46,19 @@ fn main() {
     let decoded = AppManifest::decode(&bytes).expect("the canonical form round-trips");
     assert_eq!(decoded.layers.len(), 4);
     assert_eq!(decoded.layers[0].kind, LayerKind::WasmCodemodule);
-    assert_eq!(decoded.layers[2].aux, "riscv64", "rootfs layer keeps its arch tag");
+    assert_eq!(
+        decoded.layers[2].aux, "riscv64",
+        "rootfs layer keeps its arch tag"
+    );
 
     // `references()` recovers the app's whole content graph — the migration closure.
     let refs = <AppManifest as Realization>::references(&bytes).expect("reachability closure");
     assert!(refs.contains(&address_bytes(b"tensor-plan-bytes")));
     assert!(refs.contains(&address_bytes(b"required-capability-set")));
-    println!("references() recovered {} operand κs — the migration closure", refs.len());
+    println!(
+        "references() recovered {} operand κs — the migration closure",
+        refs.len()
+    );
 
     println!("\nP4 multi-layer .holo demo: OK");
 }

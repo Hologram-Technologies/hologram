@@ -47,16 +47,25 @@ async fn quic_fetch_miss_yields_404_not_a_hang() {
     let peer_b = QuicPeer::bind(loopback(), resolver(Arc::new(MemKappaStore::new()))).unwrap();
 
     let absent = hologram_space::address_bytes(b"nobody-has-this-over-quic");
-    let got = peer_b.fetch_from(a_addr, &absent).await.expect("fetch completes");
-    assert!(got.is_none(), "an absent κ resolves to None, not an error or a hang");
+    let got = peer_b
+        .fetch_from(a_addr, &absent)
+        .await
+        .expect("fetch completes");
+    assert!(
+        got.is_none(),
+        "an absent κ resolves to None, not an error or a hang"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quic_rejects_a_forging_responder() {
     // A responder that returns bytes not matching the requested κ must be rejected: verify-on-receipt
     // re-derives the σ-axis at B, so a forged FETCH_RES_OK never passes (SPINE-4).
-    let liar: hologram_net::quic::LocalResolver =
-        Arc::new(|_k| Some(Arc::<[u8]>::from(&b"these-bytes-do-not-hash-to-the-requested-kappa"[..])));
+    let liar: hologram_net::quic::LocalResolver = Arc::new(|_k| {
+        Some(Arc::<[u8]>::from(
+            &b"these-bytes-do-not-hash-to-the-requested-kappa"[..],
+        ))
+    });
     let peer_a = QuicPeer::bind(loopback(), liar).unwrap();
     let a_addr = peer_a.local_addr().unwrap();
     let peer_b = QuicPeer::bind(loopback(), resolver(Arc::new(MemKappaStore::new()))).unwrap();
@@ -106,7 +115,11 @@ async fn quic_fetch_routes_across_joined_peers() {
     peer_b.join(peer_a.local_addr().unwrap()); // typed join
     assert_eq!(peer_b.peers().len(), 2, "both peers joined, in order");
 
-    let got = peer_b.fetch(&k).await.unwrap().expect("routed to the holder A");
+    let got = peer_b
+        .fetch(&k)
+        .await
+        .unwrap()
+        .expect("routed to the holder A");
     assert_eq!(got.as_ref(), payload);
 
     // A κ no joined peer holds → routed miss → None (every peer tried, none had it; not an error).
@@ -115,5 +128,9 @@ async fn quic_fetch_routes_across_joined_peers() {
 
     // Idempotent join: re-joining an existing peer does not duplicate it.
     peer_b.join(peer_a.local_addr().unwrap());
-    assert_eq!(peer_b.peers().len(), 2, "re-joining a known peer is a no-op");
+    assert_eq!(
+        peer_b.peers().len(),
+        2,
+        "re-joining a known peer is a no-op"
+    );
 }

@@ -64,8 +64,8 @@ impl QuicPeer {
         ensure_crypto_provider();
         let server_config =
             server_config().map_err(|_| SyncError::BackendFailure("quic-tls-server"))?;
-        let mut endpoint =
-            Endpoint::server(server_config, addr).map_err(|_| SyncError::BackendFailure("quic-bind"))?;
+        let mut endpoint = Endpoint::server(server_config, addr)
+            .map_err(|_| SyncError::BackendFailure("quic-bind"))?;
         endpoint.set_default_client_config(
             client_config().map_err(|_| SyncError::BackendFailure("quic-tls-client"))?,
         );
@@ -236,7 +236,8 @@ async fn serve_stream(
         .map_err(|_| SyncError::BackendFailure("quic-read"))?;
     // Frame 1 — the peer's HELLO. `negotiate_from_hello` refuses hostile/incompatible bytes.
     let (_k, _p, n1) = decode_frame(&buf).ok_or(SyncError::BackendFailure("quic-badhello"))?;
-    negotiate_from_hello(range, &buf[..n1]).map_err(|_| SyncError::BackendFailure("quic-refused"))?;
+    negotiate_from_hello(range, &buf[..n1])
+        .map_err(|_| SyncError::BackendFailure("quic-refused"))?;
     // Frame 2 — the FETCH_REQ. Build the response: our HELLO ++ FETCH_RES.
     let (kind, payload, _n2) =
         decode_frame(&buf[n1..]).ok_or(SyncError::BackendFailure("quic-badreq"))?;
@@ -319,10 +320,8 @@ fn ensure_crypto_provider() {
 fn server_config() -> Result<ServerConfig, Box<dyn std::error::Error + Send + Sync>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = cert.cert.der().clone();
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der()).map_err(|e| {
-            Box::<dyn std::error::Error + Send + Sync>::from(e.to_string())
-        })?;
+    let key_der = rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der())
+        .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
     Ok(ServerConfig::with_single_cert(vec![cert_der], key_der)?)
 }
 

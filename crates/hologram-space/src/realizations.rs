@@ -1765,7 +1765,8 @@ impl KeyEpoch {
         let epoch = read_u32(&payload, &mut cur)?;
         let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
         cur += 1;
-        let change = MembershipChange::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
+        let change =
+            MembershipChange::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
         cur += 1;
         let has_pred = flags & 1 == 1;
         let n_members = read_u32(&payload, &mut cur)? as usize;
@@ -1782,10 +1783,17 @@ impl KeyEpoch {
         }
         let mut wraps = Vec::with_capacity(n_members);
         for i in 0..n_members {
-            let member = *refs.get(member_base + i).ok_or(RealizationError::Malformed)?;
+            let member = *refs
+                .get(member_base + i)
+                .ok_or(RealizationError::Malformed)?;
             let wrap_len = read_u32(&payload, &mut cur)? as usize;
-            let end = cur.checked_add(wrap_len).ok_or(RealizationError::Truncated)?;
-            let wrapped = payload.get(cur..end).ok_or(RealizationError::Truncated)?.to_vec();
+            let end = cur
+                .checked_add(wrap_len)
+                .ok_or(RealizationError::Truncated)?;
+            let wrapped = payload
+                .get(cur..end)
+                .ok_or(RealizationError::Truncated)?
+                .to_vec();
             cur = end;
             wraps.push(KeyWrap { member, wrapped });
         }
@@ -1824,7 +1832,10 @@ impl KeyEpoch {
             .unwrap_or(false))
     }
 }
-realization!(KeyEpoch, "https://hologram.foundation/realization/key-epoch");
+realization!(
+    KeyEpoch,
+    "https://hologram.foundation/realization/key-epoch"
+);
 
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 

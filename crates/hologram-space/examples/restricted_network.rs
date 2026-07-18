@@ -33,9 +33,15 @@ fn main() {
 
     // Every network verb is gated the same way — members pass, the non-member is refused.
     for op in [NetworkOp::Fetch, NetworkOp::Announce, NetworkOp::Store] {
-        assert!(admits(&team, &alice, op), "member alice admitted for {op:?}");
+        assert!(
+            admits(&team, &alice, op),
+            "member alice admitted for {op:?}"
+        );
         assert!(admits(&team, &bob, op), "member bob admitted for {op:?}");
-        assert!(!admits(&team, &mallory, op), "NON-MEMBER mallory refused for {op:?}");
+        assert!(
+            !admits(&team, &mallory, op),
+            "NON-MEMBER mallory refused for {op:?}"
+        );
     }
     println!("  members alice + bob: admitted for every op");
     println!("  non-member mallory: REFUSED at the protocol boundary for every op");
@@ -48,7 +54,10 @@ fn main() {
         tier: NetworkTier::Public,
         key_ref: None,
     };
-    assert!(admits(&public, &mallory, NetworkOp::Fetch), "public admits a non-member");
+    assert!(
+        admits(&public, &mallory, NetworkOp::Fetch),
+        "public admits a non-member"
+    );
     println!("  (a public network, by contrast, admits anyone)");
 
     println!("\nP5 two-node restricted-network (non-member refused) demo: OK");

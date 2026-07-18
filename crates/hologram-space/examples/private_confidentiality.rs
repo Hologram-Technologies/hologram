@@ -45,7 +45,11 @@ fn main() {
 
     // A member seals the payload with the network key (convergent, dedup-preserving nonce).
     let (nonce, ciphertext) = seal_private(&cipher, &network_key, payload);
-    println!("member sealed {} bytes → {} bytes ciphertext", payload.len(), ciphertext.len());
+    println!(
+        "member sealed {} bytes → {} bytes ciphertext",
+        payload.len(),
+        ciphertext.len()
+    );
 
     // Another member (same key) opens it.
     assert_eq!(
@@ -65,7 +69,11 @@ fn main() {
     // Dedup survives encryption: two members sealing the SAME payload converge on one ciphertext,
     // hence one κ (Law L3 — the store holds a single copy of shared private content).
     let (nonce2, ciphertext2) = seal_private(&cipher, &network_key, payload);
-    assert_eq!(convergent_nonce(&network_key, payload), nonce, "the nonce is convergent");
+    assert_eq!(
+        convergent_nonce(&network_key, payload),
+        nonce,
+        "the nonce is convergent"
+    );
     assert_eq!(nonce, nonce2);
     assert_eq!(
         address_bytes(&ciphertext),

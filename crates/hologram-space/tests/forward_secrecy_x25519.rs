@@ -12,8 +12,8 @@
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 use hologram_space::{
-    address_bytes, references, seal_private, KappaLabel71, KappaStore, KeyEpoch, KeyWrap, KeyWrapper,
-    MemKappaStore, MembershipChange, PayloadCipher, Realization, REGISTRY,
+    address_bytes, references, seal_private, KappaLabel71, KappaStore, KeyEpoch, KeyWrap,
+    KeyWrapper, MemKappaStore, MembershipChange, PayloadCipher, Realization, REGISTRY,
 };
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -40,7 +40,11 @@ impl PayloadCipher for ChaCha {
 }
 
 /// Derive the sealed-box symmetric key + nonce from the ECDH shared secret and the two public keys.
-fn sym_and_nonce(shared: &[u8; 32], eph_pub: &[u8; 32], recipient_pub: &[u8; 32]) -> ([u8; 32], [u8; 12]) {
+fn sym_and_nonce(
+    shared: &[u8; 32],
+    eph_pub: &[u8; 32],
+    recipient_pub: &[u8; 32],
+) -> ([u8; 32], [u8; 12]) {
     let mut kh = blake3::Hasher::new();
     kh.update(b"hologram-wrap-key");
     kh.update(shared);
@@ -95,7 +99,8 @@ impl KeyWrapper for SealedBox {
         let eph_pub_bytes: [u8; 32] = wrapped[..32].try_into().ok()?;
         let eph_pub = PublicKey::from(eph_pub_bytes);
         let shared = recipient_secret.diffie_hellman(&eph_pub);
-        let (key, nonce) = sym_and_nonce(shared.as_bytes(), &eph_pub_bytes, recipient_pub.as_bytes());
+        let (key, nonce) =
+            sym_and_nonce(shared.as_bytes(), &eph_pub_bytes, recipient_pub.as_bytes());
         ChaCha20Poly1305::new(Key::from_slice(&key))
             .decrypt(Nonce::from_slice(&nonce), &wrapped[32..])
             .ok()
@@ -126,9 +131,18 @@ fn removed_member_cannot_open_the_new_epoch_key_or_payload() {
     let e0 = KeyEpoch::genesis(
         network,
         vec![
-            KeyWrap { member: alice_k, wrapped: w.wrap(alice_pk.as_bytes(), &k0) },
-            KeyWrap { member: bob_k, wrapped: w.wrap(bob_pk.as_bytes(), &k0) },
-            KeyWrap { member: carol_k, wrapped: w.wrap(carol_pk.as_bytes(), &k0) },
+            KeyWrap {
+                member: alice_k,
+                wrapped: w.wrap(alice_pk.as_bytes(), &k0),
+            },
+            KeyWrap {
+                member: bob_k,
+                wrapped: w.wrap(bob_pk.as_bytes(), &k0),
+            },
+            KeyWrap {
+                member: carol_k,
+                wrapped: w.wrap(carol_pk.as_bytes(), &k0),
+            },
         ],
     );
     let e0_kappa = store.put("blake3", &e0.canonicalize()).unwrap();
@@ -151,14 +165,23 @@ fn removed_member_cannot_open_the_new_epoch_key_or_payload() {
         1,
         MembershipChange::MemberRemoved,
         vec![
-            KeyWrap { member: alice_k, wrapped: w.wrap(alice_pk.as_bytes(), &k1) },
-            KeyWrap { member: bob_k, wrapped: w.wrap(bob_pk.as_bytes(), &k1) },
+            KeyWrap {
+                member: alice_k,
+                wrapped: w.wrap(alice_pk.as_bytes(), &k1),
+            },
+            KeyWrap {
+                member: bob_k,
+                wrapped: w.wrap(bob_pk.as_bytes(), &k1),
+            },
         ],
     );
     let e1_kappa = store.put("blake3", &e1.canonicalize()).unwrap();
 
     // Structural forward secrecy: carol is absent from epoch 1's wraps.
-    assert!(e1.wrap_for(&carol_k).is_none(), "removed member has no wrap in the new epoch");
+    assert!(
+        e1.wrap_for(&carol_k).is_none(),
+        "removed member has no wrap in the new epoch"
+    );
     assert!(!e1.is_member(&carol_k));
     assert!(e1.is_member(&alice_k) && e1.is_member(&bob_k));
 
@@ -175,7 +198,9 @@ fn removed_member_cannot_open_the_new_epoch_key_or_payload() {
     let cipher = ChaCha;
     let payload = b"post-revocation private content";
     let (nonce, ct) = seal_private(&cipher, &k1, payload);
-    let alice_k1 = w.unwrap(&alice_sk.to_bytes(), e1.wrap_for(&alice_k).unwrap()).unwrap();
+    let alice_k1 = w
+        .unwrap(&alice_sk.to_bytes(), e1.wrap_for(&alice_k).unwrap())
+        .unwrap();
     assert_eq!(alice_k1, k1);
     assert_eq!(
         cipher.open(&alice_k1, &nonce, &ct).unwrap(),
@@ -190,7 +215,10 @@ fn removed_member_cannot_open_the_new_epoch_key_or_payload() {
     // The chain-head predicate agrees, resolved over the store.
     assert!(!KeyEpoch::member_can_open_current(&carol_k, &e1_kappa, &store).unwrap());
     assert!(KeyEpoch::member_can_open_current(&alice_k, &e1_kappa, &store).unwrap());
-    assert_eq!(KeyEpoch::current(&e1_kappa, &store).unwrap().unwrap().epoch, 1);
+    assert_eq!(
+        KeyEpoch::current(&e1_kappa, &store).unwrap().unwrap().epoch,
+        1
+    );
 }
 
 #[test]
@@ -233,7 +261,8 @@ fn rekey_helper_cuts_forward_secure_epochs_on_add_and_remove() {
         );
     }
     assert_eq!(
-        w.unwrap(&alice_sk.to_bytes(), e1.wrap_for(&alice_k).unwrap()).unwrap(),
+        w.unwrap(&alice_sk.to_bytes(), e1.wrap_for(&alice_k).unwrap())
+            .unwrap(),
         k1,
         "a remaining member recovers the rekeyed key"
     );
@@ -251,7 +280,9 @@ fn rekey_helper_cuts_forward_secure_epochs_on_add_and_remove() {
     assert_eq!(e2.epoch, 2);
     assert_eq!(e2.change, MembershipChange::MemberAdded);
     assert!(e2.is_member(&carol_k), "re-added member is enrolled again");
-    let carol_k2 = w.unwrap(&carol_sk.to_bytes(), e2.wrap_for(&carol_k).unwrap()).unwrap();
+    let carol_k2 = w
+        .unwrap(&carol_sk.to_bytes(), e2.wrap_for(&carol_k).unwrap())
+        .unwrap();
     assert_eq!(carol_k2, k2, "re-added member recovers the current key");
     assert!(
         cipher.open(&carol_k2, &gap_nonce, &gap_ct).is_none(),
@@ -267,7 +298,10 @@ fn key_epoch_canonical_form_round_trips_and_dispatches() {
     let k = [0x33u8; 32];
     let e = KeyEpoch::genesis(
         network,
-        vec![KeyWrap { member: a_k, wrapped: w.wrap(a_pk.as_bytes(), &k) }],
+        vec![KeyWrap {
+            member: a_k,
+            wrapped: w.wrap(a_pk.as_bytes(), &k),
+        }],
     );
     let bytes = e.canonicalize();
 
