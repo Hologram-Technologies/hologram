@@ -513,13 +513,18 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       κ** — verify-on-receipt). `QuicPeer` serves + dials from one endpoint. 3 localhost tests
       (fetch / 404-miss / **forging-responder rejected**) — deterministic, gated in CI
       (`--features quic`). 14 new deps, no `blake3` (clean vs the κ core's 1.5 pin).
+    - [x] **`network join` — QUIC peer routing** (2026-07-17): `QuicPeer` implements the full
+      `KappaSync` — a join-ordered peer table (`join`/`add_peer`), `fetch(κ)` short-circuits on a
+      local hit then routes to each joined peer until one honestly answers (verify-on-receipt per
+      hop; dead/forging peers skipped, not fatal). Direct-dial model (announce no-op, discover empty
+      — the DHT owns gossip). quic suite 5/5.
     - [x] **iroh — blocked upstream, recorded** (2026-07-17): modern iroh needs `blake3 1.8`; the κ
       core pins `blake3 1.5` (`uor-prism-crypto`) — irreconcilable, and the only resolvable iroh
       (0.28) pulls ~291 packages + an outdated API. **Unblock path:** bump `uor-prism-crypto`'s
       blake3 range, then modern iroh layers relay/NAT-traversal onto the shipped QUIC substrate.
     - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): WebRTC browser
-      endpoint; `network join` (peer routing state); the live multi-node TCK battery on the heavy CI
-      runner; iroh (pending the blake3 unblock above).
+      endpoint; the live multi-node TCK battery on the heavy CI runner; iroh (pending the blake3
+      unblock above).
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
