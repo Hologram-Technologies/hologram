@@ -282,10 +282,11 @@ jobs:
             -p hologram-store-native -p hologram-store-bare \
             -p hologram-net -p hologram-runtime -p hologram-cli
 
-      - name: Live HTTP-CAS transport (NW class, --features live)
-        # `tcp` too, so the tokio-backed uor-native DHT test in the consolidated hologram-net
-        # (was hologram-net-tcp) compiles alongside the live HTTP-CAS transport.
-        run: cargo test -p hologram-net --features live,tcp
+      - name: Live transports (NW class — HTTP-CAS + κ-XOR DHT + QUIC)
+        # `tcp` so the tokio-backed uor-native DHT test compiles alongside the live HTTP-CAS
+        # transport; `quic` runs the encrypted-P2P-over-QUIC localhost handshake/fetch suite
+        # (spec 04 — the substrate iroh would layer NAT-traversal onto; deterministic, no flake).
+        run: cargo test -p hologram-net --features live,tcp,quic
 
       - name: RZ gate — compute engine absent from store/route crates
         run: |

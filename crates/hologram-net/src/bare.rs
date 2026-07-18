@@ -40,15 +40,17 @@ use crate::protocol::WireVersionRange;
 /// The connect-handshake HELLO carrying a `WireVersionRange` (spec 04 §Protocol hardening). Public
 /// so std transports (`tcp`) share the one kind byte for the handshake.
 pub const KIND_HELLO: u8 = 0x00;
-const KIND_FETCH_REQ: u8 = 0x01;
-const KIND_FETCH_RES_OK: u8 = 0x02;
-const KIND_FETCH_RES_404: u8 = 0x03;
+// The fetch REQ/RES kinds are `pub(crate)` so std transports in this crate (`tcp`, `quic`) build
+// the same frames over their own byte streams without re-deriving the wire format (SPINE-5).
+pub(crate) const KIND_FETCH_REQ: u8 = 0x01;
+pub(crate) const KIND_FETCH_RES_OK: u8 = 0x02;
+pub(crate) const KIND_FETCH_RES_404: u8 = 0x03;
 const KIND_ANNOUNCE: u8 = 0x10;
 const KIND_DISCOVER_REQ: u8 = 0x20;
 const KIND_DISCOVER_RES: u8 = 0x21;
 
-/// Build an outbound frame: `u32 LE len | u8 kind | payload`.
-fn encode_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
+/// Build an outbound frame: `u32 LE len | u8 kind | payload`. `pub(crate)` for the std transports.
+pub(crate) fn encode_frame(kind: u8, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(5 + payload.len());
     let len = (1 + payload.len()) as u32;
     out.extend_from_slice(&len.to_le_bytes());

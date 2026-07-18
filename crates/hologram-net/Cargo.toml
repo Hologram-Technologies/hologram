@@ -13,6 +13,13 @@ spin = { workspace = true }
 hashbrown = { workspace = true }
 # The κ-XOR DHT transport (feature `tcp`) — std hosts only.
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "sync", "io-util", "time"], optional = true }
+# QUIC transport (feature `quic`) — std hosts only. quinn/rustls/rcgen pinned to the ring crypto
+# backend (no aws-lc-rs C toolchain) and carrying NO blake3 (so no conflict with the κ core's blake3
+# 1.5 pin — this is the modern, dep-light P2P substrate iroh would layer relay/NAT-traversal onto,
+# spec 04). TLS gives the encrypted channel; content integrity stays κ-verified (verify-on-receipt).
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"], optional = true }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
@@ -25,3 +32,5 @@ std = ["hologram-space/std"]
 live = ["std"]
 # κ-XOR Kademlia DHT over TCP + tokio (`tcp`).
 tcp = ["std", "dep:tokio"]
+# Encrypted P2P over QUIC (`quic`) — quinn + rustls(ring) + a self-signed transport cert (rcgen).
+quic = ["std", "dep:tokio", "dep:quinn", "dep:rustls", "dep:rcgen"]

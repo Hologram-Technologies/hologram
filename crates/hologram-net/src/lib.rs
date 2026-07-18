@@ -7,6 +7,8 @@
 //! - [`http`] — HTTP-CAS gateway protocol (spec §6.3). `http::live` (feature `live`) is
 //!   the live HTTP/1.1 transport over `std::net`.
 //! - `tcp` (feature `tcp`) — κ-XOR Kademlia DHT over TCP + tokio, for std hosts.
+//! - `quic` (feature `quic`) — encrypted P2P over QUIC (quinn), for std hosts. The modern,
+//!   dep-light substrate iroh would layer relay/NAT-traversal onto (spec 04).
 //!
 //! κ is the only identity everywhere (SPINE-1): no PeerIds, no Multiaddrs. Per spec 04
 //! the protocol core lives here; the per-space transport pumps move to `spaces/` in P2.
@@ -18,5 +20,7 @@ pub mod bare;
 pub mod http;
 /// Wire-protocol version negotiation (spec 04 §Protocol hardening) — portable, transport-agnostic.
 pub mod protocol;
+#[cfg(feature = "quic")]
+pub mod quic;
 #[cfg(feature = "tcp")]
 pub mod tcp;

@@ -507,9 +507,19 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       `holospaces-node`, `tungstenite`, tested end-to-end — CC-16). `network delegate` shipped
       (file-based Delegation w/ attenuation). `app fat`/`network create` use the persistent
       `NativeKappaStore`.
-    - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): the **iroh**
-      native-NAT-traversal P2P transport (pump); WebRTC browser endpoint; `network join` (peer routing
-      state); the live multi-node TCK battery on the heavy CI runner.
+    - [x] **QUIC transport** (2026-07-17) — encrypted P2P over QUIC (`hologram-net::quic`, feature
+      `quic`): quinn/TLS-1.3 carrying the same `len|kind|payload` frames + wire-version handshake;
+      self-signed transport cert + skip-verify client (confidentiality from TLS, **integrity stays
+      κ** — verify-on-receipt). `QuicPeer` serves + dials from one endpoint. 3 localhost tests
+      (fetch / 404-miss / **forging-responder rejected**) — deterministic, gated in CI
+      (`--features quic`). 14 new deps, no `blake3` (clean vs the κ core's 1.5 pin).
+    - [x] **iroh — blocked upstream, recorded** (2026-07-17): modern iroh needs `blake3 1.8`; the κ
+      core pins `blake3 1.5` (`uor-prism-crypto`) — irreconcilable, and the only resolvable iroh
+      (0.28) pulls ~291 packages + an outdated API. **Unblock path:** bump `uor-prism-crypto`'s
+      blake3 range, then modern iroh layers relay/NAT-traversal onto the shipped QUIC substrate.
+    - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): WebRTC browser
+      endpoint; `network join` (peer routing state); the live multi-node TCK battery on the heavy CI
+      runner; iroh (pending the blake3 unblock above).
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
