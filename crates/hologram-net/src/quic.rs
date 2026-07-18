@@ -20,9 +20,10 @@
 //! `AttestationKey` / signed handshake), never via TLS PKI (SPINE-1: κ is the only identity).
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use hologram_space::{verify_kappa, Bytes, KappaLabel, KappaLabel71, SyncError};
+use async_trait::async_trait;
+use hologram_space::{verify_kappa, Bytes, KappaLabel, KappaLabel71, KappaSync, SyncError};
 use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
 
 use crate::bare::{
@@ -41,11 +42,18 @@ pub type LocalResolver = crate::bare::LocalResolver;
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
 /// A QUIC peer: one bound endpoint that both **serves** inbound fetches (from a resolver) and
-/// **dials** other peers. Cheap to clone the handle via [`Endpoint`]'s internal `Arc`.
+/// **dials** other peers. Implements [`KappaSync`]: a `fetch(κ)` short-circuits on a local hit, then
+/// routes to explicitly-joined peers in order. Cheap to clone (the handles are `Arc`-backed).
 #[derive(Clone)]
 pub struct QuicPeer {
     endpoint: Endpoint,
     range: WireVersionRange,
+    /// Local content resolver — a `KappaSync::fetch` checks this before any network round-trip.
+    resolver: LocalResolver,
+    /// Explicitly-joined peers the `KappaSync::fetch` impl routes to, in join order. QUIC is a
+    /// direct-dial transport (κ is the only identity — no DHT here): peers are joined via
+    /// [`QuicPeer::join`] / `add_peer`, never gossiped or discovered.
+    peers: Arc<Mutex<Vec<SocketAddr>>>,
 }
 
 impl QuicPeer {
@@ -64,8 +72,13 @@ impl QuicPeer {
         let range = WireVersionRange::CURRENT;
         // Serve inbound connections in the background — one task per accepted connection, one task
         // per bi-stream. Fetches are stateless per stream, so this scales without shared locks.
-        tokio::spawn(serve_endpoint(endpoint.clone(), resolver, range));
-        Ok(Self { endpoint, range })
+        tokio::spawn(serve_endpoint(endpoint.clone(), resolver.clone(), range));
+        Ok(Self {
+            endpoint,
+            range,
+            resolver,
+            peers: Arc::new(Mutex::new(Vec::new())),
+        })
     }
 
     /// The bound local address (resolves the ephemeral port when bound to `:0`).
@@ -73,6 +86,20 @@ impl QuicPeer {
         self.endpoint
             .local_addr()
             .map_err(|_| SyncError::BackendFailure("quic-addr"))
+    }
+
+    /// Join `peer` to this node's routing set — a subsequent `KappaSync::fetch` tries it (in join
+    /// order) after a local miss. Idempotent: a peer already present is not added twice.
+    pub fn join(&self, peer: SocketAddr) {
+        let mut peers = self.peers.lock().expect("peer table poisoned");
+        if !peers.contains(&peer) {
+            peers.push(peer);
+        }
+    }
+
+    /// A snapshot of the currently-joined peers, in routing order.
+    pub fn peers(&self) -> Vec<SocketAddr> {
+        self.peers.lock().expect("peer table poisoned").clone()
     }
 
     /// Fetch `kappa` from a specific peer over QUIC, verifying on receipt (SPINE-4). Returns
@@ -124,7 +151,54 @@ impl core::fmt::Debug for QuicPeer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("QuicPeer")
             .field("local_addr", &self.endpoint.local_addr().ok())
+            .field("peers", &self.peers())
             .finish()
+    }
+}
+
+// A `KappaSync` over explicitly-joined QUIC peers. `quic` is a std/native-only feature, so the
+// trait's native `Send` futures apply — plain `#[async_trait]` (never the `?Send` wasm variant).
+#[async_trait]
+impl KappaSync for QuicPeer {
+    async fn fetch(&self, kappa: &KappaLabel71) -> Result<Option<Bytes>, SyncError> {
+        // A local hit resolves without any network round-trip.
+        if let Some(bytes) = (self.resolver)(kappa) {
+            return Ok(Some(bytes));
+        }
+        // Snapshot the routing set and drop the lock *before* awaiting (never hold a std mutex
+        // across `.await`). Try peers in join order; the first honest hit wins. A dead or forging
+        // peer is skipped — one bad peer must not blind a fetch that another peer can answer.
+        for peer in self.peers() {
+            match self.fetch_from(peer, kappa).await {
+                Ok(Some(bytes)) => return Ok(Some(bytes)),
+                Ok(None) => continue,
+                Err(_) => continue,
+            }
+        }
+        Ok(None)
+    }
+
+    async fn announce(&self, _kappa: &KappaLabel71) {
+        // Best-effort no-op: the direct-dial QUIC transport has no announce channel (peers are
+        // joined explicitly, not gossiped). A DHT-backed transport is where announce belongs.
+    }
+
+    async fn discover(&self, _prefix: Option<&[u8]>, _limit: usize) -> Vec<KappaLabel71> {
+        // No discovery in the direct-dial model — peers are joined, content is fetched by κ.
+        Vec::new()
+    }
+
+    async fn add_peer(&self, peer_addr: &str) -> Result<(), SyncError> {
+        let addr: SocketAddr = peer_addr
+            .parse()
+            .map_err(|_| SyncError::BackendFailure("quic-bad-addr"))?;
+        self.join(addr);
+        Ok(())
+    }
+
+    async fn add_gateway(&self, _url: &str) -> Result<(), SyncError> {
+        // No HTTP gateway surface on the QUIC transport — fail-loud (SPINE-6).
+        Err(SyncError::NotEnabled)
     }
 }
 

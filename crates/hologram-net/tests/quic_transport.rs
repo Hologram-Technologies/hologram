@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use hologram_net::quic::QuicPeer;
-use hologram_space::{KappaLabel71, KappaStore};
+use hologram_space::{KappaLabel71, KappaStore, KappaSync};
 use hologram_tck::MemKappaStore;
 
 /// A resolver backed by a `MemKappaStore` — the substrate's `KappaStore::get`, as a fetch hook.
@@ -71,4 +71,49 @@ async fn quic_rejects_a_forging_responder() {
         matches!(err, hologram_space::SyncError::VerificationFailed),
         "forged content fails κ re-derivation → VerificationFailed, got {err:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quic_fetch_short_circuits_on_local_content() {
+    // With no peers joined, a `KappaSync::fetch` for locally-held content resolves from the resolver
+    // — no network round-trip, no peer required.
+    let store = Arc::new(MemKappaStore::new());
+    let k = store.put("blake3", b"held-locally").unwrap();
+    let peer = QuicPeer::bind(loopback(), resolver(store)).unwrap();
+    assert!(peer.peers().is_empty());
+
+    let got = peer.fetch(&k).await.unwrap().expect("local hit");
+    assert_eq!(got.as_ref(), b"held-locally");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quic_fetch_routes_across_joined_peers() {
+    // A holds the content; C is empty. B joins C (via the `add_peer` string API) *then* A, and does a
+    // `KappaSync::fetch` by κ: routing tries C (a miss) then A (the holder), verify-on-receipt at the
+    // hop. Join order is honored and the first hit wins.
+    let a_store = Arc::new(MemKappaStore::new());
+    let payload = b"content-reached-by-routing";
+    let k = a_store.put("blake3", payload).unwrap();
+
+    let peer_a = QuicPeer::bind(loopback(), resolver(a_store)).unwrap();
+    let peer_c = QuicPeer::bind(loopback(), resolver(Arc::new(MemKappaStore::new()))).unwrap();
+    let peer_b = QuicPeer::bind(loopback(), resolver(Arc::new(MemKappaStore::new()))).unwrap();
+
+    peer_b
+        .add_peer(&peer_c.local_addr().unwrap().to_string())
+        .await
+        .unwrap(); // string-addr join (the KappaSync surface)
+    peer_b.join(peer_a.local_addr().unwrap()); // typed join
+    assert_eq!(peer_b.peers().len(), 2, "both peers joined, in order");
+
+    let got = peer_b.fetch(&k).await.unwrap().expect("routed to the holder A");
+    assert_eq!(got.as_ref(), payload);
+
+    // A κ no joined peer holds → routed miss → None (every peer tried, none had it; not an error).
+    let absent = hologram_space::address_bytes(b"held-by-nobody");
+    assert!(peer_b.fetch(&absent).await.unwrap().is_none());
+
+    // Idempotent join: re-joining an existing peer does not duplicate it.
+    peer_b.join(peer_a.local_addr().unwrap());
+    assert_eq!(peer_b.peers().len(), 2, "re-joining a known peer is a no-op");
 }
