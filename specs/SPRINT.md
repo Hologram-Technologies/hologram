@@ -586,8 +586,16 @@ meta-gate green. (Later-phase scenarios shaped `@status:pending` at their phase.
       a key, a member resolves it from `key_ref` and seals/opens a payload, a non-member cannot open
       it, and two members sealing the same payload converge on one κ (L3 dedup on the private
       network). NW-1/NW-2 conformance unchanged; native + thumbv7em green.
-    - [ ] non-conformance P6 follow-on: key rotation on membership change (forward secrecy);
-      per-member key wrapping (asymmetric enrollment) if convergent shared-key is insufficient.
+    - [x] **forward secrecy on membership change** (2026-07-17): the `KeyEpoch` realization — a
+      Private network's payload-key as an append-only **membership-epoch chain**. Each change cuts a
+      new epoch with a **fresh random key wrapped per-member** to each *current* member's enrollment
+      public key (the new portable `KeyWrapper` seam, dep-free like `PayloadCipher`/`SignatureVerifier`).
+      A removed member is absent from the new epoch's wraps *and* can unwrap none of the others — so
+      they never obtain the new key nor open post-revocation content. This is exactly the
+      "convergent-shared-key is insufficient" branch (a convergent key is re-derivable → un-rotatable
+      to exclude a member). Reference impl `tests/forward_secrecy_x25519.rs` (X25519 sealed-box):
+      structural + cryptographic exclusion, codec round-trip + REGISTRY dispatch, parser-hardened.
+      no_std core clean (wasm32 + thumbv7em); x25519 stays a dev-dep.
 
 **All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
 non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +

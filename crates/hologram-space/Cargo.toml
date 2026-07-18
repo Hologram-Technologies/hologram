@@ -29,6 +29,10 @@ ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] 
 # Reference `PayloadCipher` for the Private-tier payload encryption seam (spec 04). DEV-dependency
 # only, same rationale — the no_std core carries just the portable trait + convergent nonce.
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# Reference `KeyWrapper` for the P6 forward-secrecy seam (spec 04 §Private): X25519 sealed-box key
+# wrapping. DEV-dependency only — the no_std core carries just the portable trait. `static_secrets`
+# gives deterministic (seeded) keys so the forward-secrecy test is reproducible / always-green.
+x25519-dalek = { version = "2", default-features = false, features = ["alloc", "static_secrets"] }
 
 [features]
 default = ["std"]

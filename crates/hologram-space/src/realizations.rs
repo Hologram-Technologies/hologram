@@ -1569,6 +1569,217 @@ realization!(
     "https://hologram.foundation/realization/key-rotation"
 );
 
+// ─────────────────── key epoch — forward secrecy on membership change (P6, spec 04 §Private) ───────────────────
+
+/// Why a [`KeyEpoch`] exists at all (a membership change) — recorded for the audit trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipChange {
+    /// The genesis epoch (the network's first key; no prior members).
+    Genesis,
+    /// A member was enrolled (forward-added). Past epochs' keys are *not* wrapped to them, so they
+    /// cannot read pre-enrollment private content unless a member re-shares it under the new key.
+    MemberAdded,
+    /// A member was removed/revoked. The new epoch key is wrapped only to the *remaining* members —
+    /// the removed member has no wrap, so they cannot open content sealed in this or any later epoch
+    /// (**forward secrecy**).
+    MemberRemoved,
+}
+
+impl MembershipChange {
+    fn to_u8(self) -> u8 {
+        match self {
+            MembershipChange::Genesis => 0,
+            MembershipChange::MemberAdded => 1,
+            MembershipChange::MemberRemoved => 2,
+        }
+    }
+    fn from_u8(b: u8) -> Result<Self, RealizationError> {
+        match b {
+            0 => Ok(MembershipChange::Genesis),
+            1 => Ok(MembershipChange::MemberAdded),
+            2 => Ok(MembershipChange::MemberRemoved),
+            _ => Err(RealizationError::Malformed),
+        }
+    }
+}
+
+/// One member's wrapped copy of an epoch's symmetric payload-key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyWrap {
+    /// The member's [`AttestationKey`] κ — bound as content, the one identity surface (R3/GV-3).
+    pub member: KappaLabel71,
+    /// The epoch key sealed to `member`'s enrollment public key via the [`KeyWrapper`](crate::KeyWrapper)
+    /// seam. Only that member can unwrap it.
+    pub wrapped: Vec<u8>,
+}
+
+/// `https://hologram.foundation/realization/key-epoch` — a Private network's payload-key at one
+/// **membership epoch** (spec 04 §Private, P6 forward secrecy). Each membership change begins a new
+/// epoch with a **fresh random symmetric key**, wrapped per-member to each *current* member's
+/// enrollment public key (the [`KeyWrapper`](crate::KeyWrapper) seam). The chain is append-only
+/// (`predecessor` links backward); the head is the current epoch.
+///
+/// **Forward secrecy** is structural *and* cryptographic. Structural: a removed member is simply
+/// absent from the new epoch's `wraps`. Cryptographic: every wrap is sealed to *another* member's
+/// public key, so the removed member's private key unwraps none of them — they cannot obtain the new
+/// key, hence cannot open any payload sealed from this epoch onward. This is precisely what a
+/// convergent shared-key cannot deliver (it is re-derivable, so un-rotatable to exclude a member),
+/// which is why the epoch key is fresh + per-member-wrapped rather than convergent.
+pub struct KeyEpoch {
+    /// The [`Network`] κ this key-epoch belongs to.
+    pub network: KappaLabel71,
+    /// The prior epoch κ (append-only chain link); `None` at genesis.
+    pub predecessor: Option<KappaLabel71>,
+    /// The monotonic epoch number (0 at genesis; +1 per membership change).
+    pub epoch: u32,
+    /// Why this epoch was cut.
+    pub change: MembershipChange,
+    /// The current members and their wrapped copies of this epoch's key, in enrollment order.
+    pub wraps: Vec<KeyWrap>,
+}
+
+impl KeyEpoch {
+    /// The genesis epoch (epoch 0, no predecessor) with the network's first per-member wraps.
+    #[must_use]
+    pub fn genesis(network: KappaLabel71, wraps: Vec<KeyWrap>) -> Self {
+        Self {
+            network,
+            predecessor: None,
+            epoch: 0,
+            change: MembershipChange::Genesis,
+            wraps,
+        }
+    }
+
+    /// The next epoch after `predecessor`, cut by `change`, re-wrapping a fresh key to `wraps`'
+    /// members. `epoch` should be the predecessor's epoch + 1 (monotonic).
+    #[must_use]
+    pub fn next(
+        network: KappaLabel71,
+        predecessor: KappaLabel71,
+        epoch: u32,
+        change: MembershipChange,
+        wraps: Vec<KeyWrap>,
+    ) -> Self {
+        Self {
+            network,
+            predecessor: Some(predecessor),
+            epoch,
+            change,
+            wraps,
+        }
+    }
+
+    /// This member's wrapped epoch-key, if they are enrolled in this epoch — else `None` (a removed
+    /// member has no wrap: the structural half of forward secrecy).
+    #[must_use]
+    pub fn wrap_for(&self, member: &KappaLabel71) -> Option<&[u8]> {
+        self.wraps
+            .iter()
+            .find(|w| &w.member == member)
+            .map(|w| w.wrapped.as_slice())
+    }
+
+    /// Whether `member` is enrolled in this epoch.
+    #[must_use]
+    pub fn is_member(&self, member: &KappaLabel71) -> bool {
+        self.wraps.iter().any(|w| &w.member == member)
+    }
+
+    fn parts(&self) -> (Vec<KappaLabel71>, Vec<u8>) {
+        // refs: network, [predecessor?], then each member κ (in `wraps` order).
+        let mut refs = alloc::vec![self.network];
+        if let Some(p) = self.predecessor {
+            refs.push(p);
+        }
+        for w in &self.wraps {
+            refs.push(w.member);
+        }
+        // payload: epoch:u32 ‖ flags:u8(bit0=has_predecessor) ‖ change:u8 ‖ n_members:u32 ‖
+        //          n × (wrap_len:u32 ‖ wrap_bytes). Member κs live in refs (recoverable without
+        //          side tables); the payload carries only the wrapped-key blobs + framing.
+        let mut p = Vec::new();
+        p.extend_from_slice(&self.epoch.to_le_bytes());
+        p.push(u8::from(self.predecessor.is_some()));
+        p.push(self.change.to_u8());
+        p.extend_from_slice(&(self.wraps.len() as u32).to_le_bytes());
+        for w in &self.wraps {
+            p.extend_from_slice(&(w.wrapped.len() as u32).to_le_bytes());
+            p.extend_from_slice(&w.wrapped);
+        }
+        (refs, p)
+    }
+
+    /// Decode a canonical key-epoch form back into its structured view (the inverse of
+    /// `canonicalize`). Bounds-checked throughout — hostile lengths yield `Truncated`, never a panic.
+    pub fn decode(bytes: &[u8]) -> Result<KeyEpoch, RealizationError> {
+        let refs = <Self as crate::Realization>::references(bytes)?;
+        let payload = payload_of("https://hologram.foundation/realization/key-epoch", bytes)?;
+        let mut cur = 0usize;
+        let epoch = read_u32(&payload, &mut cur)?;
+        let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
+        cur += 1;
+        let change = MembershipChange::from_u8(*payload.get(cur).ok_or(RealizationError::Truncated)?)?;
+        cur += 1;
+        let has_pred = flags & 1 == 1;
+        let n_members = read_u32(&payload, &mut cur)? as usize;
+
+        let network = *refs.first().ok_or(RealizationError::Malformed)?;
+        let member_base = 1 + usize::from(has_pred);
+        let predecessor = if has_pred { refs.get(1).copied() } else { None };
+        // refs must be exactly network + optional predecessor + n_members member κs.
+        let expected_refs = member_base
+            .checked_add(n_members)
+            .ok_or(RealizationError::Truncated)?;
+        if refs.len() != expected_refs {
+            return Err(RealizationError::Malformed);
+        }
+        let mut wraps = Vec::with_capacity(n_members);
+        for i in 0..n_members {
+            let member = *refs.get(member_base + i).ok_or(RealizationError::Malformed)?;
+            let wrap_len = read_u32(&payload, &mut cur)? as usize;
+            let end = cur.checked_add(wrap_len).ok_or(RealizationError::Truncated)?;
+            let wrapped = payload.get(cur..end).ok_or(RealizationError::Truncated)?.to_vec();
+            cur = end;
+            wraps.push(KeyWrap { member, wrapped });
+        }
+        Ok(KeyEpoch {
+            network,
+            predecessor,
+            epoch,
+            change,
+            wraps,
+        })
+    }
+
+    /// Resolve the **current** epoch — the head of the chain (the most recent membership change).
+    /// The head *is* the current epoch; sealing uses its key, so only its members can open new
+    /// content. `None` if the head is absent or malformed.
+    pub fn current(
+        chain_head: &KappaLabel71,
+        store: &dyn crate::KappaStore,
+    ) -> Result<Option<KeyEpoch>, crate::StoreError> {
+        match store.get(chain_head)? {
+            Some(bytes) => Ok(Self::decode(bytes.as_ref()).ok()),
+            None => Ok(None),
+        }
+    }
+
+    /// Whether `member` can open content sealed at the current epoch (`chain_head`): true iff they
+    /// are enrolled in the head epoch. A member removed at some epoch is absent from the head, so
+    /// this is `false` — the forward-secrecy predicate, evaluated structurally over the chain head.
+    pub fn member_can_open_current(
+        member: &KappaLabel71,
+        chain_head: &KappaLabel71,
+        store: &dyn crate::KappaStore,
+    ) -> Result<bool, crate::StoreError> {
+        Ok(Self::current(chain_head, store)?
+            .map(|e| e.is_member(member))
+            .unwrap_or(false))
+    }
+}
+realization!(KeyEpoch, "https://hologram.foundation/realization/key-epoch");
+
 // ───────────────────────────── registry (G-D4) ─────────────────────────────
 
 use crate::{Realization, RealizationId, RefExtractor};
@@ -1646,6 +1857,8 @@ pub static REGISTRY: &[(RealizationId, RefExtractor)] = &[
     ),
     // Key rotation (P6, spec 07 R3).
     (KeyRotation::IRI, <KeyRotation as Realization>::references),
+    // Key epoch — forward secrecy on membership change (P6, spec 04 §Private).
+    (KeyEpoch::IRI, <KeyEpoch as Realization>::references),
 ];
 
 #[cfg(test)]

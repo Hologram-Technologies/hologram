@@ -504,6 +504,26 @@ pub fn seal_private<C: PayloadCipher>(
     (nonce, ciphertext)
 }
 
+/// The **asymmetric key-wrapping seam** (spec 04 §Private / P6 — forward secrecy on membership
+/// change). Wraps an epoch's fresh symmetric payload-key *to a specific member's enrollment public
+/// key*, so only that member can recover it. This is what a convergent shared-key **cannot** do: a
+/// convergent key is re-derivable by anyone who knew its inputs, so it can never be rotated to
+/// *exclude* a removed member. Forward secrecy therefore requires a fresh random per-epoch key
+/// delivered by per-member wrapping — hence this seam (see [`crate::KeyEpoch`]).
+///
+/// Portable + dependency-free, like [`PayloadCipher`] / [`SignatureVerifier`]: the `no_std` core
+/// carries only this trait; a space supplies the concrete scheme (native X25519 sealed-box, browser
+/// WebCrypto ECDH, a hardware enclave). Reference impl: `tests/forward_secrecy_x25519.rs`.
+pub trait KeyWrapper {
+    /// Wrap `key_material` (an epoch's symmetric key) to `recipient_public_key`. Returns the wrapped
+    /// blob; must never panic on ill-sized inputs (return an empty/again-unopenable buffer instead).
+    fn wrap(&self, recipient_public_key: &[u8], key_material: &[u8]) -> Vec<u8>;
+    /// Unwrap with `recipient_private_key`; returns the key material iff `wrapped` was sealed to the
+    /// matching public key, else `None` (fail-loud, SPINE-6). A non-recipient — e.g. a removed
+    /// member holding an old key — gets `None`: they cannot open the new epoch's key.
+    fn unwrap(&self, recipient_private_key: &[u8], wrapped: &[u8]) -> Option<Vec<u8>>;
+}
+
 // ───────────────────────────── KappaStore (sync, spec §8.1) ─────────────────────────────
 
 /// Content-addressed byte storage. Sync (bounded local work; matches the OPFS sync handle and
