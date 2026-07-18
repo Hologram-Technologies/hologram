@@ -14,6 +14,27 @@ hashbrown = { workspace = true, optional = true }
 spin = { workspace = true, optional = true }
 # `native` (std redb B-tree store).
 redb = { workspace = true, optional = true }
+# `opfs` (wasm32 browser OPFS store): web-sys for the sync-access-handle + file surfaces. The
+# `js-api` sub-feature adds the async #[wasm_bindgen] JS layer (js_api + bridge) and its bindgen
+# deps — a consumer that only wants the sync `OpfsKappaStore` backend takes just `opfs`.
+wasm-bindgen = { version = "=0.2.122", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Navigator",
+    "StorageManager",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetFileOptions",
+    "FileSystemWritableFileStream",
+    "FileSystemSyncAccessHandle",
+    "FileSystemReadWriteOptions",
+    "File",
+    "Blob",
+    "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+] }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
@@ -27,6 +48,12 @@ std = ["hologram-space/std"]
 bare = ["dep:hologram-types", "dep:hashbrown", "dep:spin"]
 # std redb B-tree backend (`native` module).
 native = ["std", "dep:redb"]
+# wasm32 browser OPFS backend (`opfs` module) — the sync `OpfsKappaStore` (rlib, no wasm-bindgen).
+opfs = ["std", "dep:web-sys"]
+# The async file-per-κ `#[wasm_bindgen]` JS layer over OPFS (js_api + bridge); pulls the bindgen
+# deps. The Playwright browser bundle is built via `scripts/opfs-browser-test.sh`
+# (`cargo rustc --crate-type cdylib -p hologram-store --features js-api`).
+js-api = ["opfs", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
 
 [[bench]]
 name = "sp_floors"

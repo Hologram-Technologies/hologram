@@ -321,7 +321,7 @@ impl BridgeWorker {
                 }
                 // Compute κ locally so we can return it without re-hashing on the response side.
                 let kappa = address_bytes(&payload_b);
-                let put_result = crate::opfs_put(payload_b).await;
+                let put_result = crate::opfs::opfs_put(payload_b).await;
                 match put_result {
                     Ok(_) => {
                         let bytes = kappa.as_str().as_bytes();
@@ -346,7 +346,7 @@ impl BridgeWorker {
                         return Ok(op);
                     }
                 };
-                let result = crate::opfs_get(kappa).await;
+                let result = crate::opfs::opfs_get(kappa).await;
                 match result {
                     Ok(v) if v.is_null() => {
                         Atomics::store(&self.i32, OFF_LEN_B / 4, 0)?;
@@ -375,7 +375,7 @@ impl BridgeWorker {
                         return Ok(op);
                     }
                 };
-                let present = match crate::opfs_get(kappa).await {
+                let present = match crate::opfs::opfs_get(kappa).await {
                     Ok(v) if !v.is_null() => 1,
                     Ok(_) => 0,
                     Err(_) => {
@@ -396,7 +396,7 @@ impl BridgeWorker {
                         return Ok(op);
                     }
                 };
-                let deleted = match crate::opfs_delete(kappa).await {
+                let deleted = match crate::opfs::opfs_delete(kappa).await {
                     Ok(b) => {
                         if b {
                             1
@@ -416,7 +416,7 @@ impl BridgeWorker {
             }
             Some(Op::Iterate) => {
                 // Iterate returns an array of κ-strings. Pack as `u32 LE count | (71 bytes)*`.
-                match crate::opfs_iterate().await {
+                match crate::opfs::opfs_iterate().await {
                     Ok(arr_val) => {
                         let arr: js_sys::Array =
                             arr_val.dyn_into().unwrap_or_else(|_| js_sys::Array::new());

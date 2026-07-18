@@ -380,7 +380,7 @@ jobs:
 
       - name: Install Playwright Chromium
         run: |
-          cd crates/hologram-store-opfs/web
+          cd crates/hologram-store/web
           npm install
           npx --yes playwright install --with-deps chromium
 

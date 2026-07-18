@@ -2,7 +2,7 @@
 //! (spec §5.4): κ→bytes persisted in the Origin Private File System, keyed by hologram's σ-axis
 //! κ-label (`address_bytes`), one file per κ. Persistence is per-origin, so stored κ survive a
 //! page reload. Verified in a real browser (Chromium) via Playwright. Gated behind the `js-api`
-//! feature (default): the sync worker-native backend ([`crate::OpfsKappaStore`]) needs no JS API.
+//! feature (default): the sync worker-native backend ([`crate::opfs::OpfsKappaStore`]) needs no JS API.
 //!
 //! The κ-addressing is the *same* path the other substrates use — so a κ minted in the browser
 //! is byte-identical to one minted on native/bare-metal (substrate-tripling).

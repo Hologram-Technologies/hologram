@@ -218,7 +218,7 @@ version = "0.10.0"
 dependencies = [
  "bytemuck",
  "hashbrown 0.15.5",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
  "hologram-types",
  "memmap2",
@@ -231,7 +231,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-backend"
+name = "hologram-compute"
 version = "0.10.0"
 dependencies = [
  "bytemuck",
@@ -261,7 +261,7 @@ version = "0.10.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
  "hologram-ops",
  "hologram-types",
@@ -325,8 +325,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-store-opfs"
-version = "0.5.0"
+name = "hologram-store"
+version = "0.10.0"
 dependencies = [
  "hologram-space",
  "web-sys",
@@ -346,7 +346,7 @@ name = "holospaces"
 version = "0.10.0"
 dependencies = [
  "async-trait",
- "hologram-backend",
+ "hologram-compute",
  "hologram-emulator",
  "hologram-exec",
  "hologram-net",
@@ -366,7 +366,7 @@ version = "0.0.0"
 dependencies = [
  "hologram-runtime",
  "hologram-space",
- "hologram-store-opfs",
+ "hologram-store",
  "holospaces",
  "js-sys",
  "serde_json",

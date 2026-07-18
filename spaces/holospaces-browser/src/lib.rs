@@ -31,9 +31,9 @@
 mod webrtc;
 mod wsnet;
 
-// The OPFS κ-disk backend moved to its own backend crate (`crates/hologram-store-opfs`);
+// The OPFS κ-disk backend is `hologram-store`'s `opfs` feature (was the hologram-store-opfs crate);
 // a space consumes backends, it does not define them.
-use hologram_store_opfs::OpfsKappaStore;
+use hologram_store::opfs::OpfsKappaStore;
 
 pub use webrtc::WebRtcLink;
 

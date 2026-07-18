@@ -4,7 +4,7 @@
   <body>
     <pre id="log">loading…</pre>
     <script type="module">
-      import init, { address, verify, opfs_put, opfs_get, opfs_iterate, opfs_delete, opfs_gc } from "./pkg/hologram_store_opfs.js";
+      import init, { address, verify, opfs_put, opfs_get, opfs_iterate, opfs_delete, opfs_gc } from "./pkg/hologram_store.js";
       await init();
       // Expose the OPFS KappaStore surface to the Playwright test (incl. GC, arch §11.5).
       window.hg = { address, verify, opfs_put, opfs_get, opfs_iterate, opfs_delete, opfs_gc };

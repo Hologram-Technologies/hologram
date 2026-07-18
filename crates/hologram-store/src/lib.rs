@@ -20,3 +20,5 @@ extern crate alloc;
 pub mod bare;
 #[cfg(feature = "native")]
 pub mod native;
+#[cfg(feature = "opfs")]
+pub mod opfs;

@@ -11,7 +11,7 @@ import init, {
   BridgeWorker,
   bridge_state_offset,
   bridge_state_idle,
-} from './pkg/hologram_store_opfs.js';
+} from './pkg/hologram_store.js';
 
 let worker = null;
 let stateOffset = 0;

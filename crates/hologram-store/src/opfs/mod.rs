@@ -1,6 +1,6 @@
-//! # hologram-store-opfs
+//! # `hologram_store::opfs` — browser OPFS `KappaStore`
 //!
-//! The **browser OPFS store crate**: κ→bytes persisted in the Origin Private File System, keyed
+//! The **browser OPFS store**: κ→bytes persisted in the Origin Private File System, keyed
 //! by hologram's σ-axis κ-label — so a κ minted in the browser is byte-identical to one minted on
 //! native/bare-metal (substrate-tripling). OPFS exposes two access regimes, and this crate owns a
 //! store for each:
@@ -13,8 +13,6 @@
 //!   with `#[wasm_bindgen]` exports, verified end-to-end in a real Chromium via Playwright. Gated
 //!   behind the default `js-api` feature (a consumer that only wants the backend takes
 //!   `default-features = false` and pulls no `wasm-bindgen`).
-
-extern crate alloc;
 
 /// The in-product synchronous OPFS `KappaStore` backend (Worker; pack file + offset index).
 pub mod sync_store;

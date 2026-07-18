@@ -33,7 +33,7 @@ hologram-space = { path = "../../crates/hologram-space" }
 # The OPFS κ-disk backend (the sync pack-file `OpfsKappaStore`) now lives in its own backend
 # crate — infra belongs in `crates/`, not in a space impl. `default-features = false` takes only
 # the sync `KappaStore` (no `wasm-bindgen` from that crate, so no duplicate-wasm-bindgen clash).
-hologram-store-opfs = { path = "../../crates/hologram-store-opfs", default-features = false }
+hologram-store = { path = "../../crates/hologram-store", default-features = false, features = ["opfs"] }
 # The runtime with the interpreter ContainerEngine (wasmi) — so the browser peer
 # actually boots userland containers (ADR-008; arc42 ch.7); the wasmi interpreter
 # runs in wasm32 where a JIT cannot (absorbs the former runtime + runtime-bare).

@@ -64,14 +64,14 @@ default-members = [
     "spaces/holospaces-node",
 ]
 
-# hologram-efi (UEFI boot binary) and hologram-store-opfs (wasm32 + web-sys browser store) are
-# target-specific — excluded from the host workspace; built explicitly (boot test / Playwright test).
-# holospaces-browser (wasm32 + web-sys browser peer) is likewise target-specific. The former
-# hologram-emulator-codemodule (wasm32 container) is now hologram-emulator's `codemodule` feature,
-# built as a cdylib via scripts/build-emulator.sh — no longer a separate crate.
+# hologram-efi (UEFI boot binary) is target-specific — excluded from the host workspace; built
+# explicitly (boot test). holospaces-browser (wasm32 + web-sys browser peer) is likewise
+# target-specific. The former hologram-store-opfs (wasm32 browser store) is now hologram-store's
+# `opfs`/`js-api` features, and hologram-emulator-codemodule (wasm32 container) is
+# hologram-emulator's `codemodule` feature — both built as cdylibs via their scripts, no longer
+# separate crates.
 exclude = [
     "crates/hologram-efi",
-    "crates/hologram-store-opfs",
     "spaces/holospaces-browser",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
