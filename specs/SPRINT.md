@@ -676,6 +676,30 @@ a new blocking CI job `exit-criteria-demos` (in `ci-success.needs`):
 - [ ] The **live** variants remain heavy-CI: browser-peer ↔ native-peer over a real transport (P5),
   multi-space boot over live nodes (P4) — they witness the same rules with real I/O.
 
+## Pre-merge sweep + PR #45 CI (2026-07-18)
+
+PR #45 (`main` ← `chore/refactor`) opened/refreshed. A pre-merge verification sweep + the CI run
+found and fixed three real issues (all committed):
+- **fmt**: 7 files weren't rustfmt-clean (CI never ran — branch was unpushed) → `cargo fmt --all`.
+- **`c_abi` FFI test**: asserted `.holo` format v2; it's v3 since P4 → fixed to 3.
+- **`extract_refs` DoS** (CI-caught, Linux-only): a hostile u32 ref count made
+  `Vec::with_capacity(n)` reserve ~71 GB → SIGABRT on Linux (macOS overcommit hid it locally). Capped
+  to `n.min(bytes.len()/KAPPA71+1)`. This was the root cause of BOTH the `Test (ubuntu)` and
+  `Substrate V&V` failures (both run hologram-space's `parser_hardening`).
+
+CI status breakdown on PR #45:
+- **Core Rust gates green**: Clippy, Format, Docs, Cross wasm32/aarch64, Test (macOS), V&V
+  (perf/parallel/model-formats), Security, **Exit-criteria demos**, Browser OPFS (Chromium), UEFI
+  boot (QEMU), tooling tests. `Test (ubuntu)` + `Substrate V&V` re-running after the extract_refs fix.
+- **Expected-breaking (need a follow-up, not a code bug)**: Semver compliance + Public-API snapshot
+  (the refactor changes the public API / removes crates — the snapshot needs regenerating).
+- **Known follow-up**: CS docs conformance (arc42 V1–V8 — the G1/G2 docs import isn't done).
+- **Not refactor-caused**: Native N-API / Python Wheel SDK packaging reference no removed crate;
+  pre-existing / unrelated.
+- [ ] **Archive parser hardening (follow-up)**: `hologram-archive`'s `decoder`/`certificate_codec`/
+  `constant_codec`/`schedule_codec` share the untrusted-u32 `with_capacity` pattern (pre-existing,
+  passed CI). Cap them to a buffer-derived bound like `extract_refs`.
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
