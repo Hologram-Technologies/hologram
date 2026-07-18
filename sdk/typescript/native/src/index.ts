@@ -312,7 +312,7 @@ function checkNative(addon: NativeAddon): void {
   if (addon.abiVersion() !== 1) {
     throw errorFromCode(ERROR_ABI_MISMATCH, `unsupported Hologram ABI ${addon.abiVersion()}`);
   }
-  if (addon.archiveFormatVersion() !== 3) {
+  if (addon.archiveFormatVersion() !== 2 && addon.archiveFormatVersion() !== 3) {
     throw errorFromCode(ERROR_ABI_MISMATCH, `unsupported Hologram archive format ${addon.archiveFormatVersion()}`);
   }
   for (const feature of REQUIRED_FEATURES) {

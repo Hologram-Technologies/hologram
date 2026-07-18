@@ -694,10 +694,14 @@ CI status breakdown on PR #45:
 - **Expected-breaking (need a follow-up, not a code bug)**: Semver compliance + Public-API snapshot
   (the refactor changes the public API / removes crates — the snapshot needs regenerating).
 - **Known follow-up**: CS docs conformance (arc42 V1–V8 — the G1/G2 docs import isn't done).
-- **SDK format guards (refactor-caused, FIXED)**: Native N-API + Python Wheel smoke tests threw
-  `AbiMismatchError: unsupported Hologram archive format 3` — the TS (`native`/`wasm` `index.ts`) and
-  Python (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped it to 3. Updated all
-  three to 3 (same class as the `c_abi` fix).
+- **SDK format guards (refactor-caused, FIXED)**: the TS (`native`/`wasm` `index.ts`) + Python
+  (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped `.holo` to v3. The **native**
+  addon + **Python** FFI report 3, but the **wasm** driver still reports 2 (a stale-build anomaly —
+  both use the same `hologram-ffi` path dep, so the wasm driver should also report 3; tracked as a
+  follow-up). Fixed all three to accept the **range {2, 3}** (the archive reads both via
+  MIN_READ_VERSION) — unblocks native/python/wasm, backward+forward compatible.
+- [ ] **wasm driver format lag (follow-up)**: `sdk/typescript/wasm/driver` reports archive format 2
+  while native reports 3 despite the same path dep — investigate the stale wasm build and align to 3.
 - [ ] **Archive parser hardening (follow-up)**: `hologram-archive`'s `decoder`/`certificate_codec`/
   `constant_codec`/`schedule_codec` share the untrusted-u32 `with_capacity` pattern (pre-existing,
   passed CI). Cap them to a buffer-derived bound like `extract_refs`.
