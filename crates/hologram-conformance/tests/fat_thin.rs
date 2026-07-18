@@ -9,7 +9,9 @@
 use hologram::{Client, Holo};
 use hologram_archive::HoloWriter;
 use hologram_space::{address_bytes, AppManifest, KappaStore, Layer, Realization};
-use hologram_spike_sp3::SpikeSpace;
+
+mod common;
+use common::SpikeSpace;
 
 /// A thin `.holo` (manifest only) whose layers' content has been provisioned into the client store.
 fn provisioned_app(client: &Client<SpikeSpace>) -> Holo {

@@ -19,12 +19,15 @@ hologram-space = { path = "../hologram-space", default-features = false }
 # HF-1 (.holo v3 is the one container) opens a real `.holo` v3 archive whose AppManifest
 # section carries a single-tensor-plan manifest — the degenerate single-layer case.
 hologram-archive = { path = "../hologram-archive" }
-# SP-3 / LAW-3 are witnessed by driving the **real** `hologram::Client` over `SpikeSpace` — an
-# external-crate `Space` impl (D21/D28): the spike crate now provides only that reference space,
-# and the Client comes from the facade. Client accepting an outside space with no in-tree
-# privilege is the LAW-3 witness; compile→provision→run through it is the SP-3 witness.
+# SP-3 / LAW-3 are witnessed by driving the **real** `hologram::Client` over `SpikeSpace` (the
+# `tests/common` reference `Space`, absorbed from the former hologram-spike-sp3 crate, D21/D28): the
+# Client comes from the facade, SpikeSpace uses only the public `Space` contract. Client accepting an
+# outside space with no in-tree privilege is the LAW-3 witness; compile→provision→run is the SP-3 one.
 hologram = { package = "uor-hologram", path = "../..", features = ["client"] }
-hologram-spike-sp3 = { path = "../hologram-spike-sp3" }
+# SpikeSpace's building blocks (public API only): the mock-engine Runtime + the async_trait for its
+# null sync seam.
+hologram-runtime = { path = "../hologram-runtime" }
+async-trait = { workspace = true }
 smallvec = { workspace = true }
 # SP-1 (passing the TCK is conformance) runs the shared conformance battery against the
 # reference store — the same battery every backend runs (substrate-tripling discipline).

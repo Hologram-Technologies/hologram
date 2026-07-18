@@ -30,7 +30,8 @@ use hologram_space::{
     Clock, Entropy, Intent, ManualClock, NoopSpawner, NullSurface, SeededEntropy, Spawner, Surface,
     SurfaceError,
 };
-use hologram_spike_sp3::SpikeSpace;
+mod common;
+use common::SpikeSpace;
 use hologram_tck::MemKappaStore;
 
 /// The smallest graph that computes: an i64→f32 cast of a rank-1 tensor — the SP-3 workload.
@@ -115,17 +116,17 @@ fn gv1_assert(w: &mut ConformanceWorld) {
 }
 
 // ───────────────── LAW-3 — contracts are hologram's, spaces are anyone's ─────────────────
-// The `hologram-spike-sp3` crate is a *separate* crate that implements the `hologram-space`
-// contract using only its public API — exactly what an external repo's space does. `Client`
-// (generic over `Space`) accepts it with no special-casing. Sealed traits or crate-private
-// seams would make this fail to compile, so it compiling + running is the witness (D21).
+// `SpikeSpace` (in `tests/common`, absorbed from the former hologram-spike-sp3 crate) implements
+// the `hologram-space` contract using ONLY its public API — exactly what an external repo's space
+// does. `Client` (generic over `Space`) accepts it with no special-casing. Sealed traits or
+// crate-private seams would make this fail to compile, so it compiling + running is the witness (D21).
 
 #[given("the hologram-space contract with no sealed traits or crate-private seams")]
 fn law3_given(_w: &mut ConformanceWorld) {}
 
 #[when("a space is implemented in an external repository")]
 fn law3_impl(w: &mut ConformanceWorld) {
-    // Downstream type (`SpikeSpace`, from another crate) accepted by the generic `Client`.
+    // A downstream `Space` type (`SpikeSpace`, built from the public API only) accepted by `Client`.
     let client = Client::new(SpikeSpace::new());
     // Reaching a contract-mediated operation proves the impl satisfies the trait bounds.
     w.law3_accepted = client.compile(cast_graph()).is_ok();
@@ -181,11 +182,11 @@ fn law1_assert(w: &mut ConformanceWorld) {
     );
 }
 
-// ─────────────────────── SP-3 — space composition (P0.5 spike) ───────────────────────
+// ─────────────────────── SP-3 — space composition ───────────────────────
 // A `Client` over the `Space` contract drives compile→store→boot: a synchronous compile,
 // a synchronous store, and the async network/boot seam calling into synchronous compute.
 // The async `when` awaits `boot` directly — the one async↔sync boundary (LAW-4).
-// Witnessed against `hologram-spike-sp3` (the SP-3 slice).
+// Witnessed against `SpikeSpace` (tests/common — the reference `Space`).
 
 #[given("a Client over a space with a synchronous store and an async network seam")]
 fn sp3_given(_w: &mut ConformanceWorld) {}

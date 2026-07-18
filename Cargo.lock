@@ -1722,10 +1722,11 @@ dependencies = [
 name = "hologram-conformance"
 version = "0.10.0"
 dependencies = [
+ "async-trait",
  "cucumber",
  "hologram-archive",
+ "hologram-runtime",
  "hologram-space",
- "hologram-spike-sp3",
  "hologram-tck",
  "smallvec",
  "tokio",
@@ -1844,15 +1845,6 @@ dependencies = [
  "spin",
  "uor-addr",
  "x25519-dalek",
-]
-
-[[package]]
-name = "hologram-spike-sp3"
-version = "0.10.0"
-dependencies = [
- "async-trait",
- "hologram-runtime",
- "hologram-space",
 ]
 
 [[package]]
