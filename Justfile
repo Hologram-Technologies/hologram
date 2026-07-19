@@ -208,3 +208,24 @@ examples:
     cargo run -q -p hologram-runtime-wasmtime --example least_privilege
     cargo run -q -p hologram-runtime-wasmtime --example wasm_inference_container
     cargo run -q -p hologram-runtime-wasmtime --example live_migration
+
+# ── Release ──────────────────────────────────────────────────────────────────
+# Cutting a release IS the `version-bump` GitHub workflow: it bumps every crate + SDK to the new
+# version, regenerates the driver lockfiles, snapshots the public API, updates the changelog,
+# commits, tags `vX.Y.Z`, and pushes. The tag then triggers `publish.yml` (crates.io/npm/PyPI) and
+# the release-tier CI in `release.yml` (heavy conformance + SDK packaging + perf gate vs the previous
+# tag). These recipes just dispatch that one tested workflow (needs `gh` auth) — nothing runs locally,
+# so your working tree/branch is irrelevant (the workflow always releases from `main`).
+
+# Cut a release at an EXPLICIT version — e.g. `just release 0.12.0` (or `just release 0.12.0-rc.1`).
+release version:
+    @echo "{{version}}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "✗ '{{version}}' is not a semver (X.Y.Z or X.Y.Z-pre)"; exit 1; }
+    gh workflow run version-bump.yml -f version="{{version}}"
+    @echo "→ release v{{version}} dispatched. Watch: gh run watch  (or the Actions tab)."
+
+# Cut a release by AUTO-bumping from the current version.
+#   just release-auto            → patch        just release-auto minor
+#   just release-auto major                     just release-auto minor rc   (pre-release)
+release-auto bump="patch" pre="":
+    gh workflow run version-bump.yml -f version_type="{{bump}}" -f prerelease="{{pre}}"
+    @echo "→ {{bump}} release (prerelease='{{pre}}') dispatched. Watch: gh run watch  (or the Actions tab)."
