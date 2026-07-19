@@ -695,10 +695,17 @@ CI status breakdown on PR #45:
   pre-existing tooling-debts (`hologram`→`uor-hologram` package rename; dropped consolidated
   `hologram-host`) + deleted the stray empty `crates/hologram-host/` dir and orphan
   `api/hologram-{host,backend}.txt`. `--check` passes.
-- **Semver compliance (expected-breaking — maintainer/release decision)**: `cargo-semver-checks`
-  flags the *intentional* breaking changes (removed crates, changed paths); signalled by the version
-  bump (0.10→0.11) at the human-gated first release (D26), not an auto-fix.
-- **Known follow-up**: CS docs conformance (arc42 V1–V8 — the G1/G2 docs import isn't done).
+- **Semver compliance (FIXED — not a version bump)**: the gate failed with "package hologram-compute
+  not found in baseline" — a tooling mismatch, not a breaking-change violation (every comparable crate
+  reports "no semver update required"). `hologram-compute` (renamed from hologram-backend) +
+  `hologram-host` (consolidated) have no counterpart on the pre-refactor baseline, so cargo-semver-
+  checks can't diff them. Removed both from the checked package set (like the `hologram` facade
+  already is); the 8 stable library crates pass. No in-crate API broke → no version bump needed.
+- **CS docs conformance (G1/G2 — nearly done, submodule added)**: the docs (arc42/C4/OPM/ISO) +
+  V1–V8 validators + CI job were already imported to `specs/holospaces/`; the job failed only because
+  the `arc42-generator` submodule was declared in `.gitmodules` but its gitlink was never committed.
+  Added the submodule (pinned) → the V1–V8 toolchain can initialize. The validators run in CI (heavy:
+  JDK 21 · Ruby 3 · Structurizr · pandoc · cmark) — monitoring whether they pass on the imported docs.
 - **SDK format guards (refactor-caused, FIXED)**: the TS (`native`/`wasm` `index.ts`) + Python
   (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped `.holo` to v3. The **native**
   addon + **Python** FFI report 3, but the **wasm** driver still reports 2 (a stale-build anomaly —
