@@ -707,9 +707,14 @@ CI status breakdown on PR #45:
   MIN_READ_VERSION) — unblocks native/python/wasm, backward+forward compatible.
 - [ ] **wasm driver format lag (follow-up)**: `sdk/typescript/wasm/driver` reports archive format 2
   while native reports 3 despite the same path dep — investigate the stale wasm build and align to 3.
-- [ ] **Archive parser hardening (follow-up)**: `hologram-archive`'s `decoder`/`certificate_codec`/
-  `constant_codec`/`schedule_codec` share the untrusted-u32 `with_capacity` pattern (pre-existing,
-  passed CI). Cap them to a buffer-derived bound like `extract_refs`.
+- [x] **Archive parser hardening (DONE 2026-07-18)**: capped the untrusted-u32 `with_capacity` in
+  `hologram-archive`'s `decoder`/`certificate_codec`/`constant_codec`/`schedule_codec` to
+  `count.min(bytes.len())` (same class as `extract_refs`) + a hostile-count regression test
+  (`catch_unwind`, all 4 reject gracefully). Archive suite green, clippy clean, no_std ok.
+- [x] **`just test` fixed (2026-07-18)**: `cargo nextest run --workspace` errored on
+  `hologram-conformance::bdd` (a cucumber `harness=false` runner without libtest `--list`). Added
+  `.config/nextest.toml` excluding it + a `cargo test --test bdd` step in the recipe (CI uses plain
+  `cargo test`, so it was unaffected). Verified end-to-end.
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
