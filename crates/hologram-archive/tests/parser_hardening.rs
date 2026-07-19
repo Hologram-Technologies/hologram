@@ -112,8 +112,20 @@ fn codec_decoders_reject_hostile_counts_without_huge_preallocation() {
     let certs = catch_unwind(|| hologram_archive::certificate_codec::decode(&hostile));
     let consts = catch_unwind(|| hologram_archive::constant_codec::decode(&hostile));
     let sched = catch_unwind(|| hologram_archive::schedule_codec::decode(&hostile));
-    assert!(matches!(calls, Ok(Err(_))), "decode_calls must reject a hostile count");
-    assert!(matches!(certs, Ok(Err(_))), "certificate_codec must reject a hostile count");
-    assert!(matches!(consts, Ok(Err(_))), "constant_codec must reject a hostile count");
-    assert!(matches!(sched, Ok(Err(_))), "schedule_codec must reject a hostile count");
+    assert!(
+        matches!(calls, Ok(Err(_))),
+        "decode_calls must reject a hostile count"
+    );
+    assert!(
+        matches!(certs, Ok(Err(_))),
+        "certificate_codec must reject a hostile count"
+    );
+    assert!(
+        matches!(consts, Ok(Err(_))),
+        "constant_codec must reject a hostile count"
+    );
+    assert!(
+        matches!(sched, Ok(Err(_))),
+        "schedule_codec must reject a hostile count"
+    );
 }
