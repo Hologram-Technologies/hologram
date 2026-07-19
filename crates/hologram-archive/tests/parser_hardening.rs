@@ -98,3 +98,22 @@ fn forged_section_offset_and_length_error_not_overflow() {
         "a forged u64 offset/length must be rejected, never overflow usize"
     );
 }
+
+#[test]
+fn codec_decoders_reject_hostile_counts_without_huge_preallocation() {
+    // Each length-prefixed codec reads a `u32` count then decodes that many items. A hostile count
+    // (`u32::MAX`) with a truncated body must be rejected cleanly, never pre-reserving gigabytes:
+    // `Vec::with_capacity(count)` is capped to `count.min(bytes.len())`, so a 4-byte buffer claiming
+    // ~4e9 items reserves at most a few before the bounds-checked loop rejects it. Uncapped, this
+    // aborts on Linux (`memory allocation of N bytes failed`) while macOS's lazy overcommit hides it
+    // — so the assertion is that the call returns/rejects rather than aborting the process.
+    let hostile = [0xFFu8, 0xFF, 0xFF, 0xFF]; // count / level_count = u32::MAX, no body
+    let calls = catch_unwind(|| hologram_archive::decoder::decode_calls(&hostile));
+    let certs = catch_unwind(|| hologram_archive::certificate_codec::decode(&hostile));
+    let consts = catch_unwind(|| hologram_archive::constant_codec::decode(&hostile));
+    let sched = catch_unwind(|| hologram_archive::schedule_codec::decode(&hostile));
+    assert!(matches!(calls, Ok(Err(_))), "decode_calls must reject a hostile count");
+    assert!(matches!(certs, Ok(Err(_))), "certificate_codec must reject a hostile count");
+    assert!(matches!(consts, Ok(Err(_))), "constant_codec must reject a hostile count");
+    assert!(matches!(sched, Ok(Err(_))), "schedule_codec must reject a hostile count");
+}
