@@ -1,9 +1,10 @@
 name: CI
 
-# Per-run title so the Actions list isn't every run stamped with the (identical) PR title.
-# Shows the source branch (or tag) + the event, e.g. "CI · chore/refactor · pull_request" /
-# "CI · v0.11.0 · push"; GitHub appends the run number to disambiguate individual runs.
-run-name: "CI · ${{ github.head_ref || github.ref_name }} · ${{ github.event_name }}"
+# Per-run title that identifies the COMMIT under test, so runs aren't all stamped with the
+# (identical, static) PR title. Push/tag runs show the commit subject; PR runs can't read the
+# commit message from the event payload, so they fall back to the head SHA — either way each run
+# is distinct. e.g. "CI · main · fix: cap untrusted alloc" / "CI · chore/refactor · 336bb841…".
+run-name: "CI · ${{ github.head_ref || github.ref_name }} · ${{ github.event.head_commit.message || github.event.pull_request.head.sha || github.sha }}"
 
 on:
   push:

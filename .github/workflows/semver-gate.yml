@@ -1,7 +1,7 @@
 name: Semver Gate
 
 # Meaningful per-run title (else PR runs inherit the identical PR title).
-run-name: "Semver Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event_name }}"
+run-name: "Semver Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event.pull_request.head.sha || github.sha }}"
 
 # Enforces Rust's semantic-versioning contract on every PR: a public-API change
 # may not merge unless the workspace version is bumped enough to cover it

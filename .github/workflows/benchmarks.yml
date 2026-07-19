@@ -1,6 +1,6 @@
 name: Benchmarks
 
-run-name: "Benchmarks · ${{ github.ref_name }} · ${{ github.event_name }}"
+run-name: "Benchmarks · ${{ github.ref_name }} · ${{ github.event.head_commit.message || github.sha }}"
 
 on:
   push:

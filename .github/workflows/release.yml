@@ -4,7 +4,7 @@ name: Release CI
 # on every PR push. Triggered ONLY by a version-tag cut (a release), the nightly schedule (artifact
 # pin-rot + drift), and manual dispatch — never by an ordinary PR/branch push, which runs the lean
 # `ci.yml` gate. Holds the QEMU/Playwright/JDK conformance jobs + the full SDK packaging matrix.
-run-name: "Release CI · ${{ github.ref_name }} · ${{ github.event_name }}"
+run-name: "Release CI · ${{ github.ref_name }} · ${{ github.event.head_commit.message || github.sha }}"
 
 on:
   push:
