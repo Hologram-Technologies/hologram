@@ -71,6 +71,15 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
+      - name: Sync SDK versions to the new workspace version
+        run: |
+          # The SDK packages are workspace-excluded (wasm cdylib / N-API), so `cargo set-version
+          # --workspace` above does not touch them — sync them explicitly (gated by the
+          # `sdk-version-consistency` CI job) and refresh their lockfiles so they don't drift.
+          scripts/sync-sdk-versions.sh
+          cargo generate-lockfile --manifest-path sdk/typescript/native/native/Cargo.toml
+          cargo generate-lockfile --manifest-path sdk/typescript/wasm/driver/Cargo.toml
+
       - name: Install nightly (for rustdoc JSON)
         uses: dtolnay/rust-toolchain@nightly
 
@@ -120,7 +129,11 @@ jobs:
 
           # Add all Cargo.toml files, the changelogs, and the API snapshots +
           # history archived by the API-snapshot step.
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md api/
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md api/ \
+                  sdk/typescript/package.json sdk/typescript/native/package.json \
+                  sdk/typescript/wasm/package.json sdk/typescript/native/native/Cargo.toml \
+                  sdk/typescript/wasm/driver/Cargo.toml sdk/python/pyproject.toml \
+                  sdk/typescript/native/native/Cargo.lock sdk/typescript/wasm/driver/Cargo.lock
 
           # Commit changes
           git commit -m "chore: bump version to v${VERSION}"

@@ -11,6 +11,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Drift gate: the SDK packages are workspace-EXCLUDED (wasm cdylib / N-API), so they cannot inherit
+  # `[workspace.package].version`. This fails the build if any SDK version has drifted from the
+  # workspace version — the drift that stale-locked the wasm driver a full version behind. Fix with
+  # `scripts/sync-sdk-versions.sh` (also run automatically by version-bump.yml).
+  sdk-version-consistency:
+    name: SDK version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check every SDK version matches the workspace
+        run: scripts/sync-sdk-versions.sh --check
+
   python-wheel:
     name: Python Wheel (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
