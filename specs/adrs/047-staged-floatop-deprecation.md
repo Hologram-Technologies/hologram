@@ -97,7 +97,7 @@ Once `SemanticOp` covers every production `FloatOp` variant:
 - `legacy_float_op()` shrinks to a thin compat shim used only by
   `GraphOp::Float(_)` legacy construction sites that haven't been
   removed.
-- `hologram-backend` similarly rewrites.
+- `hologram-compute` similarly rewrites.
 
 ### Stage 4 — Remove FloatOp from public API
 

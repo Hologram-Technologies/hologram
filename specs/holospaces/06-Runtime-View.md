@@ -1,0 +1,283 @@
+# Runtime View
+
+The runtime scenarios below show how holospaces behaves over time. (The
+arc42 template placeholder scenario headings are retained at the end for
+structural conformance.)
+
+This scenario realizes the in-zoom OPD **SD5 — Devcontainer
+Provisioning** (conceptual model): the steps below are its sub-processes
+(Repository Fetching, Config Parsing, Image Ingestion, Rootfs Assembly)
+and the objects they yield (Repository, Devcontainer Config, Base Image,
+Root Filesystem). The first two steps cross the **import boundary** —
+holospaces reaches out to the internet (the git host, the container
+registry) to bring external content *into* the substrate. The internet
+is an **untrusted gateway** (ADR-013): every byte fetched is **verified
+by re-derivation** on the way in (a content digest **is** a κ; Law L5),
+so a located URL or registry reference yields content-addressed
+identity. From the κ inward, everything is uor-native; no git binary, no
+container daemon, no POSIX checkout.
+
+1.  **Repository Fetching.** The operator names a devcontainer by a
+    **repository URL + reference** (e.g. `github.com/org/repo`, `main`).
+    The Repository Fetcher retrieves that repository’s content over the
+    internet (an archive of the tree at the reference) and ingests it as
+    κ-addressed content; the URL+ref is the *request*, the κ is the
+    *identity* (Laws L1/L5). It yields the **Repository**.
+
+2.  **Config Parsing.** It reads `.devcontainer/devcontainer.json` (or
+    `.devcontainer.json`) from the Repository and validates it against
+    the Dev Container spec (`CC-4`), yielding the **Devcontainer
+    Config** (a reproducible κ). **If the repository declares no
+    devcontainer**, holospaces supplies a **default Dev Container** — a
+    *usable* base image (`buildpack-deps`: `curl`, `wget`, `git`, and the
+    SCM clients over a real `apt` userland), the Dev Container spec’s
+    fallback in the Codespaces sense (open any repo and it just works, not
+    a bare base where “not even `curl` works”); it is multi-arch
+    (`riscv64`/`aarch64`), so the default boots on either emulator target.
+    So any repository runs. The config’s `image` field names the base image (a
+    registry reference — a *location*, resolved next).
+
+3.  **Image Ingestion.** The Image Ingestor pulls the named OCI image
+    from its container registry (the OCI distribution protocol — `GET`
+    the manifest by reference, then each blob by digest) and **verifies
+    every blob by re-derivation against its OCI digest** (`CC-10`, Law
+    L5 — the registry is an untrusted gateway), storing manifest +
+    config + each layer as κ content. It yields the **Base Image** — an
+    image κ derived from the verified manifest, identity-by-content
+    (Laws L1/L2). Shared layers dedupe across holospaces (Law L3).
+
+4.  **Rootfs Assembly.** The Layer Assembler stacks the Base Image’s
+    layers in order — applying the OCI image-layer **whiteout /
+    opaque-directory** rules — into a single root filesystem, and writes
+    it into a **κ-disk**: an `ext4` image whose every sector is
+    κ-addressed content over the store (`CC-7`, no second medium — Law
+    L4). It yields the **Root Filesystem** (the bootable rootfs κ).
+
+5.  **Composition.** holospaces composes the **holospace definition** —
+    a κ over the parts (the Root Filesystem κ-disk, the Repository
+    workspace, the system-emulator codemodule, the kernel image, the
+    capabilities); the same source yields the same holospace κ
+    (reproducibility, Q4).
+
+6.  **Boot orchestration.** The Boot Layer generates the **device tree**
+    declaring the machine (memory, CLINT, PLIC, and a `virtio-mmio` node
+    for the block device), then boots the **system-emulator codemodule**
+    (ADR-009/ADR-011) with the kernel + device tree. The emulator’s
+    `virtio-blk` device reads the Root Filesystem through the κ-disk
+    seam (`CC-14`); the kernel mounts it over `virtio-blk` and runs the
+    real OS — disk as κ-addressed blocks, console / input / network as
+    hologram channels, running state as a κ snapshot.
+
+7.  The holospace appears in the Manager, ready to open.
+
+## Provisioning a holospace from a holo-file
+
+1.  The operator supplies a `.holo` artifact (e.g. a model compiled by
+    [hologram-ai](https://github.com/Hologram-Technologies/hologram-ai))
+    by its κ — reproducible by definition, since the κ *is* the
+    artifact’s content address (Q4).
+
+2.  The Boot Layer resolves the κ (locally, else fetched and verified,
+    Law L5) and runs it via the **.holo Engine** over the
+    [hologram](https://github.com/Hologram-Technologies/hologram)
+    executor (a tensor-compute run, distinct from the Wasm
+    `ContainerEngine`).
+
+3.  Management is identical to any other holospace — the same
+    κ-identity, provisioning, resolution, and migration; the two compute
+    forms differ only in which substrate engine executes them (the
+    executor for a `.holo`, the `ContainerRuntime` for a Wasm code
+    module such as the system emulator).
+
+## Suspend, resume, and migrate
+
+1.  The operator suspends a running holospace; its state is captured as
+    a **κ snapshot** (state is content).
+
+2.  Because the snapshot is a κ, any of the operator’s instances that
+    can resolve it may **resume** it — including a different
+    environment.
+
+3.  This makes migration a content operation: suspend on one peer,
+    resume on another; unchanged state dedupes in the store.
+
+## Running a devcontainer in the browser (the Codespaces scenario)
+
+This is the motivating scenario of Chapter 1: run a shared repository’s
+Dev Container with no Docker daemon and no cloud VM, on a thin device.
+
+1.  The operator opens the Platform Manager (cold-started from GitHub
+    Pages) — the browser is now a peer that *is* the substrate (Law L1).
+
+2.  They import the devcontainer: the browser peer fetches the
+    repository and the devcontainer’s OS image from the gateway (the
+    import boundary, ADR-013 — through the page’s own `fetch`), verifies
+    them by re-derivation (Law L5), validates the `devcontainer.json`
+    (`CC-4`), and the holospace is provisioned. A repository with no
+    devcontainer gets the default image.
+
+3.  The operator **launches** the holospace — a **workspace projection**
+    (editor, file tree, terminal) opens in a new tab. There the browser
+    peer **assembles the OS image’s layers into an `ext4` root
+    filesystem** (the in-crate Layer Assembler, compiled to wasm —
+    `CC-7`) and the Boot Orchestrator boots a real Linux on the **system
+    emulator** (the holospaces crate compiled to wasm, run by the
+    browser’s own JIT) that mounts the rootfs over the emulator’s
+    `virtio-blk` (`CC-14`). The same lifecycle as a native or remote
+    peer (boot, suspend to a κ snapshot, resume, migrate); the same wasm
+    code GitHub Pages serves.
+
+4.  The projection reads the environment’s content by κ and publishes
+    the operator’s edits and commands as **canonical events** on the
+    holospace’s channels — editing files and running a terminal, the
+    Codespaces/Gitpod experience, entirely in the browser. Because state
+    is a κ snapshot, the operator can suspend here and resume on another
+    instance — local or remote — and the same holospace κ runs there too
+    (Q6). The browser is a first-class compute substrate; the only
+    limits are the device’s, not an account cap.
+
+## Entering a holospace — the VS Code workspace (the management → IDE flow)
+
+The operator manages holospaces from the console and *enters* one to
+work in it — the Codespaces/Gitpod flow (ADR-010; `CC-12`, `CC-13`).
+
+1.  The operator signs in to the **Platform Manager** (cold-started from
+    GitHub Pages) — a self-sovereign identity, content-addressed
+    (`CC-1`). The console lists and organizes their holospaces with
+    status; lifecycle actions (provision · enter · suspend · resume ·
+    terminate) are first-class (`CC-12`).
+
+2.  They **enter** a holospace. A new browser tab opens the **Workspace
+    Projection** — a VS Code-shaped IDE built from the real
+    [Monaco](https://microsoft.github.io/monaco-editor/) editor and
+    [xterm.js](https://xtermjs.org) terminal, both loaded and **verified
+    by re-derivation** against their pinned κ (Law L5; provenance in
+    `vv/PROVENANCE.md`).
+
+3.  The tab boots the holospace’s devcontainer OS on the system emulator
+    (the holospaces crate compiled to wasm, run by the browser’s own JIT
+    — `CC-9`; the devcontainer rootfs is assembled in the browser and
+    mounted over `virtio-blk`, `CC-14`). The xterm.js terminal streams
+    the boot console, then drives the running OS: each command is a
+    **canonical event** that advances the holospace’s κ snapshot
+    (`CC-11`).
+
+4.  The Monaco editor and file tree read and edit the environment’s
+    content **by κ**; an edit advances the file’s κ (Law L1). The
+    `devcontainer.json` is the validated environment (`CC-4`). It is the
+    real VS Code experience, rendered by the browser peer with no server
+    (`CC-13`).
+
+## Working in the holospace — extensions and integrations (the GitHub scenario)
+
+The full workbench (ADR-012) connects to an extension host **matched to
+the peer** (ADR-015), so extensions and their integrations work exactly
+as in a Codespace. On the **browser** peer this is the **web** model
+(`vscode.dev`/`github.dev`): the extension host runs in the browser’s
+web worker, which **boots the holospace in itself** and serves the
+workbench its `virtio-9p` workspace + console — the deployed realization
+(`CC-17` Phase 3). On a **server-capable** peer it is the **remote**
+model described below (the extension host inside the devcontainer OS).
+Either way the backends are the same holospace primitives, so the
+experience is identical.
+
+1.  Entering the holospace loads the κ-verified **VS Code web
+    workbench** in the tab (Law L5; `CC-17`). The workbench drives an
+    extension host **matched to the peer**: on the browser peer, the
+    **web** extension host in a web worker that boots the holospace and
+    binds the workbench to its `virtio-9p` workspace + console (the
+    deployed path); on a server-capable peer, a **remote extension
+    host** started **inside the booted devcontainer OS** (`CC-14`) over
+    VS Code’s **remote protocol**, carried over a **substrate channel**
+    between the peer and the holospace (publish/subscribe; Law L4), not
+    a control-plane socket.
+
+2.  The host exposes the holospace through VS Code’s published APIs
+    backed by holospaces' primitives: the editor’s `FileSystemProvider`
+    is the `virtio-9p` workspace (`CC-15`), the integrated terminal is
+    the holospace console over the running OS (`CC-11`), and language
+    servers and debug adapters run **as processes in the OS** reached
+    over LSP / DAP (`CC-18`, `CC-19`).
+
+3.  An extension the `devcontainer.json` selects (e.g. the GitHub Pull
+    Requests extension) is **imported by κ and verified by
+    re-derivation** (Law L5), then **activated in the OS-side host**.
+    The operator **signs in to GitHub** through the workbench: the
+    extension’s published **authentication provider** runs the OAuth
+    flow, and the token-exchange and every subsequent GitHub API call
+    leave through the **devcontainer’s own network** — the userspace NAT
+    and the tunnelled egress (`CC-16`) — the same path `apt` and `git`
+    take.
+
+4.  The operator **manages their pull requests and issues** from the
+    editor — listing, opening, commenting, reviewing — and pushes
+    commits over `git`; all of it is ordinary network and filesystem
+    activity from a process in the OS, surfaced in the authentic VS Code
+    UI (`CC-19`). The experience is a Codespace’s because the
+    architecture is a Codespace’s — a browser workbench over a remote
+    extension host — only the remote is a holospace and the transport is
+    the substrate (Laws L1/L3/L4).
+
+## Reconfiguring a running instance from the control panel (ADR-018)
+
+The control panel changes a **running** instance — as a
+Codespaces/Gitpod (Ona) panel does — without calling a server on it. The
+configuration is content; the substrate carries it (`CC-28`).
+
+1.  From the panel the operator reconfigures an instance — a lifecycle
+    action (suspend/resume/terminate), a storage quota, a **forwarded
+    port** for an app preview, or an **access grant** to a collaborator.
+    The Platform Manager’s *Configure* intent (`Manager::configure`)
+    builds a κ-addressed **Configuration** embedding the operator
+    identity and the target instance κ plus the ordered directives,
+    **stores it** (Law L2), and records it as the instance’s current
+    configuration.
+
+2.  The running instance **resolves** that configuration κ over the
+    substrate (`KappaSync`, **verify-by-re-derivation** — Law L5),
+    checks it targets **this** instance and the issuing operator is
+    **authorized** (the owner, or a granted collaborator), and
+    **applies** it. A configuration for another instance, or from an
+    unauthorized operator, is refused — never silently applied.
+
+3.  Applying changes the instance’s state: the effective **capability
+    set** is replaced (storage quota, network authority — a new κ, Law
+    L1), a **lifecycle** directive drives the transition (the same
+    suspend→snapshot→resume machinery), and a **network** directive
+    forwards a port on the **running** machine (`Machine::forward_port`
+    — the `CC-21` ingress dual, a real reachable route bound live, no
+    reboot). The change is reproducible (the same configuration applied
+    to the same instance yields the same resulting state) and auditable
+    (every configuration **is** a κ). Because it is verified content,
+    any of the operator’s peers can issue it (what-not-where).
+
+## Cold-start from GitHub Pages
+
+1.  The browser loads a minimal loader from GitHub Pages and the
+    **Hologram** platform’s κ.
+
+2.  The loader resolves that κ and **verifies it by re-derivation** (Law
+    L5); the gateway cannot forge content.
+
+3.  The browser peer boots the Manager; from there everything is
+    content-addressed.
+
+## \<Runtime Scenario 1\>
+
+*arc42 template structural anchor; the concrete runtime scenarios are
+the named sections above.*
+
+## \<Runtime Scenario 2\>
+
+*arc42 template structural anchor; the concrete runtime scenarios are
+the named sections above.*
+
+## …​
+
+*arc42 template structural anchor; the concrete runtime scenarios are
+the named sections above.*
+
+## \<Runtime Scenario n\>
+
+*arc42 template structural anchor; the concrete runtime scenarios are
+the named sections above.*

@@ -7,10 +7,10 @@
 //! releasing the last lease restores the move. Every outcome is compared
 //! bitwise against the honest-copy kernel dispatched directly.
 
-use hologram_backend::{
+use hologram_compiler::{compile, BackendKind};
+use hologram_compute::{
     Backend, BufferRef, CpuBackend, KernelCall, KvCacheWriteCall, SplitReads, Workspace,
 };
-use hologram_compiler::{compile, BackendKind};
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::{
     node::Node,

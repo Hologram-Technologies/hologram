@@ -10,8 +10,8 @@
 //! level rather than the storage width.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::cpu::dtype::{DTYPE_F32, DTYPE_I8};
-use hologram_backend::{
+use hologram_compute::cpu::dtype::{DTYPE_F32, DTYPE_I8};
+use hologram_compute::{
     lut_act, Backend, BufferRef, CpuBackend, DequantActivationCall, DequantizeCall, KernelCall,
     SplitReads, UnaryCall, Workspace,
 };

@@ -198,7 +198,7 @@ impl core::panic::unwind_safe::UnwindSafe for hologram_archive::constant_codec::
 pub fn hologram_archive::constant_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::constant_codec::encode(&[hologram_archive::constant_codec::ConstantEntry]) -> alloc::vec::Vec<u8>
 pub mod hologram_archive::decoder
-pub fn hologram_archive::decoder::decode_calls(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_backend::kernel_call::KernelCall>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::decoder::decode_calls(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>, hologram_archive::error::ArchiveError>
 pub mod hologram_archive::error
 pub enum hologram_archive::error::ArchiveError
 pub hologram_archive::error::ArchiveError::BadMagic([u8; 4])
@@ -223,8 +223,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::error::Archiv
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::error::ArchiveError
 pub mod hologram_archive::format
 #[repr(u8)] pub enum hologram_archive::format::SectionKind
+pub hologram_archive::format::SectionKind::AppManifest = 15
 pub hologram_archive::format::SectionKind::Certificates = 6
 pub hologram_archive::format::SectionKind::Constants = 11
+pub hologram_archive::format::SectionKind::ContentBlob = 16
 pub hologram_archive::format::SectionKind::DTypeRegistry = 5
 pub hologram_archive::format::SectionKind::ExecPlan = 12
 pub hologram_archive::format::SectionKind::Extension = 14
@@ -290,8 +292,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::Secti
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionRef
 pub const hologram_archive::format::FORMAT_VERSION: u16
 pub const hologram_archive::format::MAGIC: [u8; 4]
+pub const hologram_archive::format::MIN_READ_VERSION: u16
 pub mod hologram_archive::kernel_codec
-pub fn hologram_archive::kernel_codec::encode_calls(&[hologram_backend::kernel_call::KernelCall]) -> alloc::vec::Vec<u8>
+pub fn hologram_archive::kernel_codec::encode_calls(&[hologram_compute::kernel_call::KernelCall]) -> alloc::vec::Vec<u8>
 pub mod hologram_archive::loader
 pub struct hologram_archive::loader::HoloLoader<'a>
 impl<'a> hologram_archive::loader::HoloLoader<'a>
@@ -308,6 +311,8 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::H
 impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::HoloLoader<'a>
 pub struct hologram_archive::loader::LoadedPlan<'a>
 impl<'a> hologram_archive::loader::LoadedPlan<'a>
+pub fn hologram_archive::loader::LoadedPlan<'a>::app_manifest(&self) -> core::option::Option<&'a [u8]>
+pub fn hologram_archive::loader::LoadedPlan<'a>::content_blobs(&self) -> core::result::Result<hologram_archive::loader::ContentBlobs<'a>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::extensions(&self) -> core::result::Result<alloc::vec::Vec<(&'a str, &'a [u8])>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::section(&self, hologram_archive::format::SectionKind) -> core::result::Result<&'a [u8], hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::sections(&self) -> &[hologram_archive::format::SectionRef]
@@ -318,6 +323,7 @@ impl<'a> core::marker::Unpin for hologram_archive::loader::LoadedPlan<'a>
 impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::LoadedPlan<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::LoadedPlan<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::LoadedPlan<'a>
+pub type hologram_archive::loader::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>
 pub mod hologram_archive::schedule_codec
 pub fn hologram_archive::schedule_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>
 pub mod hologram_archive::warm_codec
@@ -337,7 +343,7 @@ impl core::marker::UnsafeUnpin for hologram_archive::warm_codec::WarmEntry
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::warm_codec::WarmEntry
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::warm_codec::WarmEntry
 pub fn hologram_archive::warm_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_archive::error::ArchiveError>
-pub fn hologram_archive::warm_codec::derive_cone_lattice(&[hologram_backend::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
+pub fn hologram_archive::warm_codec::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
 pub fn hologram_archive::warm_codec::encode(&[hologram_archive::warm_codec::WarmEntry]) -> alloc::vec::Vec<u8>
 pub mod hologram_archive::weight
 pub struct hologram_archive::weight::WeightFingerprint(pub [u8; 32])
@@ -395,14 +401,17 @@ pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weig
 pub mod hologram_archive::writer
 pub struct hologram_archive::writer::HoloWriter
 impl hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::add_content_blob(&mut self, impl core::convert::Into<alloc::vec::Vec<u8>>, impl core::convert::Into<alloc::vec::Vec<u8>>)
 pub fn hologram_archive::writer::HoloWriter::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::assemble(alloc::vec::Vec<(hologram_archive::format::SectionKind, alloc::vec::Vec<u8>)>) -> alloc::vec::Vec<u8>
 pub fn hologram_archive::writer::HoloWriter::finish(self) -> core::result::Result<alloc::vec::Vec<u8>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::writer::HoloWriter::new() -> Self
+pub fn hologram_archive::writer::HoloWriter::set_app_manifest(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_certificates(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_constants(&mut self, alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>)
 pub fn hologram_archive::writer::HoloWriter::set_exec_plan(&mut self, alloc::vec::Vec<alloc::vec::Vec<u32>>)
 pub fn hologram_archive::writer::HoloWriter::set_inputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
-pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_backend::kernel_call::KernelCall>)
+pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>)
 pub fn hologram_archive::writer::HoloWriter::set_metadata(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_outputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
 pub fn hologram_archive::writer::HoloWriter::set_schedule(&mut self, hologram_graph::schedule::Schedule)
@@ -462,8 +471,10 @@ impl core::marker::UnsafeUnpin for hologram_archive::error::ArchiveError
 impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::error::ArchiveError
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::error::ArchiveError
 #[repr(u8)] pub enum hologram_archive::SectionKind
+pub hologram_archive::SectionKind::AppManifest = 15
 pub hologram_archive::SectionKind::Certificates = 6
 pub hologram_archive::SectionKind::Constants = 11
+pub hologram_archive::SectionKind::ContentBlob = 16
 pub hologram_archive::SectionKind::DTypeRegistry = 5
 pub hologram_archive::SectionKind::ExecPlan = 12
 pub hologram_archive::SectionKind::Extension = 14
@@ -526,14 +537,17 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::H
 impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::HoloLoader<'a>
 pub struct hologram_archive::HoloWriter
 impl hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::add_content_blob(&mut self, impl core::convert::Into<alloc::vec::Vec<u8>>, impl core::convert::Into<alloc::vec::Vec<u8>>)
 pub fn hologram_archive::writer::HoloWriter::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::assemble(alloc::vec::Vec<(hologram_archive::format::SectionKind, alloc::vec::Vec<u8>)>) -> alloc::vec::Vec<u8>
 pub fn hologram_archive::writer::HoloWriter::finish(self) -> core::result::Result<alloc::vec::Vec<u8>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::writer::HoloWriter::new() -> Self
+pub fn hologram_archive::writer::HoloWriter::set_app_manifest(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_certificates(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_constants(&mut self, alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>)
 pub fn hologram_archive::writer::HoloWriter::set_exec_plan(&mut self, alloc::vec::Vec<alloc::vec::Vec<u32>>)
 pub fn hologram_archive::writer::HoloWriter::set_inputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
-pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_backend::kernel_call::KernelCall>)
+pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>)
 pub fn hologram_archive::writer::HoloWriter::set_metadata(&mut self, alloc::vec::Vec<u8>)
 pub fn hologram_archive::writer::HoloWriter::set_outputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
 pub fn hologram_archive::writer::HoloWriter::set_schedule(&mut self, hologram_graph::schedule::Schedule)
@@ -551,6 +565,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::HoloW
 impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::HoloWriter
 pub struct hologram_archive::LoadedPlan<'a>
 impl<'a> hologram_archive::loader::LoadedPlan<'a>
+pub fn hologram_archive::loader::LoadedPlan<'a>::app_manifest(&self) -> core::option::Option<&'a [u8]>
+pub fn hologram_archive::loader::LoadedPlan<'a>::content_blobs(&self) -> core::result::Result<hologram_archive::loader::ContentBlobs<'a>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::extensions(&self) -> core::result::Result<alloc::vec::Vec<(&'a str, &'a [u8])>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::section(&self, hologram_archive::format::SectionKind) -> core::result::Result<&'a [u8], hologram_archive::error::ArchiveError>
 pub fn hologram_archive::loader::LoadedPlan<'a>::sections(&self) -> &[hologram_archive::format::SectionRef]
@@ -655,9 +671,10 @@ pub fn hologram_archive::compose_model(&[uor_addr::label::KappaLabel<71>]) -> co
 pub fn hologram_archive::decode_exec_plan(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::decode_ports(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::writer::PortDescriptor>, hologram_archive::error::ArchiveError>
 pub fn hologram_archive::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>
-pub fn hologram_archive::derive_cone_lattice(&[hologram_backend::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
+pub fn hologram_archive::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
 pub fn hologram_archive::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel
 pub fn hologram_archive::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>
 pub fn hologram_archive::label_from_fingerprint(&[u8; 32]) -> hologram_archive::address::ContentLabel
+pub type hologram_archive::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>
 pub type hologram_archive::ContentLabel = uor_addr::label::KappaLabel<71>

@@ -10,8 +10,8 @@
 //! correctly; (4) corruption-safety — a damaged store entry is ignored
 //! (recompute), never a wrong answer.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, FileWarmStore, InferenceSession, InputBuffer, MemWarmStore};
 use hologram_graph::{
     constant::ConstantEntry,

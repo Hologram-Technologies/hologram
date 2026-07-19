@@ -296,7 +296,7 @@ function checkDriver(driver: WasmDriver): void {
   if (driver.abiVersion() !== 1) {
     throw errorFromCode(ERROR_ABI_MISMATCH, `unsupported Hologram ABI ${driver.abiVersion()}`);
   }
-  if (driver.archiveFormatVersion() !== 2) {
+  if (driver.archiveFormatVersion() !== 2 && driver.archiveFormatVersion() !== 3) {
     throw errorFromCode(ERROR_ABI_MISMATCH, `unsupported Hologram archive format ${driver.archiveFormatVersion()}`);
   }
   for (const feature of REQUIRED_FEATURES) {

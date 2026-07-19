@@ -15,12 +15,12 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use hologram_archive::FORMAT_VERSION;
-use hologram_backend::CpuBackend;
 use hologram_compiler::source::{
     self, SourceBinding, SourceConst, SourceExternalConst, SourceExternalTensor, SourceInput,
     SourceItem, SourceOpCall, SourceOutput, SourceProgram, SourceTensorLiteral, SourceType,
 };
 use hologram_compiler::{BackendKind, CompileError, Compiler};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};
 use hologram_graph::{Graph, OpKind};

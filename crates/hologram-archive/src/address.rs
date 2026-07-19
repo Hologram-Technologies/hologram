@@ -28,7 +28,7 @@
 //! keccak256, sha512) is re-exported via [`composition`] and [`ring`] for
 //! arbitrary use cases.
 
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 use uor_addr::composition::compose_g2_product_blake3;
 

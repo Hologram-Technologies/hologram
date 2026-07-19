@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use crate::error::CompileError;
-use hologram_backend::{
+use hologram_compute::{
     AttentionCall, BinaryCall, BufferRef, CastCall, Conv2dCall, DecodeAttentionCall,
     DecodeAttentionValidCall, DequantizeCall, ExpandCall, GatherCall, GemmCall, Im2ColCall,
     KernelCall, KvCacheWriteCall, LayoutCall, LrnCall, MatMulCall, NormCall, PoolCall, ReduceCall,
@@ -490,7 +490,7 @@ pub struct QuantParams {
     /// ([`hologram_types::act_quant`]).
     pub act_quant: u8,
     /// Codebook operand (VQ tiers); `NO_CODEBOOK` when absent.
-    pub codebook: hologram_backend::BufferRef,
+    pub codebook: hologram_compute::BufferRef,
 }
 
 impl Default for QuantParams {
@@ -505,7 +505,7 @@ impl Default for QuantParams {
             // activations, no codebook.
             weight_layout: hologram_types::weight_layout::ROW_MAJOR,
             act_quant: hologram_types::act_quant::W8A32,
-            codebook: hologram_backend::DequantizeCall::NO_CODEBOOK,
+            codebook: hologram_compute::DequantizeCall::NO_CODEBOOK,
         }
     }
 }

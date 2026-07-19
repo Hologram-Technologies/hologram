@@ -30,7 +30,7 @@ Workspace shape:
 | `hologram-graph` | Graph IR + topological-level Schedule + per-node QuantAttrs |
 | `hologram-compiler` | Per-node CompileUnit pipeline + certificate cache + backward emission |
 | `hologram-exec` | InferenceSession + Executor (schedule-aware, optional rayon-parallel within levels) |
-| `hologram-backend` | Per-target dispatch (CPU + Metal + WGPU) |
+| `hologram-compute` | Per-target dispatch (CPU + Metal + WGPU) |
 | `hologram-archive` | `.holo` zero-copy artifact format with BLAKE3 footer |
 | `hologram-cli` | Subcommand entry points |
 | `hologram-ffi` | C ABI + WASM surfaces |

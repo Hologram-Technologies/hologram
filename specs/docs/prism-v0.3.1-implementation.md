@@ -67,7 +67,7 @@ HostTypes/Bounds/Hasher   │      │  cache by FP │            │ root_term
                                             ▼ (.holo file)
                                      hologram-exec
                                             │
-                                       hologram-backend
+                                       hologram-compute
                                        (CPU / Metal / wgpu)
 ```
 
@@ -87,7 +87,7 @@ The reconciled workspace is **10 crates**. Crates absent from this list are dele
 | `hologram-graph` | Graph IR + scheduling | `Graph`, `GraphOp`, `NodeId`, `Schedule`, `SubgraphDef`, `ConstantStore` |
 | `hologram-compiler` | Graph → archive of compiled pipelines | `Compiler`, `CompilationOutput`, `compile`, `compile_from_source` |
 | `hologram-exec` | Runtime executor for compiled archives | `InferenceSession`, `Executor`, `BufferArena` |
-| `hologram-backend` | Per-target dispatch | `Backend` trait, `CpuBackend`, `MetalBackend`, `WgpuBackend` |
+| `hologram-compute` | Per-target dispatch | `Backend` trait, `CpuBackend`, `MetalBackend`, `WgpuBackend` |
 | `hologram-archive` | `.holo` zero-copy artifact format | `HoloWriter`, `HoloLoader`, `LoadedPlan` |
 | `hologram-cli` | Subcommand entry points | `compile`, `execute`, `bench`, `inspect` |
 | `hologram-ffi` | C ABI + WASM bindings | C wrapper types, wasm-bindgen surfaces |
@@ -117,7 +117,7 @@ members = [
     "crates/hologram-graph",
     "crates/hologram-compiler",
     "crates/hologram-exec",
-    "crates/hologram-backend",
+    "crates/hologram-compute",
     "crates/hologram-archive",
     "crates/hologram-cli",
     "crates/hologram-ffi",
@@ -137,7 +137,7 @@ hologram-ops      = { path = "crates/hologram-ops", default-features = false }
 hologram-graph    = { path = "crates/hologram-graph", default-features = false }
 hologram-compiler = { path = "crates/hologram-compiler" }
 hologram-exec     = { path = "crates/hologram-exec" }
-hologram-backend  = { path = "crates/hologram-backend" }
+hologram-compute  = { path = "crates/hologram-compute" }
 hologram-archive  = { path = "crates/hologram-archive" }
 
 uor-foundation = "0.3.1"
@@ -177,8 +177,8 @@ hologram-graph       (depends on hologram-ops)
        ▼
 hologram-compiler    (depends on hologram-graph, hologram-archive)
 hologram-archive     (depends on hologram-graph)
-hologram-backend     (depends on hologram-ops, hologram-host)
-hologram-exec        (depends on hologram-backend, hologram-archive)
+hologram-compute     (depends on hologram-ops, hologram-host)
+hologram-exec        (depends on hologram-compute, hologram-archive)
 hologram-cli         (depends on hologram-compiler, hologram-exec)
 hologram-ffi         (depends on hologram-compiler, hologram-exec)
 hologram-bench       (depends on all of the above)
@@ -1246,7 +1246,7 @@ Each uses upstream's `combinators::read_bytes`, `combinators::interpret_le_integ
 
 Runs `.holo` archives. Each archive contains a sequence of compiled kernel calls, one per node, plus the schedule and weight blobs.
 
-`std`. Depends on `hologram-backend`, `hologram-archive`, `hologram-host`.
+`std`. Depends on `hologram-compute`, `hologram-archive`, `hologram-host`.
 
 ### VIII.1 InferenceSession
 
@@ -1301,7 +1301,7 @@ Slots are computed at compile time from liveness analysis (in `hologram-compiler
 
 ---
 
-## Part IX — Backends (`hologram-backend`)
+## Part IX — Backends (`hologram-compute`)
 
 Per-target dispatch. Each backend declares a `HostBounds` from `hologram-host` and a `Lowerer` impl that translates the closed `OpKind` enum to backend-specific kernels.
 
@@ -1310,7 +1310,7 @@ Per-target dispatch. Each backend declares a `HostBounds` from `hologram-host` a
 ### IX.1 Backend trait
 
 ```rust
-// crates/hologram-backend/src/lib.rs
+// crates/hologram-compute/src/lib.rs
 
 pub trait Backend {
     type Bounds: HostBounds;
@@ -1336,7 +1336,7 @@ pub enum KernelCall {
 ### IX.2 CPU backend
 
 ```rust
-// crates/hologram-backend/src/cpu.rs
+// crates/hologram-compute/src/cpu.rs
 
 pub struct CpuBackend;
 
@@ -1363,7 +1363,7 @@ The `cpu_kernels::*` functions implement the same operation semantics as the cor
 ### IX.3 Metal backend
 
 ```rust
-// crates/hologram-backend/src/metal.rs (cfg(target_os = "macos"))
+// crates/hologram-compute/src/metal.rs (cfg(target_os = "macos"))
 
 pub struct MetalBackend {
     device: metal::Device,
@@ -1380,7 +1380,7 @@ impl Backend for MetalBackend {
 ### IX.4 wgpu backend
 
 ```rust
-// crates/hologram-backend/src/wgpu.rs (cfg(feature = "wgpu"))
+// crates/hologram-compute/src/wgpu.rs (cfg(feature = "wgpu"))
 
 pub struct WgpuBackend {
     device: wgpu::Device,
@@ -1473,7 +1473,7 @@ This is the master cut/move list. Anything not on this list is **delete**. The r
 4. Trim `hologram-graph` per Part VI.
 5. Rewrite `hologram-compiler` per Part VII.
 6. Trim `hologram-exec` per Part VIII.
-7. Trim `hologram-backend` per Part IX.
+7. Trim `hologram-compute` per Part IX.
 8. Trim `hologram-archive` per Part X.
 9. Run `cargo check --workspace` until clean.
 10. Run `cargo test --workspace` until clean.
@@ -1494,7 +1494,7 @@ This is the master cut/move list. Anything not on this list is **delete**. The r
 | `hologram-ops` | **REWRITE** | Was an enum-based op catalog. Becomes 64 `Grounding` impls per Part V. |
 | `hologram-compiler` | **REWRITE** | Drop preflight, term_parser, term_lower. New `Compiler` per Part VII. |
 | `hologram-exec` | **TRIM** | Drop `tape`, `kv_*`, `lut_gemm`, `tape_builder`, `kernel_dispatch`, `float_dispatch`, `eval`, `runner`, `shape_resolve`, `patch_prune`. Keep `BufferArena`, `InferenceSession`, `mmap`. Add `Executor` per Part VIII. |
-| `hologram-backend` | **TRIM** | Keep CPU, Metal, wgpu. Drop CUDA stub. New `Backend` trait per Part IX. |
+| `hologram-compute` | **TRIM** | Keep CPU, Metal, wgpu. Drop CUDA stub. New `Backend` trait per Part IX. |
 | `hologram-archive` | **TRIM** | Drop `compression` (folded back behind feature). Add `certificates`, `trace` sections per Part X. |
 | `hologram-cli` | **TRIM** | Subcommands unchanged. Update imports. |
 | `hologram-ffi` | **TRIM** | C ABI + WASM unchanged. Update imports. |

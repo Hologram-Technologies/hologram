@@ -1,5 +1,797 @@
 # Sprint Tracking
 
+## Sprint 40: Ecosystem Refactor — Consolidation (STRUCTURALLY COMPLETE — READY TO LAND)
+
+**Plan:** [specs/refactor/00-overview.md](refactor/00-overview.md) · P0 gates
+[specs/refactor/P0-PREP.md](refactor/P0-PREP.md) · branch `chore/refactor`
+
+Goal: consolidate the ecosystem (hologram + holospaces in one repo; hologram-ai stays an
+external consumer) with clean crate boundaries — `substrate/` dissolved into core crates,
+holospaces becomes the space contract's implementations, `.holo` becomes the application
+container, one `hologram` facade + `Client` under everything. Phased always-green
+(P0.5 spike → P0 → P1 → P2 → P3 hard stop → P4–P6 follow-on). Decisions D1–D29.
+
+### STATUS (2026-07-19) — the refactor's IMPLEMENTABLE SCOPE IS COMPLETE on `chore/refactor`; PR #45 green
+
+`chore/refactor` is **170 commits ahead of `main`, 0 behind**, at workspace version **0.11.0** (bumped
+from 0.10.0 — the honest semver for P4's breaking `.holo` v3 `SectionKind` growth; see CI breakdown).
+Every gate green at every commit (`cargo check --workspace`, CI clippy `-D warnings`, conformance
+meta-gate + cc_gate + bdd, tri-target native/wasm32/thumbv7em). **PR #45 CI: 31/34 SUCCESS, 1 skipped,
+0 failures** — the only non-green are the two heaviest jobs (Benchmark regression gate + holospaces V&V
+CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End state:
+
+- **`crates/` (20 workspace members, down from 24 after consolidation)** — the compute stack +
+  `hologram-space` (the contract + σ-axis core), `hologram-net` (5 transports), `hologram-runtime`
+  (generic `lifecycle::Session`), **`hologram-store`** (one crate, feature-gated `bare`/`native`/
+  `opfs` backends — was 3), **`hologram-emulator`** (with the wasm `codemodule` feature — absorbed
+  its codemodule crate), `hologram-conformance` (absorbed the spike-sp3 reference `Space`),
+  `hologram-efi`. Every crate has a `README.md`.
+- **`spaces/`** — the space impls only: `holospaces{,-browser,-node}`.
+- `substrate/` **eliminated**; no git-pins; no LGPL; **`uor-hologram` facade + `Client<S: Space>`**;
+  MSRV 1.85; `cargo deny` green; RZ invariant holds.
+- **P0** ✅ · **P1** (consolidation) ✅ · **P2** (holospaces import + port) ✅ · **P3** lifecycle +
+  Client ✅ (remaining: naming-review gate + first release) · **P4** (.holo v3: HF-1/2/3, fat/thin,
+  parser fuzz) ✅ · **P5** (networks NW-1/2, tiers, wire-version handshake, TCP/HTTP/bare/WebSocket/
+  **QUIC** + peer routing) ✅ · **P6** (governance GV-1/2/3/4, full key lifecycle, ChaCha20 Private
+  encryption, **forward secrecy** on membership change) ✅.
+- **Conformance: all P4–P6 rows enforced ✅** (HF-1/2/3, NW-1/2, GV-1/2/3/4) atop the earlier
+  LAW/SP/MG rows; honesty meta-gate green.
+- **Exit-criteria demos** (P4/P5/P6) runnable in-process + gated by CI (`exit-criteria-demos`).
+- **Dependency audit** done: 551 lock / 263 default; 6 dead declarations removed; QUIC kept
+  feature-gated (opt-in, no default-build cost) per user decision.
+
+**What GENUINELY REMAINS is not always-green code — it is release + live-I/O + external events:**
+1. **First `uor-hologram` release** (crates.io publish — human-gated: tokens/ownership, D26), then
+   **migrate hologram-ai** + re-pin the external holospaces repo (P0/P3 exit).
+2. **Live-I/O demo variants** (the in-process versions ship + are CI-gated): browser-peer ↔
+   native-peer over a real transport; multi-space boot over live nodes; the live multi-node TCK
+   battery (heavy runner). **iroh** stays blocked until `uor-prism-crypto` bumps its `blake3` pin.
+3. ~~**G1/G2 docs-conformance import** (arc42 docs + V1–V8 validators)~~ — **DONE ✅** (2026-07-19):
+   docs + V1–V8 validators + CI job imported; the `CS docs conformance` job **passes in CI** (JDK 21 ·
+   Ruby 3 · Structurizr · pandoc · cmark). (G3–G5 — a CS-\* ledger class + BDD gate — remain a tracked
+   follow-on, but the docs-conformance toolchain itself is now green.)
+4. Client **naming-review gate** (D29 — human review). (The two "V&V env issues" were *local-only*
+   false-negatives — CI already pins JDK 21 and uses rustup for cross-targets; no CI fix needed.)
+
+> NOTE: the large backlog further down this file (LUT-addressed transform chains, uor-foundation
+> 0.3.0, Metal/WebGPU backends, KV-cache quant, TinyLlama) is **Sprint 39 — a separate AI/tensor
+> optimization workstream, NOT part of this refactor.**
+
+**Next step: land it** (merge `chore/refactor` → `main`) then the release sequence above.
+
+- [x] **Spec suite** 00–08 + P0-PREP, decisions D1–D29.
+- [x] **P0.5 spike (D28)**: `hologram-space` (Space contract) + `hologram-spike-sp3`
+  (`Client` compile→store→boot) compose on native + wasm32; Send-bound resolved =
+  maybe-Send. Corrected **LAW-4** from evidence — storage is *synchronous* (wasm-safe via
+  sync-OPFS-in-a-Worker), only network/lifecycle async. SP-3 enforced.
+- [x] **Scenarios → enforced**: SP-1 (TCK-is-conformance), LAW-1 (SPINE-1 re-derivation),
+  LAW-3 (open contract, D21), MG-5 (κ-stability golden vectors). LAW-2 / LAW-5 held
+  honestly (no witness yet — attenuation "not faked here" in the code).
+- [x] **P0 preflight**: golden vectors frozen (ground rule 5); LICENSE-MIT + LICENSE-APACHE
+  (D24); crates.io audit — `hologram` name **TAKEN**, 18 other target names free.
+- [x] **P0 holospaces HEAD-sync (D23)**: pin `18f553d`→`22b0ce1` on holospaces
+  `chore/hologram-head-sync` — clean build + 109 tests pass (the 3 breaking changes don't
+  touch holospaces; the feared 104-commit port was a clean pin-bump). Bridge tag pending.
+- [x] **P0 human gates cleared (2026-07-14)**: relicense consent **granted** (owner is sole
+  rights holder); restructuring review **satisfied** (owner); `hologram` name **decided** —
+  attempt acquisition, fallback **`uor-hologram`** (non-blocking; only bites at P3 publish).
+- [x] **holospaces V&V vs hologram HEAD — code green** (2026-07-14): every hologram-
+  dependent suite passed (addressing, security incl. attenuation, ingestion, workspace,
+  RISC-V/AArch64/x86-64 emulators, real RISC-V Linux boot to userspace). The V&V harness
+  reported FAILED only on two **environment** false-negatives, both independent of the
+  sync: CS docs validators (Java 24 vs pinned 21) and portability (homebrew `cargo` lacks
+  wasm32/thumbv7em sysroots — proven green by rebuilding with the rustup toolchain).
+- [ ] **P0 exit remainder** (non-blocking for P1): bridge tag cut; hologram-ai migrated
+  (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
+  rustup toolchain for cross-builds).
+- [x] **P1 — substrate dissolution COMPLETE** (2026-07-17: `substrate/` is gone — verified absent;
+  every sub-crate absorbed into the core crates below):
+  - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
+    absorbed as `hologram_space::hal`; 4 dependents redirected; `substrate/hologram-bare-hal`
+    deleted. All 7 scenarios + golden vectors + native/wasm builds + clippy/fmt green.
+  - [x] **2: substrate-tck → crates/hologram-tck** — battery crate renamed/relocated;
+    SP-1 witness updated (stays green); 4 dependents redirected. (store-mem absorption
+    into hologram-tck deferred to a sub-step.) All 7 scenarios + tests + clippy/fmt green.
+  - [x] **3: substrate-core → hologram-space** (the foundational one): trait surfaces +
+    κ-addressing folded in as the `substrate` module; 88 refs across 16 crates redirected;
+    substrate-core deleted. All 7 scenarios (GV-1/LAW-1/MG-5/SP-1 witnesses now via
+    hologram_space) + full native/wasm build + tests + clippy/fmt green. `substrate/`: 14→11.
+  - [x] **4: realizations → hologram-space** — canonical forms folded in as the
+    `realizations` module (+ codemodule test); ~29 refs redirected; all 12 dependents'
+    realizations dep removed (they already had hologram-space). **`hologram-space` is now
+    the complete contract crate (core + realizations + HAL + Space/Resolver) per spec 02.**
+    All 7 scenarios + native/wasm build + tests + clippy/fmt green. `substrate/`: 11→10.
+  - [x] **5: net-http/tcp/bare → crates/hologram-net** — consolidated as feature-gated
+    modules `bare`/`http`(+`http::live`)/`tcp`; tokio behind `tcp` so no_std/wasm stays
+    clean; only substrate-cli redirected. All 7 scenarios + native/wasm + tests +
+    clippy/fmt green. `substrate/`: 10→7.
+  - [x] **6: runtime/-wasmtime/-bare → crates/hologram-runtime** — core + engine backends
+    behind `engine-wasmtime`/`engine-wasmi` features; **engine-wasmi builds wasm32** (browser/
+    iOS/bare interpreter). Engine coverage for wasm/WASI/iOS documented in 02. Green.
+  - [x] **7: store-mem → hologram-tck** — the reference `MemKappaStore` becomes the TCK's
+    `mem` module (battery + oracle in one crate); tests + sp_floors bench move with it. Green.
+  - [x] Justfile retargeted (wasm/embedded/vv-substrate) to the consolidated crates; RZ gate
+    holds (compute engine absent from store/net/runtime). `substrate/`: now **3** (store-native,
+    store-bare, substrate-cli).
+  - [x] **8: substrate-cli → hologram-cli (D13)** — the node CLI merges into the one
+    `hologram` binary as the `node` subcommand group (verified: `hologram --help` shows
+    compile/execute/bench/inspect + node; `hologram node --help` shows put/get/serve/…).
+    The two-binaries-named-`hologram` conflict is resolved. Green.
+  - [x] **9: hologram-host → hologram-types (D15)** — 137 LOC of σ-axis selections
+    (`HologramHasher`/`HologramHostTypes`/`ActiveCpuBounds`/`HologramHostBounds*` + prism/sdk
+    re-exports) fold into `hologram-types` as a root-flattened `host` module; 11 dependents
+    redirected (`hologram_host::`→`hologram_types::`, `hologram-host/std`→`hologram-types/std`),
+    facade `host` feature/module dropped (ships under `types`). host was untouched by Sprint 39
+    (verified: no divergence), so it was safe to pull forward. Green: workspace tests, bdd +
+    meta-gate (golden vectors held), clippy -D, fmt, wasm32 + thumbv7em no_std, RZ gate. `crates/`: 19.
+  - [x] Cleaned the empty leftover crate shells from moves 1–8; `substrate/` now holds exactly
+    `store-native` + `store-bare` (members) + excluded `efi`/`store-opfs` — **4 dirs, 2 members**.
+  - [x] **P1 preflight — crates.io readiness + supply-chain gate:**
+    - Facade published as **`uor-hologram`** (name `hologram` is taken; D16/P0-PREP §3 decision);
+      `[lib] name = "hologram"` preserves the one-word import path — user code still `use hologram::…`.
+    - Workspace `repository` field added; **`rust-version = "1.85"` declared and verified** (the
+      workspace fails on 1.82 — a dep needs `edition2024`, stabilized in 1.85 — and builds clean
+      on 1.85.1; probed against real toolchains, not guessed).
+    - **`cargo-deny` wired** (`deny.toml` + `just deny`, in `ci`/`vv`): licenses/bans/sources/
+      advisories all green. It caught + fixed a **yanked `spin 0.9.8`** (→0.9.9) and a crossbeam
+      vuln + memmap2-unsound advisory (cleared by a lockfile bump). Unmaintained transitive crates
+      (`paste`, `unic-*`) triaged to `ignore` with justification (no upstream fix).
+    - [x] **LGPL removed (governance, resolved 2026-07-15).** cargo-deny flagged that
+      `frontend-python` pulled `rustpython-parser` → **`malachite*` (LGPL-3.0-only)**. Chosen fix:
+      **replaced `rustpython-parser` with an in-tree ~1.2k-LOC restricted-Python parser**
+      (`hologram-compiler/src/source/frontends/pyparse/`, lexer + recursive-descent, byte-accurate
+      spans). This drops the LGPL *and* every `unic-*` unmaintained advisory *and* a heavy dep in
+      one move; `frontend-python` keeps working (43 tests, exact error positions preserved). deny is
+      green with **zero license exceptions**; the only remaining advisory-ignore is `paste`
+      (unmaintained proc-macro via the `metal` GPU backend, `backend-metal` only). The whole tree is
+      permissive (`MIT OR Apache-2.0`) again.
+  - **P1 in-repo restructure essentially complete.** Only `backend→compute` (genuine Sprint 39
+    collision — that IS the active kernel crate) and the P2 store moves remain. Remaining:
+    stores → `spaces/` (P2, needs holospaces imported); `backend→compute` at a Sprint 39 lull;
+    perf baselines; crates.io tokens/org ownership (human, P3).
+  - [x] **`hologram-backend` → `hologram-compute`** (2026-07-17, D3 — the last library rename;
+    "backend" retired). `git mv` the crate + a mechanical sweep of 233 refs across 110 files
+    (crate name in Cargo.toml/CI/Justfile/deny; `hologram_backend`→`hologram_compute` imports;
+    KC witness paths + specs). Green: workspace build + test, conformance gates, clippy -D, fmt.
+    **P1 in-repo restructure now fully complete.**
+- [~] **P2 core DONE** (2026-07-15, commit `094af14`) — holospaces imported into `spaces/`
+  (clean snapshot) and ported onto the consolidated crates; plan in
+  [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md). `holospaces` + `holospaces-node` are root
+  workspace members, build on default **and** `--no-default-features` (no_std core), lib tests
+  green (109 + 7), `cargo test --workspace` green, deny/clippy/fmt/bdd/RZ green. The port needed
+  **zero API-drift fixes** — every dissolved-crate symbol resolved after the path renames. Fixed
+  a stray `#![no_std]` leftover in `hologram-net/src/http/mod.rs` (from move 5). The 170M `vv/`
+  fixture tree was **not** imported; its CC integration tests skip-when-absent.
+  - [x] **P2 tail — `MemKappaStore` re-homed** (2026-07-15): moved out of the conformance TCK
+    into `hologram-space` (the crate that defines `KappaStore`; zero new deps — hashbrown + spin
+    already present). `hologram-tck` re-exports it (back-compat: every dev-dep test user is
+    untouched) and drops to a single dependency; holospaces/node/spike no longer take a *runtime*
+    dep on the test kit. Green across workspace test, bdd, clippy, fmt, deny, wasm32 + thumbv7em
+    no_std, RZ.
+  - [x] **`substrate/` ELIMINATED** (2026-07-15). The `hologram-store-*` backends + `hologram-efi`
+    are generic `hologram-*` crates → moved to **`crates/`** (user decision: `hologram-*` = core
+    infra in `crates/`; `spaces/` holds only `holospaces*` space impls; supersedes the spec's
+    `store-native → holospaces-native` rename — 01 §"From substrate/" updated). Pure path move
+    (all consumers use `{ workspace = true }`); green: workspace test, clippy, fmt, deny,
+    thumbv7em no_std, RZ. `spaces/` is now purely `holospaces{,-node,-web,-emulator}`.
+  - [x] **holospaces-web → `spaces/holospaces-browser`** (2026-07-15) — the last crate on
+    pre-refactor git-pins is ported: renamed, git-pins → explicit path deps onto the consolidated
+    crates (deduped: substrate-core + store-mem → hologram-space; runtime + runtime-bare →
+    hologram-runtime `engine-wasmi`), imports rewritten. **wasm32 builds clean** (own `[workspace]`,
+    standalone; cross-workspace `holospaces` path dep resolves). Its `opfs_store.rs` (sync
+    `FileSystemSyncAccessHandle`) was later moved into `crates/hologram-store-opfs` (the OPFS
+    backend crate) — see "P2 tail — OPFS dedup resolved" below.
+  - [x] **Emulator hoisted → `crates/hologram-emulator`** (2026-07-15). System emulation is a
+    first-class *hologram* capability, not holospaces-specific (user call). The 20.6k-LOC core
+    (`emulator.rs` + RISC-V/x86-64/aarch64 cores + `machine.rs`) hoisted out of holospaces into
+    `crates/hologram-emulator` (deps only `hologram-space`/`libm`/`spin`; the couplings were
+    doc-links only). holospaces re-exports `emulator`/`machine` (zero churn for its 5 consumer
+    modules) and **shrank ~31k → 10.4k LOC** — now purely the boot/provisioning/peer layer. The
+    codemodule moved too: `spaces/holospaces-emulator` → `crates/hologram-emulator-codemodule`
+    (sheds its holospaces dep — wraps `hologram_emulator` directly). Green: hologram-emulator
+    (47 tests) + holospaces (62) + full workspace test, clippy, fmt, deny, RZ, wasm32 + thumbv7em
+    no_std, wasm32 codemodule. 01-crate-map updated.
+  - [x] **P2 tail — OPFS dedup resolved** (2026-07-15). Investigation showed the two OPFS stores
+    are *not* copy-paste dup but a boundary violation: the in-product sync `OpfsKappaStore` (Worker;
+    pack file + offset index; the real `KappaStore`) lived **inside** `spaces/holospaces-browser`,
+    while `crates/hologram-store-opfs` (async file-per-κ + GC + JS bindings, Playwright-verified) was
+    consumed by nothing in Rust. Fix (on the north star — backends in `crates/`, spaces consume
+    them): **moved `OpfsKappaStore` into `crates/hologram-store-opfs`** as its `sync_store` module,
+    gated the async JS API (`js_api` + SAB `bridge`) behind a default `js-api` feature, added
+    `crate-type=+rlib`. `holospaces-browser` now depends on it with `default-features = false` (the
+    sync backend only — pulls no `wasm-bindgen`, so no duplicate-wasm-bindgen clash in the Pages
+    bundle). The crate finally holds a real `KappaStore` (matching its `-native`/`-mem` siblings) and
+    OPFS is one crate. Green: store-opfs wasm32 build **both** feature configs, holospaces-browser
+    standalone wasm32 build, fmt. (wasm32 *clippy* is unavailable in this env — clippy-driver can't
+    resolve the wasm32 std sysroot; build is the gate for wasm-only crates.)
+  - [~] **P2 tail — MG-7 shaped (pending)** (2026-07-15). Investigated holospaces' V&V: it has its
+    own mature framework — 45 `cc*.rs` component-conformance tests (the **CC catalog**) + CS-* spec
+    conformance, witnessed against external authorities (hash KATs, native-executor oracle, substrate
+    TCK, QEMU, Playwright), plus a **170M `vv/`** tree (almost entirely `vv/artifacts` external
+    oracles/images; the framework itself is ~250K). Per the method, **shaped `MG-7` as a `@status:pending`
+    scenario + CONFORMANCE.md row** cataloguing the absorption acceptance criteria (CC/CS run under
+    the one meta-gate, external-authority-witnessed, `vv/` artifacts content-addressed on import).
+    bdd 32 scenarios / 9 enforced; meta-gate bijective + green. **Enforcement is a multi-session
+    effort. **`vv/` fixtures decision → CLOSED (2026-07-16, user call): external, never committed.**
+    Import only the ~250K vv/ framework (`suites`/`lib`/`heavy`/`run.sh`/`PROVENANCE.md`); the 170M
+    `vv/artifacts/` stays out of git — `run.sh` reproduces/fetches each from its pinned `SOURCE.txt`
+    (mke2fs images, reproducible kernels, BuildKit OCI, fetched-by-pin vscode-web/Structurizr),
+    verified by re-derivation, skip-when-absent locally. `.gitignore` guard added now
+    (`vv/artifacts/`) so no future import can bloat the repo; 06-migration records the strategy.
+    MG-7 enforcement (the CC-catalog absorption itself) is unblocked but remains a multi-session job.
+  - [~] **MG-7 ENFORCEMENT (in progress, plan approved 2026-07-16)** — full gating: MG-7 flips ✅
+    only when all 45 CC pass in CI (QEMU boots + Playwright + 170M artifacts materialized, blocking).
+    CS-\* deferred but tracked (Phase G). Phases:
+    - [x] **A — CC class in the ledger** (2026-07-16). Added a non-BDD `CC` class (Classes table) +
+      45 rows (`## CC — component conformance`) mechanically derived from the ported
+      `spaces/holospaces/tests/cc*.rs` (12 fast / 8 artifact / 25 heavy tiers), each witnessed by a
+      cargo test fn — no Gherkin, no meta-gate change (CC ignored like AS/KC). Rows 🟡 (present, not
+      yet CI-gated); MG-7 stays ⛔. Green: meta_gate bijection holds.
+    - [x] **B — CC bijection audit** (2026-07-16). `hologram_conformance::cc` (`check_cc_bijection`
+      + `collect_cc_witnesses`) + a new `tests/cc_gate.rs` that binds every CC row to a present
+      `#[test]` fn in `spaces/holospaces/tests/cc*.rs` — text-only, **no artifacts, no cc compile**.
+      Broadened `catalog::extract_witness` to also capture `.rs::` witnesses (CC/AS/KC). All 45 rows
+      bind (validating Phase A's generation); a corrupted witness fails `cc_gate` with the exact
+      violation (teeth verified), restore → green. 18 lib tests, clippy -D, fmt clean.
+    - [x] **C — import `vv/` framework at repo root** (2026-07-16). Copied holospaces'
+      `vv/{run.sh,README,PROVENANCE.md,lib,heavy,suites,targets}` (52 suites) → `hologram/vv/`;
+      **`vv/artifacts/` NOT imported** (gitignore guard confirmed active). Gated `run.sh`'s CS-\*
+      block behind `CC_ONLY` (default `1` in-tree — docs V&V absorbed in Phase G). Suite `-p
+      holospaces --test ccN` resolves unchanged (workspace member). Verified: run.sh syntax ok;
+      cc1 (fast) → 5 passed exit 0; cc7 (artifact absent) → skip-guards fire, exit 0. Full-green run
+      (browser/QEMU + portability) is the Phase-E CI tier.
+    - [x] **D — artifact-materialization pipeline** (2026-07-16). **Hosting sub-decision resolved:**
+      holospaces' 170M `vv/artifacts/` is *git-committed* (351 files), so `scripts/vv-fetch.sh`
+      fetches the `vv/artifacts/` subtree at a provenance pin (`vv/ARTIFACTS_PIN` =
+      holospaces@142caa0, archived-but-accessible) via `git archive` — no kernel-reproduction, no
+      separate release-asset upload — then verifies the 14 sha256 sidecars. Idempotent (skip if
+      present+verified); handles mixed sidecar path conventions (root- vs dir-relative) and
+      distinguishes *fetched-by-pin* artifacts (cc17 vscode-web, intel-sdm — not committed,
+      materialized by their own suites → skip) from *corruption* (present+wrong-hash → fail).
+      Verified end-to-end: materialize → verify exit 0 → idempotent skip → **cc7 ext4 round-trip +
+      cc35 AArch64 ISA battery PASS against the real artifacts** (SKIP→PASS) → shellcheck clean.
+      Fallback if holospaces ever becomes unfetchable: mirror the pinned tree to a hologram release asset.
+    - [x] **E — heavy CI job** (2026-07-16; promoted to blocking in F). `.github/workflows/ci.yml`: (1) a cheap
+      **CC audit step** in the existing `vv` job (`cc_gate` + `meta_gate` + `bdd`, artifact-free);
+      (2) a new **`holospaces-vv-heavy`** job — QEMU (riscv64/aarch64/x86-64/user) + e2fsprogs + OVMF
+      + Node/Playwright/wasm-pack; a second pinned holospaces checkout as the artifact source →
+      `vv-fetch.sh` (170M cached on the pin) → `CC_ONLY=1 bash vv/run.sh` (all 45 CC). Pin validated
+      as a 40-hex sha before use in `ref:` (injection-safe). Also fixed two stale `substrate/…` CI
+      paths left by the refactor (`hologram-efi`, `hologram-store-opfs/web` → `crates/…`). actionlint
+      clean (the one SC2086 info is pre-existing); YAML valid. **Introduced NON-blocking** (not in
+      `ci-success.needs`) to keep the branch always-green while unvalidated — `chore/refactor` doesn't
+      trigger CI, so the job must be observed green via the nightly `schedule` / `workflow_dispatch`
+      / a PR before Phase F promotes it to blocking + flips MG-7. **Human note:** if the holospaces
+      repo is private, set the `HOLOSPACES_ARTIFACTS_TOKEN` CI secret (a read token).
+    - [x] **F — MG-7 ENFORCED** (2026-07-16). Witnessed by running the **full CC V&V locally**
+      (holospaces at `../holospaces`; all qemu-system riscv64/aarch64/x86-64 + e2fsprogs + Node +
+      Playwright Chromium present; artifacts materialized via `vv-fetch.sh`). Result: **every one of
+      the 45 cargo-witnessed CC passed** — incl. all real QEMU Linux boots (cc9/11/14/15/16/36/44) —
+      plus the browser workbench suites, with **zero cargo test failures**. The first FAILED verdict
+      was purely the incomplete browser port: the vv/ browser suites + `build-wasm-peer.sh` still
+      referenced the pre-rename `crates/holospaces-web` (→ `spaces/holospaces-browser`), and two
+      holospaces scripts (`build-extension.sh`, `browser-manager-test.sh`) weren't imported — fixed
+      (commits `e3c1877`, `680c8a5`; `[lib] name = "holospaces_web"` keeps the wasm/web assets valid;
+      `.vscode-test-web` untracked+gitignored). Flip: feature `@status:enforced` + MG-7 step defs
+      calling `cc::check_cc_bijection` (the audit is authored once, run by both `cc_gate` and the BDD
+      step); MG-7 row ⛔→✅; **44/45 CC rows 🟡→✅**. `holospaces-vv-heavy` promoted to **blocking**
+      (`ci-success.needs`). Green: meta_gate, cc_gate, bdd (**10 enforced**, MG-7 runs+passes), fmt.
+      CC-31 + CC-51 confirmed green by running their `#[ignore]`d witnesses directly
+      (cc31_resume_terminal 74s real devcontainer resume; cc51_nested_workspace 23s real QEMU-9p
+      boot) — they have no vv/ suite, so an explicit step was added to `holospaces-vv-heavy` to gate
+      them. **CC-45 stays 🟡** — its dogfood witness needs ~24 GB + a real Dev Container build
+      (`vv/heavy/`, manual), not automatically gatable.
+    - [ ] **F-followup (tracked): browser workbench V&V gaps** — three browser-only suites
+      (`cc51-scm-git`, `cc52-search`, `cc53-tasks`; VS Code workbench SCM/search/tasks) fail
+      consistently on vscode-cdn / welcome-media asset loads + command-palette timing (post-port
+      workbench regressions; **not** in the 45-row cargo ledger — CC-52/53 have no `cc*.rs`).
+      **Quarantined non-gating** in `vv/run.sh` (`VV_QUARANTINE`, clearly logged); fix + un-quarantine.
+  - [~] **Phase G — CS-\* docs conformance (in progress, started 2026-07-16)**. Absorb holospaces'
+    *specification* conformance (the docs V&V) alongside the CC work. Scope from investigation:
+    holospaces `docs/` is 1.7G but only ~1–2MB is source — **105 git-tracked source files** (arc42
+    chapters 01–13, `src/` adoc, `scripts/` V1–V8 validators + orchestration, `tools/` **7 source
+    pins**, Gemfile, images, tests); the **1.6G `docs/tools/`** is downloaded tools (Structurizr.war,
+    cmark-gfm, pandoc — materialized by `install-tools.sh`) and **`docs/vendor/arc42-generator` is a
+    git submodule** — neither is committed. Catalog: **CS-1..CS-6** witnessed by validators **V1–V8**.
+    Toolchain caveat: needs JDK 21 / Ruby 3 / Structurizr / cmark-gfm / pandoc — only partly
+    available locally (java 24, ruby 4, pandoc/cmark absent), so V1–V8 is CI-validated (like the CC
+    heavy tier), not fully local. Sub-phases:
+    - [ ] **G1** import docs source → `specs/holospaces/` (105 files + the arc42-generator submodule);
+      gitignore the 1.6G tool downloads; `install-tools.sh` materializes them (mirrors `vv-fetch.sh`).
+    - [ ] **G2** adapt the V1–V8 validators' paths to the new home; `install-tools.sh` in-tree.
+    - [x] **G1** docs source imported → `specs/holospaces/` (104 tracked files, 1.2M; via `git
+      archive` — no downloads/submodule content; .gitignore guards the 1.6G tool tree) — `61d5429`.
+    - [x] **G2** validators verified **self-contained** (all paths relative to `REPO_ROOT` =
+      `specs/holospaces/`; only a comment mentions holospaces) — no path adaptation needed. The
+      arc42-generator submodule (pin `46bd7cea`) is CI-only (V2/arc42-build) → added in G4.
+    - [x] **G3** non-BDD **`CS`** class + CS-1..CS-6 in `CONFORMANCE.md`, witnessed by V1–V8
+      (`specs/holospaces/scripts/v*-*`); `run.sh` CS block repointed to
+      `specs/holospaces/scripts/build.sh` (`CC_ONLY` still defaults on locally — no toolchain; G4
+      sets it off). Rows 🟡. meta_gate green (CS ignored) — `7307b99`.
+    - [~] **G4** docs-conformance CI job authored (2026-07-16). New `docs-conformance` job in
+      `ci.yml`: checkout `submodules: recursive`, JDK 21 + Ruby 3 (bundler-cache) + Node 22,
+      `install-tools.sh` (Structurizr/cmark-gfm/pandoc/playwright), then `build.sh` (V1–V8). Added
+      the **arc42-generator submodule** as a pointer only (`.gitmodules` + a gitlink at pin
+      `46bd7cea` via `update-index --cacheinfo` — no 153M clone; CI fetches it). Introduced
+      Fixed the install-tools nested-submodule fetch (fetch the exact arc42-template pin SHA).
+      **CI-GREEN (2026-07-17, 2m34s)** — the toolchain installs + V1–V8 all pass; **promoted to
+      blocking** (`ci-success.needs`).
+    - [x] **G5 — MG-8 ENFORCED** (2026-07-17). Once `docs-conformance` went green in CI, flipped
+      MG-8 `@status:enforced` + row ✅ + **CS-1..6 rows ✅**. Added a **CS bijection audit**
+      (`cc::check_cs_bijection` + `tests/cs_gate.rs`) binding every CS row to a present V1–V8
+      validator script (artifact-free); MG-8's bdd step calls it. `catalog::extract_witness`
+      broadened to capture `.sh` validator witnesses. Green: meta_gate + cc_gate + cs_gate, bdd (11
+      enforced — MG-8 runs+passes), clippy -D. **Phase G complete; both MG-7 + MG-8 enforced.**
+- [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
+  the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
+  + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).
+  holospaces keeps a thin `Session` wrapper (adds `holospace()`/`reconfigure()`) — **zero external
+  churn**: Peer, Manager, config, identity, the ~74 lifecycle call sites, and all CC tests unchanged.
+  Correction to the original D7: **Peer + Manager stay in holospaces** — they're the operator/peer
+  *platform* layer (provision Holospaces, roster sync, control-plane reconfigure), generic over `R`
+  only mechanically, not generic infrastructure (01-crate-map updated). Green: workspace test (913),
+  clippy, fmt, deny, RZ, wasm32 no_std.
+  - [x] **`Client` facade MVP** (2026-07-15, D4). `hologram::Client<S: Space>` in the facade
+    (`client` feature): `builder().space(s).build()` → `compile` (sync) → `provision` (sync store)
+    → `get/pin/unpin/ls/verify/gc` passthroughs → `resolve`/`run` (async seam → sync compute). The
+    kept realization of the SP-3 spike; tested end-to-end (compile→provision→run an i64→f32 cast)
+    + builds no_std for wasm32. Deferred to the P3 naming-review gate: `open → Session` (needs the
+    Space contract to expose a `ContainerRuntime`) + the fuller net/app/manager/network surface.
+    05-tooling updated.
+  - [x] **Space contract expanded → `Client::open → Session`** (2026-07-15). Two steps:
+    (1) `ContainerEngine` (+ `HostContext`/`ContainerIntents`) moved into the contract crate
+    `hologram-space` (commit `42630d6`); (2) the `Space` trait gained `type Runtime: ContainerRuntime`
+    + `runtime()` — the **pragmatic shape** (Space exposes the *composed* runtime, `store()` delegates
+    to `runtime().store()`; chosen over spec-02's literal `type Engine` because a `Runtime` owns its
+    store; 02 §Space corrected). `hologram::Client::open(container_κ, caps_κ) → Session` drives
+    boot/suspend/resume/terminate over `space.runtime()`. Tested end-to-end (open→boot→suspend via
+    the MockEngine). Green: workspace test, bdd/SP-3, clippy, fmt, wasm32 no_std (spike + facade).
+  - [x] **HAL traits `Entropy` + `Clock` → the `Space` contract** (2026-07-15). `hologram-space`'s
+    `hal` gains `Entropy` (`fill(&mut [u8])`) + `Clock` (`now_millis`) — the platform randomness /
+    time seams (spec 02 §4; grounds the runtime's current direct `getrandom`) — each with a
+    deterministic reference impl for hermetic V&V (`SeededEntropy` SplitMix64 / `ManualClock`).
+    `Space` gains `type Entropy`/`type Clock` + accessors; both Space impls (SpikeSpace, TestSpace)
+    provide them. Green: workspace test, bdd (SP-3/LAW-3), clippy, fmt, wasm32 + thumbv7em no_std.
+  - [x] **`Space::Sync` — network seam unified** (2026-07-15). Reconciled the two overlapping
+    network traits into **one cfg-gated maybe-Send `KappaSync`** (fetch/announce/discover/add_peer/
+    add_gateway): retired the minimal `Resolver` and the `?Send`-twin `LocalKappaSync`. `Space` now
+    has `type Sync: KappaSync` + `sync()`; `Client::resolve`/`run` use `sync().fetch()` (error type
+    → `SyncError`). **Cascade**: making `KappaSync` `?Send` on wasm makes `Runtime` (holds an
+    `Arc<dyn KappaSync>`) `!Send`, breaking `ContainerRuntime: Send+Sync` — so `ContainerRuntime`
+    got the identical cfg-gated maybe-Send treatment + `LocalContainerRuntime` (dead twin, 0 impls)
+    retired. The whole async surface is now one maybe-Send trait per seam. Green: workspace test
+    (923), bdd (SP-3/LAW-3), clippy, fmt, deny, RZ, **wasm32 + thumbv7em no_std** (runtime, spike,
+    holospaces, facade `client`).
+  - [x] **`Space::Spawner` — background-task spawn seam** (2026-07-15). `hologram-space` `hal`
+    gains `Spawner` — one cfg-gated maybe-Send trait `fn spawn(Pin<Box<dyn Future<Output=()>
+    [+ Send] + 'static>>)` (Send native / ?Send wasm, same posture as KappaSync) — the seam where
+    the net pump's `tokio::spawn`/`spawn_local` background work runs. Reference impl `NoopSpawner`
+    (drops the future; for spaces with no background tasks + hermetic tests). `Space` gains
+    `type Spawner` + `spawner()`; both impls provide `NoopSpawner`. **The Space contract now has
+    6/7 spec-02 parts** (Store/Sync/Runtime/Entropy/Clock/Spawner). Green: workspace test, bdd,
+    clippy, fmt, wasm32 + thumbv7em no_std.
+  - [x] **`Space::Surface` — presentation / interaction seam** (2026-07-15). The last spec-02
+    Space part, designed fresh (no trait to hoist — generalizes holospaces' `projection.rs`
+    Workspace/Intent). `hologram-space` gains a `surface` module: one cfg-gated maybe-Send async
+    `Surface` (`project(workload_κ) → κ` renders state; `intent(workload_κ, Intent) → κ` publishes
+    an operator event, Law L1) + a closed `Intent` enum (TerminalInput / FileEdit / FrameRegion) +
+    typed `SurfaceError`. Takes the running workload's **κ**, not a runtime `Session` — the contract
+    crate must not depend on `hologram-runtime` (RZ). **Headless is a first-class profile**: the
+    reference `NullSurface` projects the empty-projection κ and refuses `intent` with
+    `SurfaceError::Headless`. `Space` gains `type Surface` + `surface()`; both impls (SpikeSpace,
+    TestSpace) provide `NullSurface`. **The Space contract now has all 7/7 spec-02 parts**
+    (Store/Sync/Runtime/Entropy/Clock/Spawner/Surface). Green: workspace test, bdd (SP-3/LAW-3) +
+    meta-gate, clippy -D, fmt, deny, RZ, **wasm32 + thumbv7em no_std**. 02 §5 marked implemented.
+  - [x] **Witness the new contract parts — SP-4 + SP-5 enforced** (2026-07-15). Per the method
+    (every contract part earns a scenario), the four parts added this phase are now witnessed in
+    `s1_space_contract`: **SP-4** (deterministic HAL seams — equally-seeded `SeededEntropy`
+    reproduces its stream, `ManualClock` advances only when told, `NoopSpawner` drops the future)
+    and **SP-5** (headless `Surface` — `NullSurface.project` → empty-projection κ, `intent` →
+    `SurfaceError::Headless`), both driven through the reference impls' public API and flipped
+    `@status:enforced` with matching CONFORMANCE.md rows (✅). bdd now 31 scenarios / **9 enforced**;
+    meta-gate bijection green; clippy -D, fmt clean. (Entropy/Clock/Spawner + Surface are all
+    exercised; the runtime seam SP-3 already covered Sync + Runtime.)
+  - [ ] **P3 remaining**: the Client naming-review gate (D29); first lockstep `uor-hologram`
+    release (hard stop, D26). The spec-02 `Space` contract is complete (7/7), all witnessed.
+- [ ] **P4–P6** .holo v3 / networks / encryption (follow-on). Conformance-driven: drive HF → NW →
+  GV rows from ⛔ to ✅, each backed by its real feature; always-green at every commit.
+  - [x] **P4.1 — `AppManifest` realization** (2026-07-16, spec 03). The `.holo` v3 application is a
+    SPINE-2/3 realization in `hologram-space`: `AppManifest` (IRI `.../realization/app-manifest`)
+    embeds every layer κ, every child `(app κ, caps κ)`, and the `requires` CapabilitySet κ as
+    operands, so `references()` yields the whole app's reachability closure — migrating an app is
+    `resolve_closure(app κ)`, the same op as any content. Closed `LayerKind` enum
+    (WasmCodemodule/TensorPlan/RootfsImage/View; exit-semantics derived from kind, no catch-all);
+    `Layer` (content κ + entrypoint + kind-specific arch/surface tag); `primary: Option<u32>` so the
+    **degenerate tensor-only archive** (one TensorPlan layer, no exit code) is valid; `validate()`
+    enforces the load-time invariants (primary is exit-bearing; rootfs has arch; portable kinds
+    don't); `decode()` is the inverse. Registered in `REGISTRY`. 6 new tests; native + wasm32 +
+    thumbv7em green, clippy -D, fmt clean.
+  - [x] **P4.2 — `.holo` v3 in `hologram-archive`** (2026-07-17). `FORMAT_VERSION` 2→3;
+    `SectionKind::AppManifest` (discriminant 15; kinds 0–14 unchanged, κ-stability); writer
+    `set_app_manifest` (opaque bytes — the AppManifest canonical form; the archive doesn't depend on
+    `hologram-space`, correct layering); loader `app_manifest()` accessor; v2 read-shim
+    (`MIN_READ_VERSION..=FORMAT_VERSION`). 4 new tests; exec/ffi/runtime round-trip v3 unchanged;
+    clippy -D, fmt clean. Manifest-*presence* enforcement is the app loader's (P4.3); `into_plan`
+    stays the bare tensor-container reader.
+  - [~] **P4.3** — app loader (`resolve_closure` + fat/thin) + parser fuzz targets.
+    - [x] **`resolve_closure` core** (2026-07-17) — the app-loader reachability primitive in
+      `hologram-space`: `resolve_closure(root, &dyn KappaStore, registry) -> Closure` walks the
+      κ-graph breadth-first from an app κ via each realization's `references()` (opaque leaf content
+      contributes no edges), fetching bytes from the store. `Closure { reachable, missing }`:
+      `missing` records κs named-but-absent (the **thin**-archive signal, resolved via KappaSync,
+      LAW-4); `is_complete()` ⇒ a **fat** closure. This is "load = resolve the manifest's closure"
+      (03 §Fat and thin) and `resolve_closure(app κ)` migration. 2 tests (fat + thin); native +
+      wasm32 + thumbv7em green. Unblocks HF-3 (inspection resolves + verifies layers).
+    - [x] **parser hardening** (2026-07-17, spec 03 §Parser hardening — standing requirement). Audit
+      + fix of the network-facing parsers: `AppManifest::decode` (`1 + n_layers` ×2, `2 * n_children`)
+      and `LoadedPlan::section`/`extensions` (`start + length` on forged u64 offsets) overflowed
+      `usize` on 32-bit targets (wasm32/bare-metal) on hostile bytes — now checked arithmetic (Err,
+      never overflow/OOM), allocation bounded by real ref count not declared count. CI-permanent
+      deterministic mutation suites (`hologram-space` + `hologram-archive` `tests/parser_hardening.rs`)
+      prove every P4–P6 decoder + the section parser + the generic `references()` dispatch never panic
+      over truncations / byte-mutations / noise + forged oversized counts.
+    - [x] **fat/thin conversion** (2026-07-17, spec 03 §Fat and thin). `SectionKind::ContentBlob`
+      (κ71 ‖ content, repeatable) lets a **fat** archive embed its layer/closure content;
+      `HoloWriter::assemble` frames raw sections + `content_blobs()` reads them back (zero-copy).
+      `Client::fat` resolves the manifest closure over the store and embeds every reachable κ;
+      `Client::thin` drops blobs (manifest + certificates only); `is_fat` checks self-containment via
+      `resolve_closure` over the archive's own blobs. **The manifest κ — the app's identity — is
+      invariant across fat↔thin** (packaging, not identity; tested). ContentBlob added to the archive
+      parser-hardening fuzz. Native + wasm32 green.
+    - [x] **`hologram app` CLI** (2026-07-17) — `app inspect <archive>` prints the app κ + primary +
+      per-layer descriptors + children (store-free; decodes the manifest realization); `app thin
+      --input --output` re-frames to manifest + certificates only (app κ unchanged). Both wrap the
+      same archive/space primitives as `Client::inspect`/`thin`. `app fat` needs the node's content
+      store — a follow-on. `thin_archive_bytes` unit-tested (manifest preserved, payload dropped).
+    - [x] **out-of-tree cargo-fuzz targets** (2026-07-17, spec 03 §Parser hardening — CI-permanent).
+      `crates/hologram-space/fuzz/` (own `[workspace]`, host-workspace-excluded): coverage-guided
+      libfuzzer targets `manifest_decode` (`AppManifest::decode`/`references`) and
+      `references_dispatch` (the generic registry dispatch — the network entry point). Both **build**
+      under nightly+ASAN; `manifest_decode` ran **200k iterations with no crash**, independently
+      confirming the parser-hardening fixes. Generated corpus/artifacts gitignored. **CI job wired**:
+      `ci.yml` `fuzz` job (nightly `schedule` + `workflow_dispatch`) installs cargo-fuzz, builds the
+      targets under ASan, and deep-fuzzes each for 5 min — a discovered crash fails the nightly run.
+      The per-PR always-green gate stays the deterministic in-tree mutation suites.
+    - [x] **`hologram app fat`** (2026-07-17) — `app fat --input --output --store <redb>` resolves
+      the manifest closure over a persistent `NativeKappaStore` and embeds every reachable κ's content
+      as a ContentBlob (self-contained); the app κ is unchanged. Completes the fat/thin CLI
+      (inspect/thin/fat). Test provisions a store, fattens, verifies blobs embedded + κ preserved.
+  - [x] **P4.4 — HF conformance complete (3/3)** — HF-1/2/3 all ⛔→✅ with executable steps (the
+    ledger's whole HF class). The `.holo` v3 format's conformance surface is green.
+    - [x] **HF-1** (2026-07-17) — `.holo` v3 is the one container: opening a tensor-only archive
+      (a real v3 archive whose AppManifest section carries `single_tensor_plan`) yields the
+      degenerate single-layer case (1 tensor-plan layer, no primary). Witnessed end-to-end through
+      the archive container + AppManifest realization. `container.feature` @status:enforced, HF-1 ✅.
+    - [x] **HF-2** (2026-07-17) — capability-attenuated nesting: a parent AppManifest nests a child
+      by κ ref `(app κ, delegated caps κ)`; `Capabilities::admits` witnesses the delegated set ⊆
+      parent (refs + budgets), and an over-broad child is refused. `nesting.feature` @status:enforced,
+      HF-2 ✅. bdd now **13 passed / 20 skipped**; meta-gate bijection + status agreement green.
+    - [x] **HF-3** (2026-07-17) — per-layer certificates verify + never stripped: `Client::inspect`
+      decodes a `.holo` v3 manifest and returns one `LayerCertVerdict` per layer. A layer's cert is
+      its κ-identity **bound into the app κ** (the manifest κ addresses the bytes embedding every
+      layer κ — stripping/swapping any layer changes the app κ); verification is **thin** (manifest
+      only, no payload — witnessed on a manifest-only archive), so certs travel with the manifest and
+      inspection never strips them. `client` feature now enables `archive`. `certificates.feature`
+      @status:enforced, HF-3 ✅. **All 3 HF rows green — P4's conformance surface complete.** bdd 14
+      passed.
+  - [~] **P5** — networks (spec 04). **NW conformance complete (2/2)** (2026-07-17):
+    - [x] **NW-1** — `Network` realization in `hologram-space` (SPINE-2/3): embeds the membership
+      set + policy CapabilitySet κ (+ optional reserved parent-network κ) as operands; `references()`
+      recovers exactly them, no side tables. `decode()` inverse; registered. `realization.feature`
+      @status:enforced, NW-1 ✅.
+    - [x] **NW-2** — `NetworkTier` (public / restricted / private) + `NetworkOp`; `admits(op,
+      is_member)` gates from `(tier, membership)` **alone** — its signature carries no business data,
+      so the check is structurally at the protocol boundary. Public admits all; restricted/private
+      require membership (private adds P6 encryption, not a capability change). `tiers.feature`
+      @status:enforced, NW-2 ✅. bdd now 16 passed; native + wasm32 + thumbv7em green.
+    - [x] **bounded `resolve_closure`** (2026-07-17, spec 04 §Protocol hardening). A peer resolving a
+      manifest served over the network seam must bound the walk — a hostile peer can otherwise serve an
+      adversarially wide/deep κ-graph to force an unbounded resolve (DoS). `resolve_closure_bounded(…,
+      max_nodes)` stops at the limit and sets `Closure::truncated`; `is_complete()` now also requires
+      `!truncated`. `resolve_closure` delegates to it (unbounded). Tested; native + thumbv7em green.
+    - [x] **wire-version negotiation** (2026-07-17, spec 04 §Protocol hardening). `hologram-net`
+      `protocol` module: `WIRE_VERSION` + `WireVersionRange{min,max}` with `negotiate` (highest common
+      version; disjoint ranges ⇒ `None` = refuse, never a silent downgrade) + `encode`/`decode` of the
+      4-byte handshake payload (malformed / `min>max` rejected). Portable/no_std.
+      **Wired into the `bare` frame protocol**: `KIND_HELLO` frame + `hello_frame` /
+      `negotiate_from_hello` (the connect handshake — highest common version, or a `HandshakeError`;
+      a non-HELLO/garbage first frame is a clean `BadHello`, never a panic). Deterministic in-process
+      test; native + thumbv7em green.
+    - [x] **`hologram network` CLI** (2026-07-17, spec 04) — `network create --member <file>…
+      --policy <file> --tier <t> [--key <file>] --output <file>` builds a `Network` realization whose
+      membership/policy/key are the **κs of the content files** (a member/policy/key is content, named
+      by its κ — SPINE-1); enforces Private ⟺ `--key`. `network show <file>` decodes + displays the κ,
+      tier, membership, policy, and key binding. `network delegate --parent <capset> --child <capset>
+      --output` mints a `Delegation` realization but only if `admits(parent, child)` — amplification
+      refused (attenuation only, law 5). End-to-end tests (temp files).
+    - [x] **in-process loopback transport test** (2026-07-17) — a `PairedNic` (crossed queues: one
+      NIC's `transmit` is the other's `receive`) drives two real `BareNetSync` peers over an in-process
+      link with **no sockets**: peer B fetches content only peer A holds — the full FETCH_REQ → resolve
+      → FETCH_RES_OK → verify-on-receipt path — plus the FETCH_RES_404 miss path. Deterministic; the
+      two-node protocol test the TCK battery would otherwise need a live harness for.
+    - [x] **wire-version handshake wired into the live TCP transport** (2026-07-17). `KIND_HELLO` is
+      now public (shared by `bare`/`tcp`), and `TcpKappaSync::handle_connection` answers a HELLO with
+      its own HELLO + negotiates — **additive and backward-compatible**: a peer that opens with a
+      HELLO negotiates; a peer that starts straight into a DHT/fetch frame is unaffected (the DHT
+      suite still passes, 8/8); an incompatible/malformed HELLO closes the connection (refuse, no
+      silent downgrade). Integration tests (`#[cfg(feature="tcp")]`, `127.0.0.1:0`, `current_thread`
+      tokio): the raw handshake negotiates/refuses over a real socket, **and a real `TcpKappaSync`
+      answers the handshake at its current wire version**. Cleanly gated — a no-op without `tcp`.
+    - [x] **dialer-side handshake — full end-to-end negotiation** (2026-07-17). `TcpKappaSync::rpc`
+      now runs `dialer_handshake` once per new connection (before any request): send our HELLO, read
+      the peer's, negotiate — an incompatible peer aborts the dial. Both sides of a real connection
+      now negotiate. **Verified with zero regression**: the whole DHT suite (fetch / find_node /
+      get_providers / forgery-rejection — 8/8) passes with the handshake in the flow, proving the
+      two-peer negotiate→fetch path works end-to-end. `no_std` core unaffected (tcp-gated).
+    - [x] **transport inventory** (2026-07-17) — the frame protocol + wire-version handshake are
+      carried by **TCP** (`TcpKappaSync`, handshake both sides), **HTTP-CAS** (`http::live`), the
+      **bare-metal** NIC (`BareNetSync`), and **WebSocket** (browser-egress exit node in
+      `holospaces-node`, `tungstenite`, tested end-to-end — CC-16). `network delegate` shipped
+      (file-based Delegation w/ attenuation). `app fat`/`network create` use the persistent
+      `NativeKappaStore`.
+    - [x] **QUIC transport** (2026-07-17) — encrypted P2P over QUIC (`hologram-net::quic`, feature
+      `quic`): quinn/TLS-1.3 carrying the same `len|kind|payload` frames + wire-version handshake;
+      self-signed transport cert + skip-verify client (confidentiality from TLS, **integrity stays
+      κ** — verify-on-receipt). `QuicPeer` serves + dials from one endpoint. 3 localhost tests
+      (fetch / 404-miss / **forging-responder rejected**) — deterministic, gated in CI
+      (`--features quic`). 14 new deps, no `blake3` (clean vs the κ core's 1.5 pin).
+    - [x] **`network join` — QUIC peer routing** (2026-07-17): `QuicPeer` implements the full
+      `KappaSync` — a join-ordered peer table (`join`/`add_peer`), `fetch(κ)` short-circuits on a
+      local hit then routes to each joined peer until one honestly answers (verify-on-receipt per
+      hop; dead/forging peers skipped, not fatal). Direct-dial model (announce no-op, discover empty
+      — the DHT owns gossip). quic suite 5/5.
+    - [x] **iroh — blocked upstream, recorded** (2026-07-17): modern iroh needs `blake3 1.8`; the κ
+      core pins `blake3 1.5` (`uor-prism-crypto`) — irreconcilable, and the only resolvable iroh
+      (0.28) pulls ~291 packages + an outdated API. **Unblock path:** bump `uor-prism-crypto`'s
+      blake3 range, then modern iroh layers relay/NAT-traversal onto the shipped QUIC substrate.
+    - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): WebRTC browser
+      endpoint; the live multi-node TCK battery on the heavy CI runner; iroh (pending the blake3
+      unblock above).
+  - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
+    phase drove **GV-2/3/4** ⛔→✅:
+    - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
+      published content (identity IS its κ; leaf identity; deterministic single surface), never a
+      second identity surface. Rotation = new content/new κ; revocation = append-only event.
+    - **GV-4** — `Capabilities::admits_network_op`: store/fetch/announce gated from the capability
+      alone (import/protocol boundary) with per-capability quota accounting, never global.
+    - **GV-2** — `AuditEvent` realization + `LifecycleTransition`; `hologram-runtime`'s `Session`
+      now emits through **one** `record` seam on every transition (spawn/suspend/resume/terminate),
+      threading an append-only audit κ-chain — runtime-tested that all four advance a distinct linked
+      head (no bypass). BDD witnesses the same seam's κ-chain.
+    - bdd **19 passed**; meta-gate bijection + status agreement green; native + wasm32 + thumbv7em.
+    - [x] **`RevocationEvent` chain + verifier** (2026-07-17, spec 07 R3) — the append-only
+      complement to `AttestationKey` rotation: a `RevocationEvent` realization (revoked key κ +
+      predecessor κ + reason) forms a tamper-evident revocation list; `is_revoked(key, head, store)`
+      walks the chain so a verifier can decide if a key is revoked (append-only — nothing un-revokes).
+      Registered; covered by the parser-hardening dispatch fuzz.
+    - [x] **`SessionAttestation`** (2026-07-17, spec 07 R3) — the additive, non-breaking attestation
+      section: a realization binding *where and how* a workload ran ("session booted app κ under caps
+      κ on space-impl κ at engine κ", signed by an `AttestationKey` κ). `references()` recovers the
+      five bound facts (no side tables); the binding is tamper-evident (content-addressed) and the
+      signing key is bound as content, not a second surface. ed25519 signature verification is the
+      verifier's follow-on. Existing `Snapshot` κs untouched (a separate realization, not a format
+      break). Registered.
+    - [x] **ed25519 sign/verify wiring** (2026-07-17, spec 07 R3) — the R3 attestation seam made
+      real. Portable, dependency-free `SignatureVerifier` trait in the no_std core (a space supplies
+      its platform verifier, like the other HAL seams); `SessionAttestation::signable_bytes` (the
+      κ-embedding of the bound facts, empty payload) + `verify(verifier, public_key)`. The reference
+      ed25519 impl is a **dev-dependency only** (`ed25519-dalek`), so wasm32/thumbv7em portability
+      builds never pull curve25519 — verified. `tests/attestation_ed25519.rs`: a real attestation
+      signs+verifies end-to-end, tampering any bound fact breaks it, wrong key fails, and malformed
+      key/signature bytes are a clean `false` (never panic).
+    - [x] **signed revocations** (2026-07-17, spec 07 R3) — `RevocationEvent` now carries a
+      `revoker_key` κ + signature; `verify(verifier, revoker_pubkey)` + `is_revoked_signed(…,
+      trusted_revoker)` honor a revocation only when its signature verifies under a *trusted*
+      revoker, closing the "anyone revokes anyone" gap (a forged event naming a trusted revoker but
+      signed by an attacker is rejected — ed25519-witnessed). Decoder added to the parser-hardening fuzz.
+    - [x] **signed key rotation** (2026-07-17, spec 07 R3) — a `KeyRotation` realization: a **signed
+      supersession chain** (superseded key κ → successor κ, signed by the *superseded* key so only its
+      holder can rotate it, ed25519-witnessed). `current_key(chain_head, store)` returns the latest
+      successor; old attestations stay verifiable against the key that made them. The complement of
+      `RevocationEvent` (supersede vs invalidate). **R3 fully implemented**: κ-identity (GV-3) · signed
+      rotation · authenticated revocation · signed session attestation — all four key-lifecycle events.
+    - [x] **ChaCha20-Poly1305 Private-tier encryption** (2026-07-17, spec 04 §Private / P6 Phase B).
+      Portable, dep-free `PayloadCipher` AEAD seam in the no_std core + `convergent_nonce(key,
+      plaintext)` = `blake3(key ‖ plaintext)[..12]` + `seal_private`. **Convergent nonces need no
+      RNG** (solving the bare-metal/wasm RNG wrinkle) *and* preserve **Law L3 dedup under
+      encryption** — identical content under one key → identical ciphertext (the exact tension 04
+      §Private flags; equality-leak is the documented tradeoff). Reference ChaCha20-Poly1305 impl is
+      a **dev-dependency only** — wasm32/thumbv7em builds never pull the cipher (verified).
+      `tests/private_tier_chacha20.rs`: round-trip, convergent dedup, wrong-key/tamper fail-loud
+      (AEAD), distinct-key non-reuse, ill-sized-input never-panics.
+    - [x] **network-key binding — Private tier end-to-end** (2026-07-17, spec 04 §Private). The
+      `Network` realization now carries `key_ref: Option<κ>` — the Private tier binds its
+      symmetric-key κ (the key material is content, so access is gated by the restricted-tier
+      membership; no new asymmetric protocol). Two tail optionals (key_ref, parent) encode via a
+      flags byte; decode is overflow-safe. `key_binding_ok()` enforces Private ⟺ key (a key on an
+      unencrypted tier is a false confidentiality promise). End-to-end test: a Private network binds
+      a key, a member resolves it from `key_ref` and seals/opens a payload, a non-member cannot open
+      it, and two members sealing the same payload converge on one κ (L3 dedup on the private
+      network). NW-1/NW-2 conformance unchanged; native + thumbv7em green.
+    - [x] **forward secrecy on membership change** (2026-07-17): the `KeyEpoch` realization — a
+      Private network's payload-key as an append-only **membership-epoch chain**. Each change cuts a
+      new epoch with a **fresh random key wrapped per-member** to each *current* member's enrollment
+      public key (the new portable `KeyWrapper` seam, dep-free like `PayloadCipher`/`SignatureVerifier`).
+      A removed member is absent from the new epoch's wraps *and* can unwrap none of the others — so
+      they never obtain the new key nor open post-revocation content. This is exactly the
+      "convergent-shared-key is insufficient" branch (a convergent key is re-derivable → un-rotatable
+      to exclude a member). Reference impl `tests/forward_secrecy_x25519.rs` (X25519 sealed-box):
+      structural + cryptographic exclusion, codec round-trip + REGISTRY dispatch, parser-hardened.
+      no_std core clean (wasm32 + thumbv7em); x25519 stays a dev-dep.
+
+**All P4–P6 conformance rows are green (HF-1/2/3, NW-1/2, GV-1/2/3/4).** What remains in P4–P6 is
+non-conformance feature depth: fat/thin CLI tooling + parser fuzz (P4), native transports +
+wire-version + TCK battery (P5), payload encryption + key lifecycle chain (P6).
+
+## Crate consolidation (simplification — user directive 2026-07-17)
+
+Reduce crate sprawl: one crate per concept, feature-gated backends instead of sibling crates.
+**Done (2026-07-17) — 24 crates → 20 members.**
+- [x] **`hologram-store-{bare,native,opfs}` → `hologram-store`** (5cf8c9c + 0099069) — one crate,
+  three feature-gated backend modules (`bare` no_std/BlockDevice, `native` std/redb, `opfs`
+  wasm32/web-sys + `js-api`). Repointed every reverse-dep (efi, runtime, cli, holospaces{,-node,
+  -browser}, root), workspace members/deps, imports, CI + Justfile. Tri-target green (native + wasm32
+  + thumbv7em); the opfs `js-api` bundle builds via `cargo rustc --crate-type cdylib` so the crate
+  stays a plain lib. 29 native tests + holospaces-browser wasm build verified.
+- [x] **`hologram-emulator-codemodule` → `hologram-emulator`** (e43ac39) — folded in as a
+  `codemodule` feature (`cfg(all(feature="codemodule", target_arch="wasm32"))`) built as a cdylib via
+  `scripts/build-emulator.sh` (`cargo rustc --crate-type cdylib`). Native lib + wasm32 lib + the
+  216 KB wasm codemodule all build.
+- [x] **`hologram-spike-sp3` → `hologram-conformance`** (d13528b) — the "spike" name was stale; the
+  reference `SpikeSpace` (LAW-3/SP-3 witness) is now `tests/common/mod.rs` shared test support, still
+  built from public API only so the LAW-3 witness holds. Conformance suite green.
+- [x] **`README.md` in every crate** — all 18 `crates/*` + 3 `spaces/*` now have a README derived
+  from each crate's Cargo.toml + `//!` doc (the root already had one).
+
+## Dependency audit (user directive 2026-07-17 — shrink the ballooned dep count)
+
+Measured with `cargo tree` / `cargo-machete`:
+- **551 packages in `Cargo.lock`, but only 263 in the DEFAULT (non-dev, default-feature) build** —
+  288 are dev-deps or feature-gated, so they never compile in portable/default builds.
+- **This refactor's growth is the `quic` transport: +42 packages** (quinn/rustls/rcgen/ring + tokio,
+  time, ring's ASN.1 stack, etc.), all behind the off-by-default `quic` feature. x25519 (forward
+  secrecy) is a dev-dep sharing curve25519 with the existing ed25519.
+- The other heavy trees are pre-existing + gated: **wasmtime/cranelift** (`engine-wasmtime`, ~100
+  pkgs), **cucumber** (BDD, dev-dep of hologram-conformance, ~30 pkgs). Version duplicates
+  (hashbrown ×3, thiserror v1+v2, nom v7+v8) are all forced transitively by wasmtime + cucumber +
+  tungstenite — not fixable without upstream.
+- [x] **Dead-declaration cleanup (compiler-verified)** — removed 6 unused deps: `uor-foundation-sdk`
+  (ops), `bytemuck` (archive), `libm` (holospaces), `hologram-types` (cli), `hologram-archive` +
+  `hologram-ops` (bench). NOTE: cargo-machete false-positived heavily on `uor-prism`/`uor-foundation`
+  (imported as `prism`/`uor_foundation`, not the crate name) — verified every removal against the
+  compiler, not grep. These are hygiene; none orphan a package, so the lock stays 551.
+- [x] **The `quic` +42 tree — decision: keep feature-gated** (user, 2026-07-17). It's enabled
+  nowhere by default (only CI's `--features quic` step), so its 42 packages never compile in default,
+  portable/no_std, or default-CI builds (those stay at 263). Trimming `rcgen` would embed a static
+  private key in-tree (secret-scanner smell) for only ~7 pkgs; dropping QUIC (−42) would discard a
+  working transport with no live consumer yet. Neither churn is worth it — the balloon is opt-in
+  lock surface, not default-build weight. The 551 is dominated by pre-existing gated trees
+  (wasmtime/cranelift ~100 via `engine-wasmtime`; cucumber ~30, BDD dev-dep), both genuinely used.
+  **Net dep work: 6 dead declarations removed; the opt-in QUIC surface documented as intentional.**
+
+## Exit-criteria demos (spec 06 §P4/P5/P6) — runnable + CI-gated (2026-07-17)
+
+The P4–P6 acceptance narratives are now **runnable, deterministic examples** (always-green), gated by
+a new blocking CI job `exit-criteria-demos` (in `ci-success.needs`):
+- [x] **P4** `hologram-space/examples/multi_layer_app.rs` — a 4-layer `.holo` v3 app (wasm + tensor +
+  rootfs + view), validated, round-tripped; `references()` recovers the migration closure.
+- [x] **P5** `.../restricted_network.rs` — a restricted network admits members and **refuses a
+  non-member at the protocol boundary** (`NetworkTier::admits`, inputs `(tier, is_member)` only).
+- [x] **P6** `.../private_confidentiality.rs` — a member seals, a non-member (wrong key) cannot open,
+  and two members sealing the same payload converge on one κ (**L3 dedup survives encryption**).
+- [ ] The **live** variants remain heavy-CI: browser-peer ↔ native-peer over a real transport (P5),
+  multi-space boot over live nodes (P4) — they witness the same rules with real I/O.
+
+## Pre-merge sweep + PR #45 CI (2026-07-18)
+
+PR #45 (`main` ← `chore/refactor`) opened/refreshed. A pre-merge verification sweep + the CI run
+found and fixed three real issues (all committed):
+- **fmt**: 7 files weren't rustfmt-clean (CI never ran — branch was unpushed) → `cargo fmt --all`.
+- **`c_abi` FFI test**: asserted `.holo` format v2; it's v3 since P4 → fixed to 3.
+- **`extract_refs` DoS** (CI-caught, Linux-only): a hostile u32 ref count made
+  `Vec::with_capacity(n)` reserve ~71 GB → SIGABRT on Linux (macOS overcommit hid it locally). Capped
+  to `n.min(bytes.len()/KAPPA71+1)`. This was the root cause of BOTH the `Test (ubuntu)` and
+  `Substrate V&V` failures (both run hologram-space's `parser_hardening`).
+
+CI status breakdown on PR #45 — **31/34 SUCCESS, 1 skipped, 0 failures** (as of 2026-07-19, head
+`2b9a60d`, v0.11.0). All six formerly-red checks are now green (Semver · SDK version consistency ·
+Native N-API ×4 · WASM Driver · CS docs conformance). The only non-green are the two heaviest jobs
+(Benchmark regression gate + holospaces V&V CC — QEMU · e2fsprogs · Playwright) *re-running* on the
+latest commit — metadata-only change (version + SDK JSON/locks) touches no bench or boot code:
+- **Core Rust gates green**: Clippy, Format, Docs, Cross wasm32/aarch64, Test (ubuntu + macOS), V&V
+  (perf/parallel/model-formats), Security Audit, **Exit-criteria demos**, Browser OPFS (Chromium), UEFI
+  boot (QEMU), Public-API snapshot, tooling tests. (The extract_refs DoS fix cleared the earlier
+  `Test (ubuntu)` + `Substrate V&V` reds.)
+- **Public-API snapshot (FIXED)**: regenerated all 9 snapshots for the refactored surface + fixed two
+  pre-existing tooling-debts (`hologram`→`uor-hologram` package rename; dropped consolidated
+  `hologram-host`) + deleted the stray empty `crates/hologram-host/` dir and orphan
+  `api/hologram-{host,backend}.txt`. `--check` passes.
+- **Semver compliance (FIXED — bumped 0.11.0)**: two-part. (a) A tooling mismatch — `hologram-compute`
+  (renamed from hologram-backend) + `hologram-host` (consolidated) have no counterpart on the
+  pre-refactor baseline, so cargo-semver-checks can't diff them; removed both from the checked package
+  set (like the `hologram` facade already is). (b) With the tooling error cleared, the gate surfaced a
+  **real, previously-masked breaking change**: P4's `.holo` v3 work added `SectionKind::AppManifest` +
+  `::ContentBlob` to a `pub enum` that is deliberately **closed** (its escape hatch is `Extension = 14`,
+  so `#[non_exhaustive]` would contradict the design) — an exhaustive-enum variant addition, breaking
+  under semver. The honest fix is a version bump: **workspace 0.10.0 → 0.11.0** (a minor bump covers
+  breaking changes under 0.x). Re-synced all SDKs to 0.11.0 + regenerated the main + both driver locks.
+  The gate stays strong (archive is still checked) and the version now tells the truth.
+- **CS docs conformance (G1/G2 — DONE ✅)**: the docs (arc42/C4/OPM/ISO) + V1–V8 validators + CI job
+  were already imported to `specs/holospaces/`; the job failed only because the `arc42-generator`
+  submodule was declared in `.gitmodules` but its gitlink was never committed. Added the submodule
+  (pinned) → the V1–V8 toolchain initializes and **the validators pass in CI** (heavy: JDK 21 · Ruby 3
+  · Structurizr · pandoc · cmark). Phase G1/G2 of the MG-7 plan is complete and green.
+- **SDK peer-dep ERESOLVE (version-bump-caused, FIXED)**: the `sync-sdk-versions.sh` bump moved the SDK
+  `version` fields but not the `peerDependencies` pin — `@hologram/native`/`@hologram/wasm` still
+  required `@hologram/sdk@0.7.0` (an exact pin) while the SDK moved to 0.11.0, so the "Pack native
+  artifacts" / wasm smoke jobs (which install packed tarballs **without** `--legacy-peer-deps`) tripped
+  npm's peer-dep resolver → ERESOLVE. Extended the sync script to also sync **and `--check`-gate** the
+  `@hologram/sdk` peer pin, so this class of drift can't recur; re-ran it → both pins now track 0.11.0.
+- **SDK format guards (refactor-caused, FIXED)**: the TS (`native`/`wasm` `index.ts`) + Python
+  (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped `.holo` to v3. The **native**
+  addon + **Python** FFI report 3, but the **wasm** driver still reports 2 (a stale-build anomaly —
+  both use the same `hologram-ffi` path dep, so the wasm driver should also report 3; tracked as a
+  follow-up). Fixed all three to accept the **range {2, 3}** (the archive reads both via
+  MIN_READ_VERSION) — unblocks native/python/wasm, backward+forward compatible.
+- [x] **wasm driver format lag (DONE 2026-07-18)**: root cause = both SDK driver `Cargo.lock`s were
+  stale at `0.6.0` and still referenced `hologram-backend` (renamed to hologram-compute). A stale lock
+  referencing a removed crate kept a stale build alive; since Swatinem/rust-cache hashes `Cargo.lock`
+  into its key, CI's `sdk-wasm` cache never invalidated → the wasm driver kept a FORMAT_VERSION=2
+  artifact (native's cache happened to rebuild to 3). Regenerated both locks to the 0.10.0 graph →
+  correct resolution + cache invalidation → both report 3. SDK guards keep the tolerant {2,3} range
+  (archive reads v2 via MIN_READ_VERSION); a maintainer can tighten to exact 3 once CI confirms.
+- [x] **Archive parser hardening (DONE 2026-07-18)**: capped the untrusted-u32 `with_capacity` in
+  `hologram-archive`'s `decoder`/`certificate_codec`/`constant_codec`/`schedule_codec` to
+  `count.min(bytes.len())` (same class as `extract_refs`) + a hostile-count regression test
+  (`catch_unwind`, all 4 reject gracefully). Archive suite green, clippy clean, no_std ok.
+- [x] **`just test` fixed (2026-07-18)**: `cargo nextest run --workspace` errored on
+  `hologram-conformance::bdd` (a cucumber `harness=false` runner without libtest `--list`). Added
+  `.config/nextest.toml` excluding it + a `cargo test --test bdd` step in the recipe (CI uses plain
+  `cargo test`, so it was unaffected). Verified end-to-end.
+- [x] **CI per-push cost cut (2026-07-19)**: the two heaviest workflows (`ci.yml`, `sdk-packages.yml`)
+  had **no `concurrency`** — every push started a fresh full run without cancelling the superseded one,
+  so rapid pushes stacked full QEMU/Playwright/12-job-SDK runs on the runners. Added
+  `concurrency: cancel-in-progress` (keyed per-PR; `main` + release tags exempt so every landed commit
+  and release run keeps its own) to both. Path-filtered the three surface-derived gates so
+  **docs/spec/site-only pushes skip them entirely**: `sdk-packages` (12 jobs), `semver-gate`, and
+  `api-gate` now trigger only on `crates/**` / `Cargo.*` / `sdk/**` (as applicable). Dropped the
+  non-existent `develop` branch from all triggers. No required checks exist so no merge-blocking footgun.
+- [x] **Two-tier CI consolidation — `ci.yml` (lean) + `release.yml` (heavy) (2026-07-19, user directive)**:
+  restructured so **a release cut (a `v*.*.*` tag) runs EVERYTHING and an ordinary PR/branch push runs
+  only the lean cargo gates**. Rather than `if:`-skipping the heavy jobs inside `ci.yml` (which left 5
+  *skipped* entries cluttering every PR's checks), the heavy tier moved to a **new `release.yml`** that
+  simply doesn't trigger on PRs — so they vanish from the PR view entirely. `release.yml` (triggers:
+  `push.tags:[v*]` + nightly `schedule` + `workflow_dispatch`) holds the 5 heavy infra jobs
+  (`holospaces-vv-heavy` QEMU·e2fsprogs·Playwright, `docs-conformance` JDK·Ruby·Structurizr,
+  `substrate-uefi-boot` QEMU/OVMF, `substrate-opfs` Chromium/Playwright, `fuzz` ASan) **plus the folded
+  SDK packaging matrix** (from the now-deleted `sdk-packages.yml` — SDK build/smoke is release-only per
+  the directive). `ci.yml` keeps the 10 lean jobs + `ci-success` and still triggers on `push.tags` so a
+  release also runs the lean gate → the two workflows together are the full suite. **Tests + BDD run
+  per-PR**: the `test` job (`cargo test --workspace --exclude holospaces`, 3-OS) runs the BDD target,
+  and `vv` runs `--test cc_gate --test meta_gate --test bdd` explicitly. This supersedes MG-7's "heavy
+  CC blocks every PR" posture → **heavy CC now blocks the release cut** (`release.yml`), with the cheap
+  in-tree conformance still per-PR. **perf**: the per-PR blocking `perf-gate.yml` was **deleted** (perf
+  off PRs per the directive); `benchmarks.yml` still records post-merge perf on `main`. Net PR
+  footprint: docs/spec-only push → `ci.yml` only; Rust push → `ci.yml` + path-gated `semver-gate` +
+  `api-gate`. Workflow count 9 (was 10): consolidated `sdk-packages` + `perf-gate` away, added
+  `release.yml`.
+- [x] **Release-time perf gate (2026-07-19, follow-up done)**: `release.yml`'s `release-perf-gate` job
+  replaces the retired per-PR perf gate at the release tier. On a `v*` tag it resolves the **previous
+  release tag** (`git describe --tags --abbrev=0 --match 'v*.*.*' <tag>^` — history-based, robust to
+  out-of-order tags), checks out both trees, and runs the **same interleaved best-of-N** methodology
+  as the old gate (`scripts/interleave-bench-gate.sh` benchmarks both round-by-round on one runner so
+  throughput drift hits both sides equally), then `scripts/compare-benchmarks.py` **fails the release**
+  (exit 1) on a noise-adjusted regression (10% median · 2σ · 7% CV floor · best-of-3) or a
+  benchmark-lifecycle violation. First-ever release (no prior tag) no-ops; nightly/dispatch against a
+  non-tag ref is guarded off by `if: startsWith(github.ref,'refs/tags/v')`. Verified the resolver
+  against the live tag graph (14 tags; `v0.10.0^` → `v0.9.0`), so the next cut (v0.11.0) gates vs
+  v0.10.0. Results uploaded as the `release-perf-results` artifact (90-day retention).
+- [x] **Meaningful CI run titles (2026-07-19)**: `pull_request`-triggered runs defaulted to the (single,
+  static) PR title, so every run in the Actions list read "Sprint 40: Ecosystem refactor…". Added a
+  `run-name` to `ci` / `release` / `semver-gate` / `api-gate` / `benchmarks` — e.g.
+  `CI · chore/refactor · pull_request` / `Release CI · v0.11.0 · push` — so runs are distinguishable by
+  branch-or-tag + event (display-only context; no shell, no injection surface).
+
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 
 **Plan:** [plans/077-decode-residual-browser.md](plans/077-decode-residual-browser.md)
@@ -345,7 +1137,7 @@ orchestration crate (chain → plan → execute, addressing, buffer).
   clean across migration-affected crates
 - [x] **1.8 (post-migration sweep)**: 9 pre-existing clippy errors
   in non-migration files cleaned up — `hologram-shape/tensor_shape.rs`
-  (×2 no-op), `hologram-backend/src/cpu.rs` + `metal.rs` (×5 loop
+  (×2 no-op), `hologram-compute/src/cpu.rs` + `metal.rs` (×5 loop
   / approx_constant), `hologram-exec/src/buffer/scatter_gather.rs`
   + `tests/constrained_bench.rs` (×3 io / unit_arg). Workspace
   `cargo clippy --workspace --tests -- -D warnings` is now
@@ -517,7 +1309,7 @@ they don't get lost.
 - [x] **3.5**: Backend executors over the same `CompiledPlan` shipped
   in PR #6 (canonical layer). `CanonicalBackend` trait + `CpuBackend`
   adapter live in `hologram-transform`; `WgpuBackend` in
-  `hologram-backend/src/canonical/wgpu.rs` covers **51 variants** with
+  `hologram-compute/src/canonical/wgpu.rs` covers **51 variants** with
   real WGSL compute pipelines (binary/unary elementwise families,
   reductions, softmax/log-softmax, all 5 norm forwards, MatMul +
   grads, full Pool family, Conv2d, ConvTranspose2d, FusedSwiGlu,
@@ -612,7 +1404,7 @@ plan → execute is fully connected.
   (two scratches: `probs` + `dp`); future work can extend the same
   pattern. im2col Conv2d remains a future scratch consumer.
 - [x] Backend executors over the same `CompiledPlan` — done. `WgpuBackend`
-  in `hologram-backend/src/canonical/wgpu.rs` ships in PR #6 with 51
+  in `hologram-compute/src/canonical/wgpu.rs` ships in PR #6 with 51
   GPU-implemented variants conformance-validated against `CpuBackend`.
 
 ---
@@ -790,7 +1582,7 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   check that needs the TinyLlama weight + tokenizer files to run.
   Re-open when artefacts land in the test-fixtures bucket.
 
-### Phase 5: Propagate to hologram-backend
+### Phase 5: Propagate to hologram-compute
 - [x] **5.1**: Wire `infer_output_shape` into `execute_on_backend` (parallel
   shape table seeded from arena's `ShapeRegistry`, output shape inferred
   per dispatch + debug-assert that inferred volume × dtype size matches
@@ -811,15 +1603,15 @@ heuristic shape resolution failures in the 848-instruction execution chain.
 
 ---
 
-## Sprint 32: hologram-backend + hologram-exec Cleanup (COMPLETE)
+## Sprint 32: hologram-compute + hologram-exec Cleanup (COMPLETE)
 
 **Plan:** [plans/067-compute-backend-rewrite.md](plans/067-compute-backend-rewrite.md)
 
-Goal: create `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>`
+Goal: create `hologram-compute` crate with `ComputeMemory` + `ComputeBackend<M>`
 traits. Clean up hologram-exec by removing the old backend/ module and GPU
 dispatch infrastructure. All GPU execution routes through the new backend.
 
-- [x] Create hologram-backend crate (CpuBackend + MetalBackend)
+- [x] Create hologram-compute crate (CpuBackend + MetalBackend)
 - [x] CpuBackend: all 60+ FloatOp variants with Accelerate BLAS
 - [x] MetalBackend: tiled SGEMM, im2col Conv2d, elementwise, norms, ring LUT
 - [x] Fix Metal SGEMM dispatch (dispatch_thread_groups)
@@ -829,7 +1621,7 @@ dispatch infrastructure. All GPU execution routes through the new backend.
 - [x] Consolidate 35 trivial dispatch_kernel arms via dispatch_float_into
 - [x] Upgrade CpuBackend Gemm to use Accelerate BLAS with transpose
 
-**Result:** hologram-exec -5,500 lines. hologram-backend 3,969 lines. 535 tests pass.
+**Result:** hologram-exec -5,500 lines. hologram-compute 3,969 lines. 535 tests pass.
 
 ---
 
@@ -1928,10 +2720,10 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 
 Goal: single-device execution — all data lives on one device (Metal/WebGPU/CPU),
 all computation happens on that device. No CPU↔GPU transfers during execution.
-New `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
+New `hologram-compute` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
 
 ### Phase 1: Traits + CpuMemory (non-breaking)
-- [ ] Create `hologram-backend` crate
+- [ ] Create `hologram-compute` crate
 - [ ] Define `ComputeMemory` trait (alloc, upload, download, reshape)
 - [ ] Define `ComputeBackend<M>` trait (dispatch, load_ring_tables, flush)
 - [ ] Implement `CpuMemory` + `CpuBackend` (wraps existing CPU dispatch)
@@ -1942,7 +2734,7 @@ New `hologram-backend` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
 - [ ] Load UOR LUT tables onto Metal device
 
 ### Phase 3: Single-path executor
-- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-backend
+- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-compute
 - [ ] All ops dispatch through `backend.dispatch()` — no CPU fallback
 - [ ] Single flush at end of execution
 

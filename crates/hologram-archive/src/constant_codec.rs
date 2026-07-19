@@ -102,7 +102,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<ConstantEntry>, ArchiveError> {
         });
     }
     let count = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
-    let mut out = Vec::with_capacity(count);
+    let mut out = Vec::with_capacity(count.min(bytes.len())); // cap on untrusted count (DoS)
     let mut cur = 4usize;
     for _ in 0..count {
         if cur + 1 > bytes.len() {

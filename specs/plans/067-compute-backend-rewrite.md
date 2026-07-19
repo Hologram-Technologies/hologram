@@ -220,11 +220,11 @@ With all data on GPU and one flush at the end:
 
 ## Crate Structure
 
-New crate: **`hologram-backend`** — contains all device abstractions.
-`hologram-exec` becomes a thin executor that consumes `hologram-backend`.
+New crate: **`hologram-compute`** — contains all device abstractions.
+`hologram-exec` becomes a thin executor that consumes `hologram-compute`.
 
 ```
-hologram-backend/
+hologram-compute/
   src/
     lib.rs           — ComputeMemory, ComputeBackend traits
     cpu.rs           — CpuMemory + CpuBackend (SIMD, Accelerate BLAS)
@@ -250,6 +250,6 @@ hologram-backend/
 
 ## Files
 
-- `hologram/crates/hologram-backend/` — new crate for device abstractions
-- `hologram/crates/hologram-exec/` — simplified executor consuming hologram-backend
+- `hologram/crates/hologram-compute/` — new crate for device abstractions
+- `hologram/crates/hologram-exec/` — simplified executor consuming hologram-compute
 - `hologram/crates/hologram-exec/src/tape.rs` — keep as legacy, eventually thin wrapper

@@ -6,8 +6,8 @@
 //! the scaffold on (it is a zero-cost observability/routing layer on CPU).
 #![cfg(feature = "tiered-exec")]
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::coherence::TierPolicy;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::constant::ConstantEntry;

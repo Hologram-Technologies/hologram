@@ -7,8 +7,8 @@
 //! against an independent `clamp` reference — proving the pipeline lowering is
 //! numerically correct end-to-end (not the old silent identity / fail-loud).
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, compile_from_source, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     constant::ConstantEntry,

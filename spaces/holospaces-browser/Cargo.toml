@@ -1,0 +1,102 @@
+# This crate is excluded from the host workspace (wasm32-only) and built
+# standalone via `scripts/browser-manager-test.sh` / the Pages deploy. An empty
+# `[workspace]` table makes it its own workspace root, so it builds correctly no
+# matter where the checkout lives (including inside another repo, e.g. a nested
+# worktree) — cargo's workspace search stops here instead of walking up.
+[workspace]
+
+[package]
+name = "holospaces-browser"
+description = "The Hologram Platform Manager — holospaces' browser peer (wasm32), served from GitHub Pages"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Hologram-Technologies/holospaces"
+
+# wasm32-only (web-sys / wasm-bindgen). Excluded from the host workspace; built
+# explicitly via `scripts/browser-manager-test.sh` and the Pages deploy.
+[lib]
+crate-type = ["cdylib"]
+# The wasm output keeps the name `holospaces_web` (the crate was renamed
+# holospaces-web → holospaces-browser during the port, but its web/ assets, the
+# Pages deploy, and the vv/ browser suites all import `holospaces_web{.js,_bg.wasm}`).
+# Pinning the lib name keeps that whole surface valid without churning 12 web files.
+name = "holospaces_web"
+
+[dependencies]
+holospaces = { path = "../holospaces" }
+# Post-refactor, consumed by explicit path deps (this crate keeps its own empty
+# `[workspace]` — it builds standalone for wasm32 — so it can't use workspace
+# inheritance). hologram-space carries the σ-axis contract + realizations + the
+# reference `MemKappaStore` (absorbs the former substrate-core + store-mem).
+hologram-space = { path = "../../crates/hologram-space" }
+# The OPFS κ-disk backend (the sync pack-file `OpfsKappaStore`) now lives in its own backend
+# crate — infra belongs in `crates/`, not in a space impl. `default-features = false` takes only
+# the sync `KappaStore` (no `wasm-bindgen` from that crate, so no duplicate-wasm-bindgen clash).
+hologram-store = { path = "../../crates/hologram-store", default-features = false, features = ["opfs"] }
+# The runtime with the interpreter ContainerEngine (wasmi) — so the browser peer
+# actually boots userland containers (ADR-008; arc42 ch.7); the wasmi interpreter
+# runs in wasm32 where a JIT cannot (absorbs the former runtime + runtime-bare).
+hologram-runtime = { path = "../../crates/hologram-runtime", features = ["engine-wasmi", "std"] }
+# The uor-native content network ("browser as a router") is reached through
+# `holospaces::content_net` — the SAME `hologram-net-bare::BareNetSync` over a
+# portable `NetworkInterface` a bare-metal peer uses (`CC-38`), so no direct
+# net-bare dependency is needed here; the browser peer just drives it.
+wasm-bindgen = "0.2"
+# The WebRTC negotiation (CC-49) awaits browser promises (createOffer/createAnswer,
+# setLocalDescription, addIceCandidate) — wasm-bindgen-futures bridges JS Promises
+# to Rust futures so the offer/answer handshake is plain async Rust.
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde_json = "1"
+
+# The browser egress transport (CC-16, ADR-014): the userspace TCP/IP NAT runs in
+# wasm with the peer core, and its TCP streams are tunnelled out over a WebSocket
+# to a relay (there is no raw NIC behind a tab). Only the WebSocket surface is
+# needed.
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "WebSocket", "MessageEvent", "BinaryType", "Event", "CloseEvent",
+    "FileSystemSyncAccessHandle", "FileSystemReadWriteOptions",
+    # The uor-native content network's live browser transport (CC-49): a real
+    # peer-to-peer WebRTC data channel carries the BareNetSync frames between two
+    # browser peers — no central operator. Signaling (SDP/ICE) is exchanged out of
+    # band by the peers themselves; the data channel is the wire.
+    "RtcPeerConnection", "RtcConfiguration", "RtcDataChannel", "RtcDataChannelInit",
+    "RtcDataChannelType", "RtcDataChannelEvent", "RtcSessionDescription",
+    "RtcSessionDescriptionInit", "RtcSdpType", "RtcIceCandidate",
+    "RtcIceCandidateInit", "RtcPeerConnectionIceEvent",
+]
+
+[profile.release]
+# This IS the production artifact (served from GitHub Pages). The browser peer
+# boots a real OS on the system emulator — a hot interpreter loop — so it is
+# tuned for throughput and a lean deploy, not developer convenience:
+#   • opt-level = 3, lto = true, codegen-units = 1 — maximal optimization across
+#     the whole crate (one codegen unit, fat LTO) for the interpreter hot path.
+#   • panic = "abort" — the deployed peer's invariants are fatal anyway (a broken
+#     invariant means the peer cannot continue), so unwinding tables are dead
+#     weight in production. Dropping them shrinks the wasm and removes the
+#     landing-pad overhead from the hot path. (Validation that *exercises* those
+#     invariants runs in CI on the host crate, not in the deployed artifact.)
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+# Run `wasm-opt` — a real production post-pass, not optional. The earlier
+# `wasm-opt = false` was a workaround for an *older*, MVP-only binaryen (bundled
+# with the previous CI action) that rejected the reference-type tables
+# wasm-bindgen now emits ("Only 1 table definition allowed in MVP"). wasm-pack
+# 0.13+ provisions binaryen ≥ v117, which supports these features; we enable them
+# explicitly so the post-pass is reproducible across environments.
+#
+# `-O3` optimizes for SPEED, not size: it is the right call for a hot interpreter
+# loop that retires billions of instructions per boot, where a few-percent
+# per-instruction win dwarfs the cost of a slightly larger one-time download (the
+# wasm is a fraction of the kernel + workbench assets anyway). `-O3` is binaryen's
+# recommended maximum — the experimental `-O4` adds a `flatten` pass that can
+# bloat the module without a throughput win.
+wasm-opt = ['-O3', '--enable-reference-types', '--enable-bulk-memory', '--enable-mutable-globals', '--enable-sign-ext', '--enable-nontrapping-float-to-int']

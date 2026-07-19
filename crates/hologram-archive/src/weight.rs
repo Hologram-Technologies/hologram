@@ -1,7 +1,7 @@
 //! BLAKE3-deduped weight store (spec X.3 + wiki ADR-031).
 //!
 //! The content-addressing hash routes through hologram's canonical
-//! `Hasher<32>` selection — `hologram_host::HologramHasher`, which is
+//! `Hasher<32>` selection — `hologram_types::HologramHasher`, which is
 //! a re-export of `prism::crypto::Blake3Hasher`. No direct dependency
 //! on the `blake3` crate; per ADR-031 hologram consumes its
 //! content-addressing primitive from prism-crypto.
@@ -10,7 +10,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use hashbrown::HashMap;
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 
 use crate::address::{label_from_fingerprint, ContentLabel};
@@ -49,7 +49,7 @@ impl WeightFingerprint {
 /// Residency is orthogonal to identity: a range served here hashes to the
 /// same κ it was addressed by, so derivation keys and kernels are unchanged.
 /// A missing weight is **page-in-and-retry**, never recompute — a leaf
-/// constant has no cone (contrast [`crate::warm`]'s recompute-on-miss).
+/// constant has no cone (contrast warm-start's recompute-on-miss).
 pub trait WeightProvider {
     /// Full body length for a fingerprint, or `None` if the provider does
     /// not have it.

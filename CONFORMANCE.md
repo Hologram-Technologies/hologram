@@ -28,6 +28,15 @@
 | **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
+| **CC** | Component conformance (holospaces) — each component vs its external authority (hash KATs, native-executor oracle, substrate TCK, WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright) — spec 06 §V&V (MG-7) | conformance tests (`spaces/holospaces/tests/cc*.rs`) + CC bijection audit |
+| **CS** | Specification conformance (holospaces docs) — the documentation vs arc42 / C4 / OPM ISO 19450 / ISO 15288, via validators V1–V8 — spec 06 §docs (MG-8) | validator scripts (`specs/holospaces/scripts/v*-*`) |
+| **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
+| **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
+| **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
+| **NW** | Network κ-realization, KappaSync/DHT, public/restricted/private tiers — spec 04 | BDD scenarios (s3_networks) |
+| **TL** | One binary, one public facade crate, FFI over Client — spec 05 | BDD scenarios (s4_tooling) |
+| **MG** | Phased always-green migration gates (P0–P6) — spec 06 | BDD scenarios (s5_migration) |
+| **GV** | Governance R1–R4 boundary rules — spec 07 | BDD scenarios (s6_governance) |
 
 ## AS — Addressing / σ-axis (external: BLAKE3 reference)
 
@@ -51,10 +60,10 @@
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **KC-1** | f32 matmul equals an **independent f64-reference** product (the IEEE-754 definitional ground truth, à la BLAS/NumPy validation — not hologram's own evaluator) within `√k·ε_f32`, and reads all operands (no short-cut). | conformance test vs f64 reference | `hologram-backend/tests/conformance.rs::kc1_sc1_matmul_conforms_across_scale`, `::kc2_matmul_reads_all_operands_no_shortcut` | ✅ |
-| **KC-2** | Softmax, LayerNorm, RMSNorm, **GroupNorm / InstanceNorm** (per-group normalization with per-channel affine; InstanceNorm = `num_groups == channels`), Gelu (ONNX `approximate="tanh"`), Silu, Conv2d (NCHW valid cross-correlation), Attention (scaled dot-product), DequantizeLinear (**per-tensor and per-axis/per-channel** scale + zero-point) each match their independent ONNX-definition f64 reference across scale (incl. non-power-of-2). _GroupNorm/InstanceNorm are realized as a true grouped kernel (`group_norm_float`, keyed on `num_groups`), not a LayerNorm stand-in._ | conformance tests vs f64 reference | `hologram-backend/tests/conformance.rs::kc3…kc9_*`, `::kc4b_group_norm_conforms_across_scale`, `::kc9b_per_channel_dequantize_conforms` | ✅ |
-| **KC-3** | ReduceSum/Mean/Max + MaxPool/AveragePool (NCHW) match their ONNX-definition f64 reference across scale. | conformance tests vs f64 reference | `hologram-backend/tests/conformance.rs::kc10_reduce_*`, `::kc11_pooling_*` | ✅ |
-| **KC-0** | _Supplementary internal cross-check_ (external conformance is KC-1/2/3): kernels also agree with hologram's Term-tree reference evaluator. | test | `hologram-backend/tests/kernel_equivalence.rs` | ✅ |
+| **KC-1** | f32 matmul equals an **independent f64-reference** product (the IEEE-754 definitional ground truth, à la BLAS/NumPy validation — not hologram's own evaluator) within `√k·ε_f32`, and reads all operands (no short-cut). | conformance test vs f64 reference | `hologram-compute/tests/conformance.rs::kc1_sc1_matmul_conforms_across_scale`, `::kc2_matmul_reads_all_operands_no_shortcut` | ✅ |
+| **KC-2** | Softmax, LayerNorm, RMSNorm, **GroupNorm / InstanceNorm** (per-group normalization with per-channel affine; InstanceNorm = `num_groups == channels`), Gelu (ONNX `approximate="tanh"`), Silu, Conv2d (NCHW valid cross-correlation), Attention (scaled dot-product), DequantizeLinear (**per-tensor and per-axis/per-channel** scale + zero-point) each match their independent ONNX-definition f64 reference across scale (incl. non-power-of-2). _GroupNorm/InstanceNorm are realized as a true grouped kernel (`group_norm_float`, keyed on `num_groups`), not a LayerNorm stand-in._ | conformance tests vs f64 reference | `hologram-compute/tests/conformance.rs::kc3…kc9_*`, `::kc4b_group_norm_conforms_across_scale`, `::kc9b_per_channel_dequantize_conforms` | ✅ |
+| **KC-3** | ReduceSum/Mean/Max + MaxPool/AveragePool (NCHW) match their ONNX-definition f64 reference across scale. | conformance tests vs f64 reference | `hologram-compute/tests/conformance.rs::kc10_reduce_*`, `::kc11_pooling_*` | ✅ |
+| **KC-0** | _Supplementary internal cross-check_ (external conformance is KC-1/2/3): kernels also agree with hologram's Term-tree reference evaluator. | test | `hologram-compute/tests/kernel_equivalence.rs` | ✅ |
 | **KC-4** | Low-precision (bf16/f16) matmul, conv2d, attention are computed by the f32 engine and match the f64 reference over the dtype-quantized operands. Large `m` widens the weight into the engine; decode shapes take the streamed `matmul_lowp_gemv`, which widens in-register — bit-identical, never a scalar fallback on a first-class target. | conformance vs f64 reference | `conformance.rs::kc1b_low_precision_matmul_routes_through_engine`, `::kc7b_bf16_conv_routes_through_engine`, `::kc8b_bf16_attention_routes_through_engine` | ✅ |
 | **KC-5** | dtype policy is single-sourced and never silently wrong: f64 is **rejected** (`UnsupportedOp`, not a 0-output), and div/mod by zero are IEEE-native (±∞/NaN, not 0). | conformance | `conformance.rs::kcdt_f64_rejected_never_silent_zero`, `::kcdt_div_mod_by_zero_is_ieee` | ✅ |
 | **KC-6** | Every UOR-native layout / re-indexing / constructor / composite op equals its definitional reference: Reshape & Slice (`ProjectField`, zero-movement view — `last_skipped`), Pad (offset placement), Concat (`PrimitiveOp::Concat`), Transpose (n-d permute), Expand (broadcast), Resize (nearest), Clip (`Min∘Max`), SwiGLU (`MatMul·Silu·MatMul·Mul`), RoPE (rotate-half), Lrn (windowed-channel). | exec conformance + graph unit tests | `hologram-exec/tests/desugar.rs::*`, `hologram-graph/src/graph.rs::desugar_tests` | ✅ |
@@ -68,7 +77,7 @@
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **SC-1** | f32 matmul stays conformant to the f64 reference across `(m,k,n)` from 2³ through 512×64×384, **including non-power-of-2 and rectangular shapes** (which expose tail/blocking bugs); normalized error stays `≪ 1e-4`, not diverging with size. | scale-parameterized conformance test | `hologram-backend/tests/conformance.rs::kc1_sc1_matmul_conforms_across_scale` | ✅ |
+| **SC-1** | f32 matmul stays conformant to the f64 reference across `(m,k,n)` from 2³ through 512×64×384, **including non-power-of-2 and rectangular shapes** (which expose tail/blocking bugs); normalized error stays `≪ 1e-4`, not diverging with size. | scale-parameterized conformance test | `hologram-compute/tests/conformance.rs::kc1_sc1_matmul_conforms_across_scale` | ✅ |
 | **SC-2** | Content-addressed execution holds at scale: at each size 8³…128³ the executed output matches the f64 reference, and a memoized re-execution is byte-identical to the first (no degenerate short-cut at scale). | scale-parameterized exec test | `hologram-exec/tests/conformance.rs::sc2_content_addressed_matmul_conforms_and_reuses_across_scale` | ✅ |
 | **SC-3** | The transient buffer pool stays byte-bounded across arbitrarily long runs (generational eviction); pinned constants survive churn. | unit test | `hologram-exec/src/buffer.rs::tests::transient_bytes_are_bounded_regardless_of_run_length`, `::pinned_survives_transient_churn` | ✅ |
 | **SC-4** | A matmul against a **constant weight** (the inference case) matches the f64 reference and is non-zero. _Regression guard: the V&V exposed a `lower.rs` bug — constant-operand shapes were unresolved, so weight-matmuls inferred `m=k=n=0` and silently no-op'd to zeros; now fixed._ | exec conformance test | `hologram-exec/tests/conformance.rs::sc4_matmul_against_constant_weight_conforms` | ✅ |
@@ -210,7 +219,7 @@
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **WL-1** | The compiler panel-packs a matmul's **constant** f32 weight (consumed by that matmul alone) into the kernel's contiguous layout — the compiled `MatMul` carries `b_packed` and the stored weight body is the packed extent — and the packed-weight result equals the **independent f64 reference** (semantics-preserving; incl. `n` not a multiple of the panel width). | compiler emit + decode check + f64 ref | `hologram-exec/tests/conformance.rs::wl1_constant_weight_is_panel_packed_and_conforms` | ✅ |
-| **WL-0** | _Kernel-level_: the packed-panel matmul leaf equals a naïve product across odd shapes (panel padding, partial-column store, m-remainder). | unit test | `hologram-backend/src/cpu/simd.rs::tests::packed_b_matmul_matches_naive` | ✅ |
+| **WL-0** | _Kernel-level_: the packed-panel matmul leaf equals a naïve product across odd shapes (panel padding, partial-column store, m-remainder). | unit test | `hologram-compute/src/cpu/simd.rs::tests::packed_b_matmul_matches_naive` | ✅ |
 
 ## EL — Algebraic elision (compute UOR proves unnecessary)
 
@@ -287,12 +296,12 @@
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **PV-1** | f32 matmul clears a conservative throughput floor (≥1 GFLOP/s at 256³, best-of-N) and stays within the cubic scaling envelope (256³/64³ time ∈ [16,400]) — catching scalar-fallback / super-cubic / degenerate-short-cut bottlenecks. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv1_matmul_throughput_floor_and_scaling` | ✅ |
-| **PV-1c** | **Cache-hierarchy V&V (machine-independent).** The cache-oblivious recursion keeps per-FLOP throughput from collapsing as the working set grows past each cache level (compulsory-only misses): 512³ (~3 MiB operands ≫ L2) retains ≥60% of 128³'s (L2-resident) GFLOP/s — a cache-blind kernel cliffs far below; the recursion holds ~90%. Verifies the UOR hierarchical model maximizes cache hits across workloads, without hardware counters. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv1c_cache_oblivious_efficiency_holds_across_scale` | ✅ |
+| **PV-1** | f32 matmul clears a conservative throughput floor (≥1 GFLOP/s at 256³, best-of-N) and stays within the cubic scaling envelope (256³/64³ time ∈ [16,400]) — catching scalar-fallback / super-cubic / degenerate-short-cut bottlenecks. Release-only. | release perf test | `hologram-compute/tests/performance.rs::pv1_matmul_throughput_floor_and_scaling` | ✅ |
+| **PV-1c** | **Cache-hierarchy V&V (machine-independent).** The cache-oblivious recursion keeps per-FLOP throughput from collapsing as the working set grows past each cache level (compulsory-only misses): 512³ (~3 MiB operands ≫ L2) retains ≥60% of 128³'s (L2-resident) GFLOP/s — a cache-blind kernel cliffs far below; the recursion holds ~90%. Verifies the UOR hierarchical model maximizes cache hits across workloads, without hardware counters. Release-only. | release perf test | `hologram-compute/tests/performance.rs::pv1c_cache_oblivious_efficiency_holds_across_scale` | ✅ |
 | **PV-2** | Content-addressed reuse (graph-memo hit) is ≥8× faster than recompute — a same-machine ratio proving the reuse path is O(1)-ish and not secretly recomputing. Release-only. | release perf test | `hologram-exec/tests/performance.rs::pv2_content_addressed_reuse_beats_recompute` | ✅ |
-| **PV-3** | The other heavy compute kernels (Conv2d, Attention) each carry a conservative throughput floor (best-of-N) so no part is a silent bottleneck. Release-only. | release perf test | `hologram-backend/tests/performance.rs::pv3_conv_and_attention_throughput_floors` | ✅ |
+| **PV-3** | The other heavy compute kernels (Conv2d, Attention) each carry a conservative throughput floor (best-of-N) so no part is a silent bottleneck. Release-only. | release perf test | `hologram-compute/tests/performance.rs::pv3_conv_and_attention_throughput_floors` | ✅ |
 | **PV-4** | A **production-representative** workload — a stacked transformer-MLP (`matmul → gelu → matmul → residual` per layer) — sustains a throughput floor under cold (all-novel) load, does **not break down across sizes** (d=256 keeps ≥¼ of d=128's per-FLOP throughput, so arbitrary sizes hold), and under serving reuse collapses to a whole-graph memo hit ≥8× faster than cold. Reports GFLOP/s, FLOP/core-cycle, and ms/inference. Release-only; mirrored by the `production` criterion bench. | release perf test + bench | `hologram-exec/tests/performance.rs::pv4_production_mlp_throughput_latency_and_scaling`, `hologram-bench/benches/production.rs` | ✅ |
-| **PV-Z** | **Zero-overhead / zero-copy contract (executable).** After warm-up, matmul / gemm / conv2d / attention perform **0 heap allocations per call** — the cache-oblivious engine and every dtype-widen / im2col / score buffer is a reused thread-local, so an inference loop pays O(1) allocations, not O(calls). A per-thread counting allocator catches any reintroduced per-call `Vec`/copy. | allocation-counting test | `hologram-backend/tests/zero_overhead.rs` | ✅ |
+| **PV-Z** | **Zero-overhead / zero-copy contract (executable).** After warm-up, matmul / gemm / conv2d / attention perform **0 heap allocations per call** — the cache-oblivious engine and every dtype-widen / im2col / score buffer is a reused thread-local, so an inference loop pays O(1) allocations, not O(calls). A per-thread counting allocator catches any reintroduced per-call `Vec`/copy. | allocation-counting test | `hologram-compute/tests/zero_overhead.rs` | ✅ |
 
 ## PA — Parallel execution (the whole processor surface)
 
@@ -309,8 +318,8 @@
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **PA-1** | Multi-core execution is **observationally invisible**: matmul (row-major and packed) run across the pool is byte-equal to the f64 reference and **deterministic** across repeated runs (the determinism loop is the data-race stress — disjoint output tiles must never alias). Holds for the sequential path too (feature off). | parallel conformance test (f64 ref + determinism) | `hologram-backend/tests/parallel.rs::pa1_parallel_matmul_matches_reference_and_is_deterministic` | ✅ |
-| **PA-2** | The pool **actually runs tasks concurrently** — `width` independent spins complete in `< 0.6×` their serial sum (a fully-serial drain == serial fails decisively). Regression guard for the `while let Some(t)=lock().pop_front()` footgun that held the queue lock across `t()` and silently serialized the pool. `output_tiles` exactly partitions the output (race-freedom witness). | pool concurrency + tile-partition unit tests | `hologram-backend/src/cpu/parallel.rs::{pool_diag::run_distributes_across_workers_concurrently, tests::output_tiles_partition_exactly_and_align}` | ✅ |
+| **PA-1** | Multi-core execution is **observationally invisible**: matmul (row-major and packed) run across the pool is byte-equal to the f64 reference and **deterministic** across repeated runs (the determinism loop is the data-race stress — disjoint output tiles must never alias). Holds for the sequential path too (feature off). | parallel conformance test (f64 ref + determinism) | `hologram-compute/tests/parallel.rs::pa1_parallel_matmul_matches_reference_and_is_deterministic` | ✅ |
+| **PA-2** | The pool **actually runs tasks concurrently** — `width` independent spins complete in `< 0.6×` their serial sum (a fully-serial drain == serial fails decisively). Regression guard for the `while let Some(t)=lock().pop_front()` footgun that held the queue lock across `t()` and silently serialized the pool. `output_tiles` exactly partitions the output (race-freedom witness). | pool concurrency + tile-partition unit tests | `hologram-compute/src/cpu/parallel.rs::{pool_diag::run_distributes_across_workers_concurrently, tests::output_tiles_partition_exactly_and_align}` | ✅ |
 
 ## OV — No fixed byte ceiling (ADR-060: operations don't overflow at scale)
 
@@ -357,3 +366,148 @@ per-cache block constant) over a compile-time panel-packed weight layout
 (zero runtime copy), with activation and residual epilogues fused — so
 efficiency holds across scale by construction, the same way the runtime's
 addressing and warm-start do.
+
+## LAW — repo-wide laws (refactor spec 00; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **LAW-0** | Harness smoke: the conformance runner discovers and executes feature files. | BDD scenario | `s0_laws/_smoke.feature::the harness discovers and runs feature files` | ✅ |
+| **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario (witnessed against `hologram-substrate-core::verify_kappa` + a `ContainerManifest`) | `s0_laws/spine.feature::canonical bytes or nothing` | ✅ |
+| **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ⛔ |
+| **LAW-3** | Contracts are hologram's, spaces are anyone's: the space contract has no sealed traits or crate-private seams; a space may live in any repository (D2/D21). | BDD scenario (witnessed by `hologram-spike-sp3` — a separate crate — implementing the contract and being accepted by `Client`) | `s0_laws/open_contract.feature::the space contract is open to any repo` | ✅ |
+| **LAW-4** | Sync storage + compute, async network/lifecycle: `KappaStore` and the tensor hot path are synchronous (sync OPFS in a Worker → wasm-safe); network sync + lifecycle are async; the async↔sync seam is the network/boot boundary, never storage; Send-bound is maybe-Send (D14; P0.5 spike). | BDD scenario | `s0_laws/async_sync_seam.feature::the session boundary is the only async-sync seam` | ⛔ |
+| **LAW-5** | Capability attenuation only: a delegated capability is always a subset of the grantor's; amplification is unrepresentable. | BDD scenario | `s0_laws/attenuation.feature::delegation cannot amplify` | ⛔ |
+| **LAW-6** | One programmatic surface: CLI / FFI / SDK are thin shells over the `Client` facade; behavior lives in exactly one place. | BDD scenario | `s0_laws/one_surface.feature::entry points are thin shells` | ⛔ |
+
+## SP — space contract + TCK (refactor spec 02; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario (witnessed against the reference `MemKappaStore` via the shared `hologram-tck` battery) | `s1_space_contract/tck.feature::passing the TCK is conformance` | ✅ |
+| **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
+| **SP-3** | A `Space` composes a synchronous store + sync compute with an async network/boot seam; `Client` drives compile→store→boot end to end through the one async↔sync boundary (D14/D28; witnessed by `hologram-spike-sp3`). | BDD scenario | `s1_space_contract/composition.feature::a space composes async network with sync storage and compute` | ✅ |
+| **SP-4** | The reference HAL seams (`Entropy`/`Clock`/`Spawner`, spec 02 §4) are hermetic and deterministic — equally-seeded entropy reproduces the same stream, the clock advances only when told, and the background spawner is inert — so V&V is reproducible. | BDD scenario (witnessed against `hologram-space`'s `SeededEntropy`/`ManualClock`/`NoopSpawner`) | `s1_space_contract/hal_seams.feature::the reference HAL seams are hermetic and deterministic` | ✅ |
+| **SP-5** | Headless is a first-class conformance profile (spec 02 §5): a space with no display satisfies `Surface` via the null projection — `project` yields the canonical empty-projection κ and `intent` refuses with a typed headless error. | BDD scenario (witnessed against `hologram-space`'s `NullSurface`) | `s1_space_contract/surface_headless.feature::a headless space satisfies the Surface contract via the null projection` | ✅ |
+
+## HF — .holo v3 format (refactor spec 03; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **HF-1** | `.holo` v3 is the one application container; a tensor-only archive is the degenerate single-layer case. | BDD scenario | `s2_holo_format/container.feature::single format covers tensor-only` | ✅ |
+| **HF-2** | App nesting is capability-attenuated: a child's κ refs + delegated CapabilitySet are a subset of the parent's. | BDD scenario | `s2_holo_format/nesting.feature::nested app cannot exceed parent` | ✅ |
+| **HF-3** | v3 per-layer certificates verify; inspection APIs never strip them. | BDD scenario | `s2_holo_format/certificates.feature::per-layer certificates verify` | ✅ |
+
+## NW — networks (refactor spec 04; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **NW-1** | A Network is a κ-realization embedding its membership + policy operand κs (SPINE-2/3); no side tables. | BDD scenario | `s3_networks/realization.feature::network embeds operand κs` | ✅ |
+| **NW-2** | Network tiers (public / restricted / private) gate capability at the protocol boundary, never in business logic. | BDD scenario | `s3_networks/tiers.feature::tiers gate at the boundary` | ✅ |
+
+## TL — tooling (refactor spec 05; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **TL-1** | Exactly one binary named `hologram` ships. | BDD scenario | `s4_tooling/one_binary.feature::exactly one binary` | ⛔ |
+| **TL-2** | Exactly one public crate (`hologram`) is imported with features; users never import subcrates. | BDD scenario | `s4_tooling/one_facade.feature::one public crate` | ⛔ |
+| **TL-3** | Leaf tier (D22): dependencies flow core → spaces → leaf {facade+Client, cli, packaging}; nothing depends on a leaf crate. | BDD scenario | `s4_tooling/leaf_tier.feature::nothing depends on a leaf crate` | ⛔ |
+| **TL-4** | Deploy is `put` + `announce` (+ `--page`): `hologram app publish` makes an app reachable and the same κ resolves and runs across every access rung (D25, spec 08). | BDD scenario | `s4_tooling/deploy.feature::one app publishes to every rung by κ` | ⛔ |
+
+## MG — migration gates (refactor spec 06; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **MG-1** | Every phase boundary P0–P6 is always-green: the full holospaces V&V passes before the next phase starts. | BDD scenario | `s5_migration/always_green.feature::each phase boundary is green` | ⛔ |
+| **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ⛔ |
+| **MG-3** | P0.5 de-risk spike (D28): the Space+Client vertical slice compiles and runs on native AND wasm32, resolving the Send-bound question, before any P1 move. | BDD scenario | `s5_migration/p05_spike.feature::the de-risk spike proves composition before P1` | ⛔ |
+| **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ⛔ |
+| **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario (frozen σ-axis + realization κs re-derived vs `hologram-substrate-core`/`-realizations`) | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ✅ |
+| **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ⛔ |
+| **MG-7** | holospaces' V&V is absorbed into hologram's unified conformance ledger (spec 06): its component-conformance (CC) catalog + spec-conformance (CS) suites run under the one meta-gate, each witnessed against its external authority (hash KATs, the native-executor oracle, the substrate TCK, QEMU, Playwright) and never by self-reference; the `vv/` artifacts are content-addressed and verified on import. | BDD scenario | `s5_migration/vv_absorption.feature::the holospaces CC catalog is absorbed into the unified conformance ledger` | ✅ |
+| **MG-8** | holospaces' specification conformance (CS) is absorbed into the unified ledger (spec 06 §docs): the docs V&V (validators V1–V8) runs under the one framework, each CS row witnessed against its external standard (arc42 / C4 / OPM ISO 19450 / ISO 15288) and never by self-reference; the toolchain + pins are content-addressed on import. | BDD scenario | `s5_migration/cs_absorption.feature::the holospaces CS catalog is absorbed into the unified conformance ledger` | ✅ |
+
+## GV — governance requirements (refactor spec 07; BDD)
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **GV-1** | R1 traceability: every new realization embeds its operand κs so `references()` yields the full provenance closure — no side tables. | BDD scenario (witnessed against `hologram-realizations::ContainerManifest`) | `s6_governance/traceability.feature::references yields full provenance` | ✅ |
+| **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ✅ |
+| **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ✅ |
+| **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ✅ |
+
+## CC — component conformance (holospaces V&V; external: per-row authority; cargo-witnessed, non-BDD)
+
+Absorbed from holospaces' V&V (spec 06 §V&V; MG-7). Each row is a component validated against
+its own external authority (hash KATs, the native-executor oracle, the substrate TCK, the
+WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright), witnessed by a cargo test in the
+ported `holospaces` space — never by self-reference. Like the other non-BDD classes (AS/KC/…) the
+honesty meta-gate does not bind these to Gherkin; instead the **CC bijection audit**
+(`crates/hologram-conformance/tests/cc_gate.rs`) binds every row to a present witness, and **MG-7**
+witnesses the absorption. Enforcement tiers: `test` (fast, no artifact), `test (artifact: …)`, and
+`test (heavy: QEMU/browser · #[ignore])`. 🟡 = present + audit-bound; ✅ once CI gates it green.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **CC-1** | kappa kat — kappa digest equals reference implementation | test | `spaces/holospaces/tests/cc1_kappa_kat.rs::kappa_digest_equals_reference_implementation` | ✅ |
+| **CC-2** | holo engine — identical holo yields identical kappa across independent builds | test | `spaces/holospaces/tests/cc2_holo_engine.rs::identical_holo_yields_identical_kappa_across_independent_builds` | ✅ |
+| **CC-3** | substrate tck — in memory store obeys the substrate contract | test | `spaces/holospaces/tests/cc3_substrate_tck.rs::in_memory_store_obeys_the_substrate_contract` | ✅ |
+| **CC-4** | devcontainer — real configs conform to the dev container schema | test (artifact: vv/artifacts/cc4) | `spaces/holospaces/tests/cc4_devcontainer.rs::real_configs_conform_to_the_dev_container_schema` | ✅ |
+| **CC-5** | wasm — validator agrees with the webassembly spec suite | test (artifact: vv/artifacts/cc5) | `spaces/holospaces/tests/cc5_wasm.rs::validator_agrees_with_the_webassembly_spec_suite` | ✅ |
+| **CC-6** | execution surface — surface validator enforces the contract | test | `spaces/holospaces/tests/cc6_execution_surface.rs::surface_validator_enforces_the_contract` | ✅ |
+| **CC-7** | kdisk — the ext4 artifact matches its recorded digest | test (artifact: vv/artifacts/cc7) | `spaces/holospaces/tests/cc7_kdisk.rs::the_ext4_artifact_matches_its_recorded_digest` | ✅ |
+| **CC-8** | import run — a forged import is refused by re derivation | test | `spaces/holospaces/tests/cc8_import_run.rs::a_forged_import_is_refused_by_re_derivation` | ✅ |
+| **CC-9** | emulator — the emulator core conforms to the risc v isa | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc9_emulator.rs::the_emulator_core_conforms_to_the_risc_v_isa` | ✅ |
+| **CC-10** | ingestion — a real oci image ingests as verified kappa content | test (artifact: vv/artifacts/cc10) | `spaces/holospaces/tests/cc10_ingestion.rs::a_real_oci_image_ingests_as_verified_kappa_content` | ✅ |
+| **CC-11.term** | raw terminal — the deployed terminal echoes edits and handles ctrl c | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc11_raw_terminal.rs::the_deployed_terminal_echoes_edits_and_handles_ctrl_c` | ✅ |
+| **CC-11** | workspace — intent edits are content addressed in the store | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc11_workspace.rs::intent_edits_are_content_addressed_in_the_store` | ✅ |
+| **CC-12** | manager console — the console signs in a self sovereign content addressed identity | test | `spaces/holospaces/tests/cc12_manager_console.rs::the_console_signs_in_a_self_sovereign_content_addressed_identity` | ✅ |
+| **CC-13** | vscode workspace — the vscode components re derive to their pinned kappa | test (artifact: vv/artifacts/cc13) | `spaces/holospaces/tests/cc13_vscode_workspace.rs::the_vscode_components_re_derive_to_their_pinned_kappa` | ✅ |
+| **CC-14.asm** | assembly — the oci layers assemble into a clean mountable ext4 rootfs | test (artifact: vv/artifacts/cc14) | `spaces/holospaces/tests/cc14_assembly.rs::the_oci_layers_assemble_into_a_clean_mountable_ext4_rootfs` | ✅ |
+| **CC-14** | virtio block — the generated device tree is valid | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc14_virtio_block.rs::the_generated_device_tree_is_valid` | ✅ |
+| **CC-15** | workspace — the os and holospaces share the workspace over virtio 9p | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc15_workspace.rs::the_os_and_holospaces_share_the_workspace_over_virtio_9p` | ✅ |
+| **CC-16** | network — the os reaches the internet through the userspace nat | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc16_network.rs::the_os_reaches_the_internet_through_the_userspace_nat` | ✅ |
+| **CC-17** | workspace fs — the editor lists writes and reads the shared workspace by kappa | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc17_workspace_fs.rs::the_editor_lists_writes_and_reads_the_shared_workspace_by_kappa` | ✅ |
+| **CC-18** | lsp — the language server and session are in the assembled rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc18_lsp.rs::the_language_server_and_session_are_in_the_assembled_rootfs` | ✅ |
+| **CC-18.bridge** | lsp bridge — the in os language server serves the workbench over the bridge | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc18_lsp_bridge.rs::the_in_os_language_server_serves_the_workbench_over_the_bridge` | ✅ |
+| **CC-20** | import — a devcontainer provisions from a repository url | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc20_import.rs::a_devcontainer_provisions_from_a_repository_url` | ✅ |
+| **CC-21** | port forward — a server in the devcontainer is reachable through a forwarded port | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc21_port_forward.rs::a_server_in_the_devcontainer_is_reachable_through_a_forwarded_port` | ✅ |
+| **CC-22** | lifecycle — the lifecycle init is built from the parsed config | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc22_lifecycle.rs::the_lifecycle_init_is_built_from_the_parsed_config` | ✅ |
+| **CC-23** | personalization — the operators dotfiles are injected into the assembled rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc23_personalization.rs::the_operators_dotfiles_are_injected_into_the_assembled_rootfs` | ✅ |
+| **CC-24** | auth — the devcontainer authenticates with github over the network | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc24_auth.rs::the_devcontainer_authenticates_with_github_over_the_network` | ✅ |
+| **CC-25** | features — the feature is staged and scheduled in the rootfs | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc25_features.rs::the_feature_is_staged_and_scheduled_in_the_rootfs` | ✅ |
+| **CC-26** | build — the dockerfile build is assembled | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc26_build.rs::the_dockerfile_build_is_assembled` | ✅ |
+| **CC-27** | compose — the import resolves the compose service from a repo | test (artifact: vv/artifacts/cc27) | `spaces/holospaces/tests/cc27_compose.rs::the_import_resolves_the_compose_service_from_a_repo` | ✅ |
+| **CC-28** | reconfigure — the control plane reconfigures an instance over the substrate | test | `spaces/holospaces/tests/cc28_reconfigure.rs::the_control_plane_reconfigures_an_instance_over_the_substrate` | ✅ |
+| **CC-29** | read verify boundary — the boundary check rejects a liar but the trusted read trusts the store | test | `spaces/holospaces/tests/cc29_read_verify_boundary.rs::the_boundary_check_rejects_a_liar_but_the_trusted_read_trusts_the_store` | ✅ |
+| **CC-30** | resume — restore is the inverse of snapshot and continues identically | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc30_resume.rs::restore_is_the_inverse_of_snapshot_and_continues_identically` | ✅ |
+| **CC-31** | resume terminal — a resumed idle devcontainer is live and its scrollback is a terminal concern | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc31_resume_terminal.rs::a_resumed_idle_devcontainer_is_live_and_its_scrollback_is_a_terminal_concern` | ✅ |
+| **CC-33** | guest bridge — a guest server is reachable over the in process substrate bridge | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc33_guest_bridge.rs::a_guest_server_is_reachable_over_the_in_process_substrate_bridge` | ✅ |
+| **CC-35** | aarch64 — the a64 data processing battery passes | test (artifact: vv/artifacts/cc35) | `spaces/holospaces/tests/cc35_aarch64.rs::the_a64_data_processing_battery_passes` | ✅ |
+| **CC-36** | aarch64 — the emulator boots real arm64 linux to userspace | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc36_aarch64.rs::the_emulator_boots_real_arm64_linux_to_userspace` | ✅ |
+| **CC-37** | aarch64 — an arm64 devcontainer runs a stock linux arm64 binary | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc37_aarch64.rs::an_arm64_devcontainer_runs_a_stock_linux_arm64_binary` | ✅ |
+| **CC-38** | content net — a browser peer fetches content from a bare metal peer | test | `spaces/holospaces/tests/cc38_content_net.rs::a_browser_peer_fetches_content_from_a_bare_metal_peer` | ✅ |
+| **CC-40** | product security — sec integrity tampered content does not re derive | test | `spaces/holospaces/tests/cc40_product_security.rs::sec_integrity_tampered_content_does_not_re_derive` | ✅ |
+| **CC-44** | x64 boot — an amd64 linux kernel boots to userspace | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc44_x64_boot.rs::an_amd64_linux_kernel_boots_to_userspace` | ✅ |
+| **CC-45** | dogfood — holospaces builds in its own real devcontainer | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc45_dogfood.rs::holospaces_builds_in_its_own_real_devcontainer` | 🟡 |
+| **CC-46** | devbus parity — the aarch64 core mounts a 9p workspace over the shared devbus | test | `spaces/holospaces/tests/cc46_devbus_parity.rs::the_aarch64_core_mounts_a_9p_workspace_over_the_shared_devbus` | ✅ |
+| **CC-46.boot** | realboot — the aarch64 core serves 9p net and bridge to a real arm64 boot | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc46_realboot.rs::the_aarch64_core_serves_9p_net_and_bridge_to_a_real_arm64_boot` | ✅ |
+| **CC-50** | streaming assembly — a sparse large rootfs streams with bounded peak memory | test | `spaces/holospaces/tests/cc50_streaming_assembly.rs::a_sparse_large_rootfs_streams_with_bounded_peak_memory` | ✅ |
+| **CC-51** | nested workspace — the host and os share a nested workspace tree over virtio 9p | test (heavy: QEMU/browser · #[ignore]) | `spaces/holospaces/tests/cc51_nested_workspace.rs::the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p` | ✅ |
+
+## CS — specification conformance (holospaces docs V&V; external: arc42 / C4 / OPM ISO 19450 / ISO 15288; validator-witnessed, non-BDD)
+
+Absorbed from holospaces' docs V&V (spec 06 §docs; MG-8). Each row validates the *documentation*
+(now at `specs/holospaces/`) against an external standard via a pinned validator (V1–V8, run by
+`specs/holospaces/scripts/validate.sh`); the authorities + pins are in `specs/holospaces/tools/`.
+Like CC/AS/KC, these are non-BDD (the honesty meta-gate does not bind them to Gherkin); **MG-8**
+witnesses the CS absorption. Enforcement needs the docs toolchain (JDK 21 · Ruby 3 · Structurizr ·
+cmark-gfm · pandoc), so 🟡 = present + imported; ✅ once the docs-conformance CI job gates it green.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **CS-1** | Architecture structure conforms to arc42 (pinned arc42 template + generator). | validators V1+V2 | `specs/holospaces/scripts/v2-arc42-build.sh` | ✅ |
+| **CS-2** | The C4 model is well-formed (Structurizr DSL parses + renders). | validator V3 | `specs/holospaces/scripts/v3-structurizr.sh` | ✅ |
+| **CS-3** | Rendered docs are valid GitHub-flavoured Markdown (CommonMark/GFM + github-markup). | validators V4+V5 | `specs/holospaces/scripts/v4-cmark-gfm.sh` | ✅ |
+| **CS-4** | The conceptual model is valid OPM — every OPL parses against the ISO 19450 grammar. | validator V6 | `specs/holospaces/scripts/v6-opl-syntax.sh` | ✅ |
+| **CS-5** | Each OPD agrees with its OPL (OPD↔OPL coherence). | validator V7 | `specs/holospaces/scripts/v7-opd-opl-coherence.sh` | ✅ |
+| **CS-6** | The lifecycle covers the standard ISO/IEC/IEEE 15288 processes (superset check). | validator V8 | `specs/holospaces/scripts/v8-iso-15288-superset.sh` | ✅ |

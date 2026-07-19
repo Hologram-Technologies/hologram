@@ -145,9 +145,9 @@ at seq=4.
 **Acceptance:** TinyLlama runs correctly at ALL prompt lengths (4, 13, 36, 77 tokens).
 The prefill garbage bug is fixed.
 
-### Phase 5: Propagate to hologram-backend (~100 lines)
+### Phase 5: Propagate to hologram-compute (~100 lines)
 
-- `TensorBuffer<B>` in hologram-backend already has a `shape` field
+- `TensorBuffer<B>` in hologram-compute already has a `shape` field
 - Wire `infer_output_shape` into `execute_on_backend` after each dispatch
 - CpuBackend and MetalBackend get shape-validated execution
 

@@ -17,8 +17,8 @@
 //! Native timing — the deployed wasm32 target hashes slower, so the byte
 //! column is an *optimistic lower bound* on what the addressed path removes.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     node::Node,

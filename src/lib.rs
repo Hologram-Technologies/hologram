@@ -15,6 +15,11 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// The `client` facade composes over `alloc` collections (κ lists, output buffers) so it
+// links on the no_std browser / bare-metal targets too.
+#[cfg(feature = "client")]
+extern crate alloc;
+
 #[cfg(feature = "archive")]
 pub mod archive {
     //! Facade for the `hologram-archive` crate.
@@ -24,9 +29,9 @@ pub mod archive {
 
 #[cfg(feature = "backend")]
 pub mod backend {
-    //! Facade for the `hologram-backend` crate.
+    //! Facade for the `hologram-compute` crate.
 
-    pub use hologram_backend::*;
+    pub use hologram_compute::*;
 }
 
 #[cfg(feature = "bench")]
@@ -72,13 +77,6 @@ pub mod graph {
     pub use hologram_graph::*;
 }
 
-#[cfg(feature = "host")]
-pub mod host {
-    //! Facade for the `hologram-host` crate.
-
-    pub use hologram_host::*;
-}
-
 #[cfg(feature = "ops")]
 pub mod ops {
     //! Facade for the `hologram-ops` crate.
@@ -92,3 +90,21 @@ pub mod types {
 
     pub use hologram_types::*;
 }
+
+#[cfg(feature = "space")]
+pub mod space {
+    //! Facade for the `hologram-space` crate — the space contract (`Space`, `KappaStore`,
+    //! `KappaSync`, HAL, realizations) that a [`Client`](crate::Client) composes over.
+
+    pub use hologram_space::*;
+}
+
+// The `Client` facade (D4) — the single programmatic surface. Lifted to the crate root so
+// callers write `hologram::Client`, per 05-tooling.md.
+#[cfg(feature = "client")]
+mod client;
+#[cfg(feature = "client")]
+pub use client::{
+    AppInspection, BuildError, Client, ClientBuilder, Holo, InspectError, LayerCertVerdict,
+    RunError,
+};

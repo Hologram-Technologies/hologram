@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EFI_CRATE="$ROOT/substrate/hologram-efi"
+EFI_CRATE="$ROOT/crates/hologram-efi"
 
 if ! command -v qemu-system-x86_64 >/dev/null; then
   echo "SKIP: qemu-system-x86_64 not available"; exit 0

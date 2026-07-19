@@ -1,0 +1,28 @@
+[package]
+name = "hologram-tck"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+description = "Technology Compatibility Kit: the reusable KappaStore conformance battery every Hologram storage backend must pass (ST/SPINE invariants), plus the reference in-memory store (MemKappaStore). See specs/refactor/02-space-contract.md."
+
+[dependencies]
+hologram-space = { workspace = true }
+# The reference MemKappaStore (absorbed from hologram-store-mem).
+
+[dev-dependencies]
+# V&V ONLY — the upstream BLAKE3 reference impl as an INDEPENDENT external oracle for the
+# σ-axis (mirrors hologram-archive's AS class). Never a runtime dep.
+blake3 = "1"
+async-trait = { workspace = true }
+pollster = { workspace = true }
+criterion = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["hologram-space/std"]
+
+[[bench]]
+name = "sp_floors"
+harness = false
+required-features = ["std"]

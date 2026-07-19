@@ -1,5 +1,8 @@
 name: Semver Gate
 
+# Meaningful per-run title (else PR runs inherit the identical PR title).
+run-name: "Semver Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event.pull_request.head.sha || github.sha }}"
+
 # Enforces Rust's semantic-versioning contract on every PR: a public-API change
 # may not merge unless the workspace version is bumped enough to cover it
 # (under 0.x: breaking changes require a minor bump, additions a patch bump).
@@ -14,6 +17,14 @@ name: Semver Gate
 on:
   pull_request:
     branches: [main]
+    # The gate rebuilds every library crate's public API for both the PR and the baseline —
+    # expensive, and only meaningful when Rust surface or the dependency graph can change.
+    # Docs/spec/site/SDK-only changes cannot alter the checked API, so skip them.
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/semver-gate.yml"
   workflow_dispatch:
 
 permissions:
@@ -56,11 +67,16 @@ jobs:
           # build on the Linux runner. The default std+cpu API is the contract
           # every consumer sees.
           feature-group: default-features
-          # Adding the root facade turns the workspace root into package
-          # `hologram`; without an explicit package set, cargo-semver-checks
-          # selects only that root package. The target-branch baseline for this
-          # PR still has a virtual workspace root, so `hologram` cannot be
-          # compared until it exists on both sides. Check the established
-          # library crates here and add the facade itself in a follow-up once it
-          # ships on the baseline branch.
-          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-backend,hologram-archive,hologram-ffi,hologram-bench"
+          # cargo-semver-checks can only compare a crate that exists on BOTH sides.
+          # This refactor renames/removes some, so they cannot be diffed against the
+          # pre-refactor baseline (they simply do not exist there) — check the
+          # established library crates that persist across both, and re-add the rest
+          # once they ship on the baseline branch (post-merge):
+          #   - `hologram` (root facade): the baseline is still a virtual workspace
+          #     root, so `hologram` cannot be compared until it exists on both sides.
+          #   - `hologram-host`: consolidated into `hologram-types` (D15) — gone here.
+          #   - `hologram-compute`: renamed from `hologram-backend`; the baseline
+          #     still has `hologram-backend`, so `hologram-compute` has no counterpart.
+          # The crates below all report "no semver update required" — the refactor's
+          # breaking changes are structural (renames/removals), documented in the PR.
+          package: "hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-archive,hologram-ffi,hologram-bench"

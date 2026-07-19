@@ -1,0 +1,36 @@
+[package]
+name = "hologram-emulator"
+description = "Hologram system emulator — deterministic RISC-V/x86-64/aarch64 cores that boot an OS on the substrate (ADR-009)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+hologram-space = { workspace = true }
+libm = { workspace = true }
+spin = { workspace = true }
+# `codemodule` heap (feature-gated): the no_std wasm container's global allocator. Optional so it is
+# absent from every non-codemodule build.
+dlmalloc = { version = "0.2", features = ["global"], optional = true }
+
+# The system-emulator codemodule (ADR-009 execution surface) is built FROM this crate as a wasm32
+# `cdylib` — `scripts/build-emulator.sh` runs `cargo rustc -p hologram-emulator --features codemodule
+# --crate-type cdylib`. The `crate-type` stays the default `lib` so normal builds produce no cdylib.
+[lib]
+crate-type = ["lib"]
+
+[features]
+default = ["std"]
+std = ["hologram-space/std"]
+# `cc44-trace` (off by default, dev-only) streams the x86-64 guest serial console
+# live to stderr and samples `rip`/TSC periodically — boot-progress visibility
+# for the CC-44 long-mode bring-up. Never enabled in CI or the default build.
+cc44-trace = ["std"]
+# `codemodule` (off by default) compiles the emulator core to a hologram Wasm container codemodule:
+# a no_std wasm32 `cdylib` exporting the `hg_*` container ABI and importing only the `hologram` host
+# ABI (the module lives behind `cfg(all(feature="codemodule", target_arch="wasm32"))`, since its
+# `#[panic_handler]`/`#[global_allocator]` must never enter a normal std lib link). Absorbs the former
+# `hologram-emulator-codemodule` crate.
+codemodule = ["dep:dlmalloc"]

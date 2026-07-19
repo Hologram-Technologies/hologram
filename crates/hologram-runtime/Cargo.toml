@@ -1,0 +1,53 @@
+[package]
+name = "hologram-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Substrate-portable Container Runtime orchestration (spec §4): lifecycle, snapshot-as-κ, capability enforcement over a ContainerEngine seam + KappaStore. Engine backends behind features: engine-wasmtime (std, Wasmtime) and engine-wasmi (no_std, wasmi)."
+
+[dependencies]
+hologram-space = { workspace = true }
+async-trait = { workspace = true }
+spin = { workspace = true }
+hashbrown = { workspace = true }
+# engine-wasmtime (std, Wasmtime + ChaCha20 entropy)
+wasmtime = { workspace = true, optional = true }
+rand_chacha = { version = "0.3", default-features = false, optional = true }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"], optional = true }
+# engine-wasmi (no_std, wasmi interpreter)
+wasmi = { version = "2.0.0-beta.2", default-features = false, optional = true }
+
+[dev-dependencies]
+hologram-tck = { workspace = true }
+hologram-store = { workspace = true, features = ["bare", "native"] }
+pollster = { workspace = true }
+async-trait = { workspace = true }
+uor-addr = { workspace = true, features = ["alloc"] }
+# WebAssembly text → bytes, for the engine-wasmtime integration tests.
+wat = "1"
+
+[features]
+default = ["std"]
+std = ["hologram-space/std"]
+# The Wasmtime engine backend (spec §7.2 Option A) — pulls Wasmtime + ChaCha20.
+engine-wasmtime = ["std", "dep:wasmtime", "dep:rand_chacha", "dep:rand_core"]
+# The bare-metal wasmi interpreter backend (architecture §2, C1) — no_std.
+engine-wasmi = ["dep:wasmi"]
+
+# The wasmtime-engine examples build only with that engine present.
+[[example]]
+name = "cas_artifact_cache"
+required-features = ["engine-wasmtime"]
+[[example]]
+name = "event_bus"
+required-features = ["engine-wasmtime"]
+[[example]]
+name = "least_privilege"
+required-features = ["engine-wasmtime"]
+[[example]]
+name = "live_migration"
+required-features = ["engine-wasmtime"]
+[[example]]
+name = "wasm_inference_container"
+required-features = ["engine-wasmtime"]

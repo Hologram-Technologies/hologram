@@ -1,0 +1,9 @@
+# cargo-nextest configuration.
+#
+# nextest cannot run `harness = false` integration tests: they don't implement libtest's `--list`
+# protocol that nextest uses to enumerate tests. `hologram-conformance`'s `bdd` target is a **cucumber
+# runner** with its own `main` (harness = false), so `nextest run --workspace` errors on it with
+# "unexpected argument '--list'". Exclude it from nextest here; the BDD suite still runs via
+# `just bdd` (`cargo test -p hologram-conformance --test bdd`) and CI's `vv` job (plain `cargo test`).
+[profile.default]
+default-filter = 'not binary_id(hologram-conformance::bdd)'

@@ -1,5 +1,8 @@
 name: API Snapshot Gate
 
+# Meaningful per-run title (else PR runs inherit the identical PR title).
+run-name: "API Snapshot Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event.pull_request.head.sha || github.sha }}"
+
 # The public API of every library crate is snapshotted to committed files under
 # `api/<crate>.txt`. This gate regenerates them and fails if any differs from
 # what's committed — so every public-API change (add / update / deprecate /
@@ -10,6 +13,15 @@ name: API Snapshot Gate
 on:
   pull_request:
     branches: [main]
+    # The snapshots are derived purely from Rust public API; only a crate, manifest, snapshot,
+    # or generator change can move them. Skip docs/spec/site/SDK-only pushes.
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "api/**"
+      - "scripts/update-api-snapshots.sh"
+      - ".github/workflows/api-gate.yml"
   workflow_dispatch:
 
 permissions:

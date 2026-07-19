@@ -197,7 +197,7 @@ jobs:
           # Depend on the specific crates you need (all share one version):
           hologram-compiler = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
           hologram-exec     = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
-          hologram-backend  = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
+          hologram-compute  = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v${{ needs.verify.outputs.version }}" }
           ```
 
           #### CLI Binary

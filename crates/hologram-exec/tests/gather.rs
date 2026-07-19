@@ -6,8 +6,8 @@
 //! This is the embedding path real language models need (int64 `input_ids`,
 //! vocab ≫ 256), and the `O(S·D)` replacement for the `OneHot·MatMul` desugar.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

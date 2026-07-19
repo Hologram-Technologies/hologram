@@ -239,7 +239,7 @@ Tracked separately. Skeleton:
 
 - [`hologram-transform/src/backend.rs`](../../crates/hologram-transform/src/backend.rs)
   — current trait + `CpuBackend` impl.
-- [`hologram-backend/src/canonical/wgpu.rs`](../../crates/hologram-backend/src/canonical/wgpu.rs)
+- [`hologram-compute/src/canonical/wgpu.rs`](../../crates/hologram-compute/src/canonical/wgpu.rs)
   — current `WgpuBackend` (per-call upload/download).
 - [`hologram-transform/src/conformance.rs`](../../crates/hologram-transform/src/conformance.rs)
   — cross-backend conformance harness.

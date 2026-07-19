@@ -1,0 +1,131 @@
+[package]
+name = "holospaces"
+description = "UOR-native boot layer over the hologram substrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# `std` (default) enables the host-side provisioning surfaces — the Dev Container
+# ingestor (CC-4) and the Wasm validator (CC-5). With `--no-default-features`
+# the crate is `no_std` + `alloc`: the environment-agnostic boot core
+# (realizations, boot, identity, peer, manager, .holo engine) that the browser
+# and bare-metal peers compile (arc42 ch.7; portability Q6). Mirrors hologram's
+# own tri-target discipline (`just wasm` / `just embedded`).
+default = ["std"]
+std = [
+    "dep:serde_json",
+    "dep:wasmparser",
+    "dep:ruzstd",
+    "dep:hologram-exec",
+    "dep:hologram-compute",
+    "hologram-space/std",
+    "hologram-exec/std",
+    "hologram-compute/std",
+    "hologram-emulator/std",
+    "hologram-runtime/std",
+]
+# `net` (off by default) enables the internet *import boundary* (ADR-013): the
+# Repository Fetcher + OCI registry Image Fetcher (`CC-20`), an HTTP(S) client
+# (ureq + rustls). A host-only surface — kept out of `default` so the portable
+# peer core (wasm32 / bare-metal) never links a TCP/TLS stack (the browser peer
+# imports through the page's own fetch).
+net = ["std", "dep:ureq", "dep:sha2"]
+# `cc44-trace` (off by default, dev-only) streams the x86-64 guest serial console
+# live to stderr and samples `rip`/TSC periodically — boot-progress visibility
+# for the CC-44 long-mode bring-up. Never enabled in CI or the default build.
+# Forwards to the hoisted emulator crate where the x86-64 trace code now lives.
+cc44-trace = ["std", "hologram-emulator/cc44-trace"]
+
+[dependencies]
+# The hologram contract, consumed by reference (ADR-003, ADR-006). holospaces
+# composes these contracts; it never re-implements them. no_std-capable (workspace
+# default-features are off; the `std` feature re-enables). Post-refactor these are
+# the consolidated crates: hologram-space absorbs substrate-core + realizations +
+# the bare HAL (the κ-disk's BlockDevice trait) + the reference in-memory KappaStore
+# (`MemKappaStore`, backing the emulator's virtio-blk κ-disk); hologram-net carries
+# the no_std BareNetSync content-sync (`bare` module). The conformance TCK is a
+# dev-dependency only (CC-3 battery), not a runtime dependency.
+hologram-space = { workspace = true }
+hologram-net = { workspace = true }
+# The generic container-lifecycle `Session` (D7): holospaces' own `Session` is a
+# thin wrapper delegating boot/suspend/resume/terminate to this. Consumed
+# feature-minimal so the no_std wasm/embedded core does not pull an engine or
+# std; the `std` feature below re-enables `hologram-runtime/std`. IMPORTANT:
+# hologram-runtime links no tensor compute engine (RZ), so this stays clean.
+hologram-runtime = { workspace = true, default-features = false }
+# The system emulator + Boot Orchestrator, hoisted into a first-class crate
+# (ADR-009). holospaces re-exports its `emulator` / `machine` modules so the
+# provisioning surfaces (boot, import, oci, projection) drive them unchanged.
+hologram-emulator = { workspace = true }
+async-trait = { workspace = true }
+spin = { workspace = true }
+# The emulator's F/D floating-point extension (CC-9) on hologram's no_std float
+# foundation (libm) — deterministic, reproducible across peers.
+# The Layer Assembler's gzip (DEFLATE) decoder for OCI `tar+gzip` layers
+# (no_std + alloc — part of the portable core, like the κ-disk it feeds).
+miniz_oxide = { workspace = true }
+# The Layer Assembler's Zstandard decoder for OCI `tar+zstd` layers — a `std`
+# surface (enabled by the `std` feature), since the realized ingestion peers
+# (host importer + browser wasm) build with std.
+ruzstd = { workspace = true, optional = true }
+# The .holo Engine building block: holospaces supplies the .holo execution
+# backend (arc42 ch.5 / ch.7), bound to hologram's executor. The CPU kernels'
+# float math needs std today, so the engine is a `std` surface (the bare-metal
+# core still drives the Wasm-container lifecycle).
+hologram-exec = { workspace = true, optional = true }
+hologram-compute = { workspace = true, features = ["cpu"], optional = true }
+# Host-side provisioning surfaces, gated by `std`: the Dev Container ingestor
+# (CC-4) parses devcontainer.json; the Wasm validator (CC-5) checks modules.
+serde_json = { version = "1", optional = true }
+wasmparser = { version = "0.221", optional = true }
+# The import boundary's HTTP(S) client (the `net` feature): a blocking client
+# with pure-Rust TLS (rustls) — the verifiable transport that fetches a
+# repository archive and pulls an OCI image from a registry (ADR-013, CC-20).
+ureq = { version = "2", optional = true }
+# sha256 over a registry manifest (the OCI content digest) at the import boundary.
+sha2 = { version = "0.10", optional = true }
+
+[dev-dependencies]
+# CC-8 witness (a source-peer KappaSync, SyncError, Bytes, address oracle) + CC-9
+# (a ContainerManifest with the guest image as initial state) — the same contracts
+# the lib composes, with std. hologram-space absorbs substrate-core + realizations.
+hologram-space = { workspace = true, features = ["std"] }
+# CC-3 — the conformance battery (dev-only; `MemKappaStore` itself now comes from
+# hologram-space, so the test kit is not a runtime dependency).
+hologram-tck = { workspace = true, features = ["std"] }
+hologram-store = { workspace = true, features = ["native"] }
+# Real container runtime — the e2e tier boots a real hologram.* Wasm container
+# (no mocks). The consolidated hologram-runtime carries both engine backends:
+# `engine-wasmtime` (native JIT) and `engine-wasmi` (the no_std interpreter that
+# the browser + bare-metal peers run, witnessed natively at CC-6).
+hologram-runtime = { workspace = true, features = ["engine-wasmtime", "engine-wasmi", "std"] }
+# CC-2 — the compiler to build a .holo for the differential oracle.
+hologram-compiler = { workspace = true }
+hologram-graph = { workspace = true }
+# Real multi-peer sync over a loopback HTTP-CAS gateway (Identity sync, R5/QS5).
+hologram-net = { workspace = true, features = ["live"] }
+hologram-archive = { workspace = true }
+uor-prism = { workspace = true }
+smallvec = "1"
+# CC-1 cross-check oracles (published KATs are the authority; these reproduce them).
+blake3 = "1"
+sha2 = "0.10"
+sha3 = "0.10"
+# Parse the imported KAT / Dev Container artifacts in the CC-1 / CC-4 witnesses.
+serde_json = "1"
+# CC-18 — the LSP spec's authoritative Rust types: build the LSP session the
+# workbench sends and validate the in-OS language server's responses against the
+# spec (the same crate rust-analyzer uses).
+lsp-types = "0.95"
+# CC-5 — drive the WebAssembly spec test/core .wast suite (directives + encode).
+wat = "1"
+wast = "251"
+# Drive the async ContainerRuntime trait in tests without a full async runtime.
+pollster = "0.4"
+async-trait = "0.1"
+jsonschema = "0.46.5"
+# CC-9 OS-boot witness — decompress the pinned gzipped Linux kernel Image
+# (pure-Rust miniz_oxide backend; dev-only).
+flate2 = "1"

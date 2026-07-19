@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 use crate::weight::WeightStore;
-use hologram_backend::KernelCall;
+use hologram_compute::KernelCall;
 use hologram_graph::{Schedule, ShapeRegistry};
 
 /// A graph input/output port's identity: which workspace slot the runtime
@@ -32,6 +32,10 @@ pub struct PortDescriptor {
 
 #[derive(Default)]
 pub struct HoloWriter {
+    /// `.holo` v3 application manifest: the opaque canonical bytes of an
+    /// `AppManifest` realization. Empty ⇒ a bare tensor archive (no manifest
+    /// section emitted). See [`HoloWriter::set_app_manifest`].
+    app_manifest: Vec<u8>,
     kernel_calls: Vec<KernelCall>,
     schedule: Option<Schedule>,
     weights: WeightStore,
@@ -47,6 +51,9 @@ pub struct HoloWriter {
     /// Open producer-defined metadata sections (`key`, `bytes`); one
     /// `SectionKind::Extension` section each. See [`HoloWriter::add_extension`].
     extensions: Vec<(String, Vec<u8>)>,
+    /// κ-addressed content blobs embedded in a **fat** `.holo` (`κ bytes`, `content`); one
+    /// `SectionKind::ContentBlob` section each. See [`HoloWriter::add_content_blob`].
+    content_blobs: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl HoloWriter {
@@ -54,6 +61,13 @@ impl HoloWriter {
         Self::default()
     }
 
+    /// Attach the `.holo` v3 application manifest — the canonical bytes of an
+    /// `AppManifest` realization (`hologram-space`). The archive layer stores it
+    /// opaquely; the app loader resolves its closure. Omit it for a bare tensor
+    /// archive (no manifest section is emitted).
+    pub fn set_app_manifest(&mut self, bytes: Vec<u8>) {
+        self.app_manifest = bytes;
+    }
     pub fn set_kernel_calls(&mut self, calls: Vec<KernelCall>) {
         self.kernel_calls = calls;
     }
@@ -87,6 +101,12 @@ impl HoloWriter {
     pub fn set_exec_plan(&mut self, levels: Vec<Vec<u32>>) {
         self.exec_plan = levels;
     }
+    /// Embed a κ-addressed content blob — a **fat** `.holo` carries one per layer/closure κ so it
+    /// resolves without the store (spec 03 §Fat and thin). `kappa` is the 71-byte κ-label; `content`
+    /// is its bytes. Repeatable.
+    pub fn add_content_blob(&mut self, kappa: impl Into<Vec<u8>>, content: impl Into<Vec<u8>>) {
+        self.content_blobs.push((kappa.into(), content.into()));
+    }
     /// Attach an open producer-defined metadata section under `key` (tokenizer,
     /// generation config, class labels, …). Repeatable; the runtime stores it
     /// opaquely and a consumer fetches it by key.
@@ -99,6 +119,13 @@ impl HoloWriter {
     pub fn finish(self) -> Result<Vec<u8>, ArchiveError> {
         // Build payload sections in a stable order.
         let mut payloads: Vec<(SectionKind, Vec<u8>)> = Vec::new();
+
+        // AppManifest first (the application root) when present — a thin archive
+        // is manifest + certificates + footer. Opaque bytes; omitted for a bare
+        // tensor archive.
+        if !self.app_manifest.is_empty() {
+            payloads.push((SectionKind::AppManifest, self.app_manifest.clone()));
+        }
 
         // KernelCalls — encoded via `kernel_codec` (one tagged variant per
         // OpKind, total round-trip with `decoder::decode_calls`).
@@ -140,8 +167,22 @@ impl HoloWriter {
         for (key, bytes) in &self.extensions {
             payloads.push((SectionKind::Extension, encode_extension(key, bytes)));
         }
+        // Embedded content blobs (a fat archive): one ContentBlob per (κ, content) — `κ71 ‖ content`.
+        for (kappa, content) in &self.content_blobs {
+            let mut blob = Vec::with_capacity(kappa.len() + content.len());
+            blob.extend_from_slice(kappa);
+            blob.extend_from_slice(content);
+            payloads.push((SectionKind::ContentBlob, blob));
+        }
 
-        // Compute layout.
+        Ok(Self::assemble(payloads))
+    }
+
+    /// Frame a set of raw `(kind, bytes)` sections into a complete `.holo`: header || section table
+    /// || payloads || 32-byte BLAKE3 footer (spec X.1). The low-level primitive the fat/thin tooling
+    /// uses to re-package an archive from manipulated sections without re-encoding their content.
+    #[must_use]
+    pub fn assemble(payloads: Vec<(SectionKind, Vec<u8>)>) -> Vec<u8> {
         let header_size = 4 + 2 + 2 + 2; // magic + version + flags + section_count
         let section_entry_size = 1 + 7 + 8 + 8; // kind(u8) + pad(7) + offset(u64) + length(u64)
         let table_size = section_entry_size * payloads.len();
@@ -177,12 +218,11 @@ impl HoloWriter {
         // computed through hologram's canonical `Hasher<32>` selection
         // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
         use prism::vocabulary::Hasher;
-        let footer: [u8; 32] = hologram_host::HologramHasher::initial()
+        let footer: [u8; 32] = hologram_types::HologramHasher::initial()
             .fold_bytes(&out)
             .finalize();
         out.extend_from_slice(&footer);
-
-        Ok(out)
+        out
     }
 }
 

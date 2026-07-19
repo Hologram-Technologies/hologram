@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Release build with target_feature flags that exercise the SIMD path.
-RUSTFLAGS="-C target-cpu=native" cargo build --release -p hologram-backend --features cpu
+RUSTFLAGS="-C target-cpu=native" cargo build --release -p hologram-compute --features cpu
 
 # Locate the produced rlib.
 RLIB=$(find target/release -name "libhologram_backend-*.rlib" | head -1)

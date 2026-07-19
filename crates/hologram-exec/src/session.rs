@@ -12,7 +12,7 @@ use hologram_archive::{
     derive_label, derive_label_boundary, format::SectionKind, warm_codec, ArchiveError,
     ContentLabel, HoloLoader, PortDescriptor, WarmEntry, WeightFingerprint, WeightProvider,
 };
-use hologram_backend::{
+use hologram_compute::{
     buffers, Backend, DequantActivationCall, KernelCall, KvCacheWriteCall, MatMulActivationCall,
     MatMulAddActivationCall, MatMulAddCall, MatMulCall, MatMulDequantCall, Workspace,
 };
@@ -244,7 +244,7 @@ fn call_tier(call: &KernelCall) -> hologram_types::MemoryTier {
     // Quantum level = the dtype's bit-width (byte=8, f16/bf16=16, f32=32). The
     // tier is a pure function of it — no element-count or other size threshold,
     // so tiering is identical at any workload size.
-    let bpe = port_bytes_per_element(hologram_backend::call_dtype(call)).max(1);
+    let bpe = port_bytes_per_element(hologram_compute::call_dtype(call)).max(1);
     let witt_bits = (bpe * 8).min(u16::MAX as usize) as u16;
     hologram_types::MemoryTier::from_witt(witt_bits, is_layout_only_call(call))
 }
@@ -346,7 +346,7 @@ fn build_tiers_and_migrations(
     let call_outputs: Vec<u32> = kernel_calls
         .iter()
         .map(|c| {
-            hologram_backend::buffers(c)
+            hologram_compute::buffers(c)
                 .last()
                 .map(|b| b.slot)
                 .unwrap_or(u32::MAX)
@@ -355,7 +355,7 @@ fn build_tiers_and_migrations(
     let call_inputs: Vec<Vec<u32>> = kernel_calls
         .iter()
         .map(|c| {
-            let bufs = hologram_backend::buffers(c);
+            let bufs = hologram_compute::buffers(c);
             if bufs.len() > 1 {
                 bufs[..bufs.len() - 1]
                     .iter()
@@ -1754,7 +1754,7 @@ fn fuse_expand_binary(
     outputs: &[PortDescriptor],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
     use hashbrown::HashSet;
-    use hologram_backend::{broadcast_op, BroadcastBinaryCall};
+    use hologram_compute::{broadcast_op, BroadcastBinaryCall};
     let n = calls.len();
     let mut prod_count: HashMap<u32, u32> = HashMap::new();
     let mut read_count: HashMap<u32, u32> = HashMap::new();
@@ -1856,7 +1856,7 @@ fn fuse_dequant_matmul(
     outputs: &[PortDescriptor],
 ) -> Result<(Vec<KernelCall>, Vec<Vec<u32>>), ExecError> {
     use hashbrown::HashSet;
-    use hologram_backend::mm_act_quant;
+    use hologram_compute::mm_act_quant;
     let n = calls.len();
     let mut prod_count: HashMap<u32, u32> = HashMap::new();
     let mut read_count: HashMap<u32, u32> = HashMap::new();
@@ -1914,7 +1914,7 @@ fn fuse_dequant_matmul(
         // per-channel-ness, `channels == n`, `inner == 1` and the exact-i32 `k`
         // bound before it will run the integer GEMV, and fails loud otherwise.
         let tier =
-            match hologram_backend::quant_tier::quant_tier(hologram_types::DTypeId(dq.quant_dtype))
+            match hologram_compute::quant_tier::quant_tier(hologram_types::DTypeId(dq.quant_dtype))
             {
                 Some(t) => t,
                 None => continue, // unregistered tier: never guess
@@ -2033,8 +2033,8 @@ fn fuse_dequant_matmul(
 /// The `lut_act::*` id for a unary activation `KernelCall` that has a dense
 /// finite-domain table form, or `None` for non-densified ops. Only the
 /// transcendental activations the LUT path serves (the expensive scalar ones).
-fn dequant_act_id(call: &KernelCall) -> Option<(u8, &hologram_backend::UnaryCall)> {
-    use hologram_backend::lut_act;
+fn dequant_act_id(call: &KernelCall) -> Option<(u8, &hologram_compute::UnaryCall)> {
+    use hologram_compute::lut_act;
     match call {
         KernelCall::Sigmoid(c) => Some((lut_act::SIGMOID, c)),
         KernelCall::Tanh(c) => Some((lut_act::TANH, c)),

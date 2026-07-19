@@ -4,7 +4,7 @@
 //! decomposition into PrimitiveOp applications, with bounded `Recurse`
 //! for transcendentals/CORDIC and `Match` for piecewise activations.
 //! Per spec I-9, the Term tree IS the formal specification; the
-//! kernels in `hologram-backend` are the execution form.
+//! kernels in `hologram-compute` are the execution form.
 
 use crate::emit::HoloArena;
 use crate::emit::{push_application, push_literal, push_match, push_recurse, EmitResult};

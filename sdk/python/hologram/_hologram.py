@@ -23,7 +23,7 @@ from .errors import (
 )
 
 ABI_VERSION = 1
-ARCHIVE_FORMAT_VERSION = 2
+ARCHIVE_FORMAT_VERSION = 3
 INITIAL_ARCHIVE_CAPACITY = 16 * 1024
 
 
@@ -113,7 +113,7 @@ def last_error_rejected() -> str | None:
 def assert_compatible() -> None:
     if abi_version() != ABI_VERSION:
         raise AbiMismatchError(f"unsupported Hologram ABI {abi_version()}")
-    if archive_format_version() != ARCHIVE_FORMAT_VERSION:
+    if archive_format_version() not in (2, 3):
         raise AbiMismatchError(f"unsupported Hologram archive format {archive_format_version()}")
     missing = [feature for feature in REQUIRED_FEATURES if not feature_supported(feature)]
     if missing:

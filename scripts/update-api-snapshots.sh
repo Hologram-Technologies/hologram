@@ -24,12 +24,11 @@ mkdir -p api
 # Library crates that carry a public-API contract (skip the CLI binary and the
 # bench harness, which expose no consumed library surface).
 CRATES=(
-  hologram
+  uor-hologram
   hologram-types
-  hologram-host
   hologram-ops
   hologram-graph
-  hologram-backend
+  hologram-compute
   hologram-archive
   hologram-exec
   hologram-compiler
@@ -43,7 +42,7 @@ for crate in "${CRATES[@]}"; do
   echo "==> $crate"
   # `--simplified` keeps the snapshot to the stable item surface (no blanket
   # auto-trait/blanket-impl noise), so diffs reflect intentional API changes.
-  cargo public-api --simplified -p "$crate" > "$tmp"
+  cargo public-api --simplified -p "$crate" --target x86_64-unknown-linux-gnu > "$tmp"
   if [ "$MODE" = "--check" ]; then
     if ! diff -u "$out" "$tmp" >/dev/null 2>&1; then
       echo "::error::API snapshot for $crate is stale — run scripts/update-api-snapshots.sh"

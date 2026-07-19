@@ -90,7 +90,7 @@ surfaces they need.
 | `hologram-graph` | Tensor graph IR, desugaring, algebraic elision, scheduling | `Graph`, `Node`, `GraphOp`, `OpKind`, `ConstantStore`, `ExecutionSchedule` |
 | `hologram-compiler` | Graph → `.holo` (lowering, fusion, workspace planning) | `Compiler`, `compile`, `BackendKind`, `source` |
 | `hologram-archive` | `.holo` binary format, UOR-ADDR κ-labels, BLAKE3 footer | `HoloWriter`, `HoloLoader`, `address::{address_ring, compose_model}` |
-| `hologram-backend` | Kernel backends (CPU SIMD + LUT; optional wgpu/Metal) | `CpuBackend`, `Backend`, `KernelCall`, `Workspace` |
+| `hologram-compute` | Kernel backends (CPU SIMD + LUT; optional wgpu/Metal) | `CpuBackend`, `Backend`, `KernelCall`, `Workspace` |
 | `hologram-exec` | Content-addressed executor, buffer pool, warm-start | `InferenceSession`, `BufferArena`, `InputBuffer`, `WarmStore` |
 | `hologram-ffi` | C ABI bindings (`hologram_session_*`) | C functions |
 | `hologram-cli` | `hologram` binary: `compile` / `execute` / `inspect` / `bench` | — |
@@ -116,7 +116,7 @@ crate from there.
 | `graph` | `hologram::graph` | `hologram-graph` |
 | `compiler` | `hologram::compiler` | `hologram-compiler` |
 | `archive` | `hologram::archive` | `hologram-archive` |
-| `backend` | `hologram::backend` | `hologram-backend` |
+| `backend` | `hologram::backend` | `hologram-compute` |
 | `exec` | `hologram::exec` | `hologram-exec` |
 | `ffi` | `hologram::ffi` | `hologram-ffi` |
 | `cli` | `hologram::cli` | `hologram-cli` |
@@ -479,9 +479,9 @@ facade defaults to `std` and forwards it only to enabled optional crates.
 | Flag | Crate(s) | Default | Enables |
 |---|---|:---:|---|
 | `std` | facade + enabled libs | ✓ | Standard library: file I/O, runtime SIMD detection, thread-local scratch, `tracing` |
-| `backend` / `backend-cpu` | `hologram-backend` | — | The native CPU kernel backend (`CpuBackend`) |
-| `backend-wgpu` | `hologram-backend` | — | The wgpu GPU backend (implies `std`) |
-| `backend-metal` | `hologram-backend` | — | The Apple Metal GPU backend (implies `std`, macOS) |
+| `backend` / `backend-cpu` | `hologram-compute` | — | The native CPU kernel backend (`CpuBackend`) |
+| `backend-wgpu` | `hologram-compute` | — | The wgpu GPU backend (implies `std`) |
+| `backend-metal` | `hologram-compute` | — | The Apple Metal GPU backend (implies `std`, macOS) |
 | `archive-model-formats` | `hologram-archive` | — | GGUF / ONNX UOR-ADDR realizations for model addressing (hologram-ai) |
 | `archive-compression` | `hologram-archive` | — | Archive compression support |
 | `exec-tiered` | `hologram-exec` | — | PM_7 memory-affinity tier classification + observability |

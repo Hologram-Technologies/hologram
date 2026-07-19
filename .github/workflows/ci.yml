@@ -1,10 +1,32 @@
 name: CI
 
+# Per-run title that identifies the COMMIT under test, so runs aren't all stamped with the
+# (identical, static) PR title. Push/tag runs show the commit subject; PR runs can't read the
+# commit message from the event payload, so they fall back to the head SHA — either way each run
+# is distinct. e.g. "CI · main · fix: cap untrusted alloc" / "CI · chore/refactor · 336bb841…".
+run-name: "CI · ${{ github.head_ref || github.ref_name }} · ${{ github.event.head_commit.message || github.event.pull_request.head.sha || github.sha }}"
+
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    # A release cut is a version tag: ci.yml runs its lean gate here and `release.yml` runs the heavy
+    # tier (QEMU/Playwright/JDK conformance + SDK matrix) in parallel — together the full suite.
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+  workflow_dispatch: {}
+  # Nightly rot-detection lives in `release.yml` (it owns the heavy jobs); this lean gate has nothing
+  # to re-run on a schedule.
+
+# Only the newest commit on a ref needs the lean gate: a new push cancels the superseded in-flight
+# run rather than stacking runs on the runners. Keyed per PR (or per branch/tag on push) so distinct
+# PRs never cancel each other. `main` and release tags are exempt so every landed commit and every
+# release run keeps its own verified run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,11 +88,16 @@ jobs:
           cache-on-failure: true
           key: ${{ matrix.os }}-test
 
+      # holospaces' CC integration tests need the vv/artifacts fixtures + Linux tools (e2fsprogs,
+      # qemu, docker); on a generic runner where a tool is present but the fixture isn't, some
+      # would try to read the fixture rather than skip. They are comprehensively gated by the
+      # holospaces-vv-heavy job (fixtures materialized), so exclude the space from the generic
+      # matrix test; its lib/unit tests run in holospaces-vv-heavy.
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude holospaces
 
       - name: Run doc tests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --exclude holospaces --doc
 
   # Job 5: Documentation
   docs:
@@ -125,7 +152,7 @@ jobs:
   # Cross-compilation targets (wasm32, aarch64).
   #
   # The no_std crates form the portable core that must build for every
-  # supported target. std-only crates (hologram-backend / -exec /
+  # supported target. std-only crates (hologram-compute / -exec /
   # -compiler / -ffi / -cli / -bench / -archive) depend on libc / threads
   # / mmap and are intentionally NOT cross-targeted; their CI coverage
   # is the matrix-`test` job.
@@ -179,7 +206,6 @@ jobs:
         run: |
           cargo check --target ${{ matrix.target }} \
             -p hologram-types \
-            -p hologram-host \
             -p hologram-ops \
             -p hologram-graph
 
@@ -206,18 +232,21 @@ jobs:
           cache-on-failure: true
           key: vv
 
+      - name: CC bijection audit + honesty meta-gate + BDD (MG-7, artifact-free)
+        run: cargo test -p hologram-conformance --test cc_gate --test meta_gate --test bdd
+
       - name: External-authority + scaling conformance (model-formats)
         run: |
           cargo test -p hologram-archive --test conformance --test model_address --features model-formats
-          cargo test -p hologram-backend --test conformance --features cpu
+          cargo test -p hologram-compute --test conformance --features cpu
           cargo test -p hologram-exec --test conformance
 
       - name: Parallel-execution conformance (--features parallel)
-        run: cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+        run: cargo test -p hologram-compute --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
 
       - name: Performance floors (release-only, PV class)
         run: |
-          cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+          cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
           cargo test --release -p hologram-exec --test performance -- --nocapture
 
   # Job 10: Quality-gate tooling tests — the gates' own Python/shell logic
@@ -260,25 +289,29 @@ jobs:
           cache-on-failure: true
           key: substrate
 
+      # Crate names updated for the post-refactor consolidation: substrate-core / realizations /
+      # bare-hal → hologram-space; store-mem / substrate-tck → hologram-tck; net-{http,tcp,bare} →
+      # hologram-net; runtime-{bare,wasmtime} → hologram-runtime (engine-wasmi / engine-wasmtime
+      # features); substrate-cli → hologram-cli. (Mappings + no_std feature flags verified locally.)
       - name: Conformance + worked-example battery
         run: |
           cargo test \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-            -p hologram-store-mem -p hologram-store-native -p hologram-store-bare \
-            -p hologram-net-http -p hologram-net-tcp -p hologram-runtime \
-            -p hologram-runtime-wasmtime -p hologram-substrate-cli -p hologram-bare-hal \
-            -p hologram-runtime-bare -p hologram-net-bare
+            -p hologram-space -p hologram-tck \
+            -p hologram-net -p hologram-runtime -p hologram-cli
+          # hologram-store's backend tests are feature-gated (bare no_std / native std).
+          cargo test -p hologram-store --features bare,native
 
-      - name: Live HTTP-CAS transport (NW class, --features live)
-        run: cargo test -p hologram-net-http --features live
+      - name: Live transports (NW class — HTTP-CAS + κ-XOR DHT + QUIC)
+        # `tcp` so the tokio-backed uor-native DHT test compiles alongside the live HTTP-CAS
+        # transport; `quic` runs the encrypted-P2P-over-QUIC localhost handshake/fetch suite
+        # (spec 04 — the substrate iroh would layer NAT-traversal onto; deterministic, no flake).
+        run: cargo test -p hologram-net --features live,tcp,quic
 
       - name: RZ gate — compute engine absent from store/route crates
         run: |
           set -euo pipefail
-          for c in hologram-store-mem hologram-store-native hologram-store-bare \
-                   hologram-net-http hologram-net-tcp hologram-runtime \
-                   hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare \
-                   hologram-substrate-cli; do
+          for c in hologram-space hologram-tck hologram-store \
+                   hologram-net hologram-runtime; do
             if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
               echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
             fi
@@ -287,90 +320,49 @@ jobs:
 
       - name: no_std tri-target — substrate builds for browser + bare-metal (TR class)
         run: |
-          cargo build --target wasm32-unknown-unknown --no-default-features \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime \
-            -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
-          cargo build --target thumbv7em-none-eabi --no-default-features \
-            -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-            -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
-            -p hologram-net-bare
+          # The portable store/net + the wasmi runtime (no_std interpreter) build for browser + bare
+          # metal. The runtime needs its engine-wasmi feature, so it builds as a separate invocation.
+          for target in wasm32-unknown-unknown thumbv7em-none-eabi; do
+            cargo build --target "$target" --no-default-features \
+              -p hologram-space -p hologram-net
+            cargo build --target "$target" --no-default-features \
+              --features bare -p hologram-store
+            cargo build --target "$target" --no-default-features \
+              --features engine-wasmi -p hologram-runtime
+          done
 
       - name: Real-world examples (runnable capability narratives)
         run: |
           for ex in cas_artifact_cache event_bus least_privilege wasm_inference_container live_migration; do
-            cargo run -q -p hologram-runtime-wasmtime --example "$ex"
+            cargo run -q -p hologram-runtime --features engine-wasmtime --example "$ex"
           done
 
-  # Job 12: End-to-end bare-metal boot (BOOT class) — build hologram.efi and boot
-  # it in QEMU/OVMF with no OS underneath, asserting the engine's storage
-  # self-check prints PASS on the UEFI console. Mirrors the `uefi-boot` recipe.
-  substrate-uefi-boot:
-    name: Bare-metal UEFI boot (QEMU/OVMF)
+  # Exit-criteria demos (spec 06): the P4/P5/P6 acceptance narratives, run in-process as
+  # deterministic examples (always-green). P4 = multi-layer .holo app; P5 = restricted network with
+  # a non-member refused at the protocol boundary; P6 = private-network confidentiality + dedup. The
+  # live browser-peer / multi-node transport variants remain the heavy-CI demos (holospaces-vv-heavy).
+  exit-criteria-demos:
+    name: Exit-criteria demos (P4/P5/P6)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-uefi
-
-      - name: Install QEMU + OVMF firmware
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
-                     /etc/apt/sources.list.d/azure-cli.list \
-                     /etc/apt/sources.list.d/azure-cli.sources || true
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-          key: substrate-uefi
-          workspaces: substrate/hologram-efi
+          key: exit-criteria-demos
 
-      - name: Boot hologram.efi and assert PASS
-        run: ./scripts/uefi-boot-test.sh
-
-  # Job 13: End-to-end browser OPFS store (OPFS class) — build the wasm32 store,
-  # generate JS glue, and exercise put/get round-trip + reload persistence +
-  # verify-on-receipt in real Chromium via Playwright. Mirrors the `opfs-test` recipe.
-  substrate-opfs:
-    name: Browser OPFS store (Chromium/Playwright)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: substrate-opfs
-
-      - name: Install wasm-bindgen-cli (pinned to the crate's wasm-bindgen)
-        run: cargo install wasm-bindgen-cli --version 0.2.122 --locked
-
-      - name: Install Playwright Chromium
+      - name: Run the P4/P5/P6 exit-criteria demos
         run: |
-          cd substrate/hologram-store-opfs/web
-          npm install
-          npx --yes playwright install --with-deps chromium
+          cargo run -p hologram-space --example multi_layer_app
+          cargo run -p hologram-space --example restricted_network
+          cargo run -p hologram-space --example private_confidentiality
 
-      - name: Run OPFS test in Chromium
-        run: ./scripts/opfs-browser-test.sh
-
-  # Job 14: Verify all quality gates passed
+  # Job 17: Verify all quality gates passed
   ci-success:
     name: CI Success
     if: always()
@@ -384,8 +376,7 @@ jobs:
       - vv
       - tooling-tests
       - substrate
-      - substrate-uefi-boot
-      - substrate-opfs
+      - exit-criteria-demos
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs succeeded

@@ -2,7 +2,7 @@
 //! through the C-stable signatures.
 
 use hologram_ffi::*;
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 
 fn ffi_str(bytes: &[u8]) -> HologramString {
@@ -77,7 +77,8 @@ fn compile_empty_round_trip() {
 #[test]
 fn reports_versions_and_supported_features() {
     assert_eq!(hologram_abi_version(), HOLOGRAM_ABI_VERSION);
-    assert_eq!(hologram_archive_format_version(), 2);
+    // `.holo` is v3 since P4 (the multi-layer application container); the FFI reports FORMAT_VERSION.
+    assert_eq!(hologram_archive_format_version(), 3);
     assert_eq!(
         unsafe { hologram_feature_supported(ffi_str(b"source-builder")) },
         1

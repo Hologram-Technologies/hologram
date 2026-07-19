@@ -7,10 +7,9 @@ authors.workspace = true
 description = "Hologram runtime executor: InferenceSession over a content-addressed buffer pool."
 
 [dependencies]
-hologram-host    = { workspace = true }
 hologram-types   = { workspace = true }
 hologram-ops     = { workspace = true }
-hologram-backend = { workspace = true }
+hologram-compute = { workspace = true }
 hologram-archive = { workspace = true }
 hologram-graph   = { workspace = true }
 uor-foundation   = { workspace = true }
@@ -23,7 +22,7 @@ thiserror        = { workspace = true, default-features = false }
 # Integration tests execute real kernels, so they pull the CPU backend
 # and the std surface of the otherwise-no_std deps.
 hologram-compiler = { workspace = true, features = ["std"] }
-hologram-backend  = { workspace = true, features = ["std", "cpu"] }
+hologram-compute  = { workspace = true, features = ["std", "cpu"] }
 hologram-archive  = { workspace = true, features = ["std"] }
 hologram-graph    = { workspace = true }
 uor-foundation    = { workspace = true }
@@ -38,15 +37,15 @@ std = [
     "thiserror/std",
     "uor-prism/std",
     "uor-foundation/std",
-    "hologram-host/std",
-    "hologram-backend/std",
+    "hologram-types/std",
+    "hologram-compute/std",
     "hologram-archive/std",
 ]
-# Multi-core execution. Forwards to `hologram-backend/parallel`, which makes
+# Multi-core execution. Forwards to `hologram-compute/parallel`, which makes
 # each matmul dispatch fan its cache-oblivious recursion across the in-tree
 # worker pool (disjoint output tiles → one sequential recursion per core).
 # This is intra-kernel parallelism (a single `dispatch` uses every core), so
 # it needs no workspace splitting. It also tightens the `SessionBackend`
 # bounds with `Clone + Send + Sync` for a future per-slot cross-kernel
 # (within-schedule-level) executor.
-parallel = ["hologram-backend/parallel"]
+parallel = ["hologram-compute/parallel"]

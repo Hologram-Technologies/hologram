@@ -30,7 +30,7 @@ between tiles at decode shapes, and every product was float (W8A32, via a
 10-op i8→i16→i32→f32 widening ladder).
 
 Landed:
-- `matmul_i8_pc_omajor` (`hologram-backend::cpu::simd`): GEMV over
+- `matmul_i8_pc_omajor` (`hologram-compute::cpu::simd`): GEMV over
   **output-major** `[n,k]` weights (each output's k-vector contiguous),
   per-token symmetric dynamic i8 activation quantization (**W8A8**,
   `scale = max|a|/127`, deterministic trunc-cast rounding), and **exact
@@ -225,7 +225,7 @@ that removes the stored multiply and **halves the streamed weight bytes**,
 inside the exact κ-discipline items 1–5 established.
 
 Landed:
-- `matmul_i4_pc_omajor` (`hologram-backend::cpu::simd`): output-major
+- `matmul_i4_pc_omajor` (`hologram-compute::cpu::simd`): output-major
   **packed-i4** W4A8 GEMV. The stored-weight multiply becomes an in-register
   16-entry table lookup — `i8x16_swizzle` (wasm) / `vqtbl1q_s8` (NEON), the
   value grid `I4_VALUES` living in one SIMD register — after which the

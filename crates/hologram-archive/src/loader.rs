@@ -4,6 +4,10 @@ use crate::error::ArchiveError;
 use crate::format::{SectionKind, SectionRef, FORMAT_VERSION, MAGIC};
 use alloc::vec::Vec;
 
+/// A `.holo` fat archive's embedded content, as `(κ bytes, content)` pairs borrowing the archive —
+/// the return of [`LoadedPlan::content_blobs`] (spec 03 §Fat and thin).
+pub type ContentBlobs<'a> = Vec<(&'a [u8], &'a [u8])>;
+
 /// Parsed plan view backed by a byte slice. Zero-copy where possible.
 pub struct LoadedPlan<'a> {
     bytes: &'a [u8],
@@ -15,7 +19,15 @@ impl<'a> LoadedPlan<'a> {
         for s in &self.sections {
             if s.kind == kind {
                 let start = s.offset as usize;
-                let end = start + s.length as usize;
+                // Checked: offset/length are attacker-controlled u64s from the archive header, and
+                // `usize` is 32-bit on wasm32 / bare-metal — `start + length` would otherwise
+                // overflow on a forged section (parser-hardening, spec 03).
+                let end = start
+                    .checked_add(s.length as usize)
+                    .ok_or(ArchiveError::Truncated {
+                        needed: usize::MAX,
+                        actual: self.bytes.len(),
+                    })?;
                 return self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
                     needed: end,
                     actual: self.bytes.len(),
@@ -29,6 +41,46 @@ impl<'a> LoadedPlan<'a> {
         &self.sections
     }
 
+    /// The `.holo` v3 application manifest section bytes, if present (spec 03) —
+    /// the opaque canonical form of an `AppManifest` realization, decoded by the
+    /// app-load layer (`hologram-space`). `None` for a bare tensor archive that
+    /// carries no manifest (a v2 archive, or a v3 archive read purely as a
+    /// tensor container). Zero-copy: the slice borrows the archive.
+    pub fn app_manifest(&self) -> Option<&'a [u8]> {
+        self.section(SectionKind::AppManifest).ok()
+    }
+
+    /// Every `ContentBlob` section, parsed to `(κ bytes, content)` in archive order (spec 03 §Fat
+    /// and thin) — the payloads a **fat** `.holo` embeds so it resolves its manifest closure without
+    /// the store. Each blob is `κ71 ‖ content`; a malformed (short) blob errors. Zero-copy: both
+    /// slices borrow the archive. The κ is returned as raw bytes — the archive layer stays free of
+    /// `hologram-space`'s `KappaLabel71`; the app loader interprets it.
+    pub fn content_blobs(&self) -> Result<ContentBlobs<'a>, ArchiveError> {
+        let mut out = alloc::vec::Vec::new();
+        for s in &self.sections {
+            if s.kind != SectionKind::ContentBlob {
+                continue;
+            }
+            let start = s.offset as usize;
+            let end = start
+                .checked_add(s.length as usize)
+                .ok_or(ArchiveError::Truncated {
+                    needed: usize::MAX,
+                    actual: self.bytes.len(),
+                })?;
+            let payload = self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
+                needed: end,
+                actual: self.bytes.len(),
+            })?;
+            let kappa = payload.get(..71).ok_or(ArchiveError::Truncated {
+                needed: 71,
+                actual: payload.len(),
+            })?;
+            out.push((kappa, &payload[71..]));
+        }
+        Ok(out)
+    }
+
     /// Every `Extension` section, parsed to `(key, bytes)` in archive order
     /// (zero-copy: `bytes` borrows the archive). Open producer metadata
     /// (tokenizer, generation config, …); the runtime carries it opaquely.
@@ -39,7 +91,13 @@ impl<'a> LoadedPlan<'a> {
                 continue;
             }
             let start = s.offset as usize;
-            let end = start + s.length as usize;
+            // Checked (see `section`): a forged u64 offset/length must not overflow `usize`.
+            let end = start
+                .checked_add(s.length as usize)
+                .ok_or(ArchiveError::Truncated {
+                    needed: usize::MAX,
+                    actual: self.bytes.len(),
+                })?;
             let payload = self.bytes.get(start..end).ok_or(ArchiveError::Truncated {
                 needed: end,
                 actual: self.bytes.len(),
@@ -93,7 +151,10 @@ impl<'a> HoloLoader<'a> {
             return Err(ArchiveError::BadMagic(m));
         }
         let ver = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if ver != FORMAT_VERSION {
+        // Read-shim (spec 03 §Compatibility): accept v2 tensor archives through
+        // the current version; writers emit v3 only. Below MIN_READ_VERSION or
+        // above the current version is rejected.
+        if !(crate::format::MIN_READ_VERSION..=FORMAT_VERSION).contains(&ver) {
             return Err(ArchiveError::UnsupportedVersion(ver));
         }
 
@@ -103,7 +164,7 @@ impl<'a> HoloLoader<'a> {
         // (`prism::crypto::Blake3Hasher` per wiki ADR-031).
         use prism::vocabulary::Hasher;
         let footer_start = bytes.len() - 32;
-        let expected: [u8; 32] = hologram_host::HologramHasher::initial()
+        let expected: [u8; 32] = hologram_types::HologramHasher::initial()
             .fold_bytes(&bytes[..footer_start])
             .finalize();
         let actual: [u8; 32] =
@@ -184,6 +245,8 @@ impl<'a> HoloLoader<'a> {
                 12 => SectionKind::ExecPlan,
                 13 => SectionKind::WarmStart,
                 14 => SectionKind::Extension,
+                15 => SectionKind::AppManifest,
+                16 => SectionKind::ContentBlob,
                 _ => return Err(ArchiveError::Io("unknown section kind")),
             };
             cursor += 8; // kind + pad(7)

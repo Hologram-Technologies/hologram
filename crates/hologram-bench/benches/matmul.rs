@@ -5,8 +5,8 @@
 //! split-borrow + `bytemuck::cast_slice` zero-copy path is exercised.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::cpu::dtype::DTYPE_F32;
-use hologram_backend::{Backend, BufferRef, CpuBackend, KernelCall, MatMulCall};
+use hologram_compute::cpu::dtype::DTYPE_F32;
+use hologram_compute::{Backend, BufferRef, CpuBackend, KernelCall, MatMulCall};
 use hologram_exec::{BufferArena, SlotSpan};
 
 fn ref_buf(slot: u32) -> BufferRef {

@@ -8,13 +8,13 @@ description = "Hologram .holo archive format (kernel calls + certificates + weig
 
 [dependencies]
 # Archive footer + weight fingerprints route through prism's
-# canonical Blake3 HashAxis impl (via hologram-host's `HologramHasher`)
+# canonical Blake3 HashAxis impl (via hologram-types's `HologramHasher`)
 # rather than calling `blake3::hash` directly. Per wiki ADR-031
 # hologram consumes its content-addressing primitive from
 # prism-crypto; the archive layer holds no direct blake3 dependency.
 hologram-graph    = { workspace = true }
-hologram-backend  = { workspace = true }
-hologram-host     = { workspace = true }
+hologram-compute  = { workspace = true }
+hologram-types     = { workspace = true }
 uor-prism         = { workspace = true }
 # Direct deps so the public prism SDK macros (`output_shape!`, `verb!`,
 # `prism_model!`) — used by `compose.rs` to realize the ordered BLAKE3
@@ -28,12 +28,11 @@ uor-foundation-sdk = { workspace = true }
 uor-addr          = { workspace = true, features = ["alloc"] }
 hashbrown         = { workspace = true }
 smallvec          = { workspace = true }
-bytemuck          = { workspace = true }
 thiserror         = { workspace = true, default-features = false }
 memmap2           = { workspace = true, optional = true }
 
 [dev-dependencies]
-hologram-backend = { workspace = true }
+hologram-compute = { workspace = true }
 # V&V ONLY — the upstream BLAKE3 reference implementation (by the
 # algorithm's authors) used as an INDEPENDENT external oracle to verify
 # hologram's σ-axis against, mirroring prism-btc validating SHA against
@@ -45,8 +44,8 @@ default = ["std"]
 std = [
     "dep:memmap2",
     "uor-addr/std",
-    "hologram-host/std",
-    "hologram-backend/std",
+    "hologram-types/std",
+    "hologram-compute/std",
 ]
 # Model-format addressing for hologram-ai: the gguf / onnx uor-addr
 # realizations (each pulls `uor-prism-tensor`).

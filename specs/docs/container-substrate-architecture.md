@@ -56,7 +56,7 @@ contract**:
 - **Reuse hologram's validated primitives — but only the RZ-clean ones.** The σ-axis
   (`hologram-host::HologramHasher` = `prism::crypto::Blake3Hasher`, no_std, pulls no hologram compute
   crate) and witnessed composition (`uor-addr`'s `compose_*_blake3` + TC-05) are reused directly.
-  **`hologram-archive` is NOT reused** — it depends on `hologram-backend` (the tensor kernel engine),
+  **`hologram-archive` is NOT reused** — it depends on `hologram-compute` (the tensor kernel engine),
   so importing it would drag the compute engine into the store/route path (G-E1, RZ violation). The
   thin κ-label format helpers (`address_bytes`/`derive_label`) are **byte-identical** reimplementations
   over the *same* `HologramHasher` — the same σ-axis the compute substrate proved against the BLAKE3
@@ -194,7 +194,7 @@ These are the spec §8 surfaces verbatim in intent; `hologram-substrate-core` is
 - `verify_kappa(bytes, kappa)` re-derives through the σ-axis and compares the digest, folding bytes
   through **`hologram_host::HologramHasher`** (= `prism::crypto::Blake3Hasher`, the path validated
   byte-for-byte against the BLAKE3 reference, root AS class) and formatting the 71-byte κ-label —
-  byte-identical to `hologram-archive::address_bytes`, but without the `hologram-backend` dep (G-E1).
+  byte-identical to `hologram-archive::address_bytes`, but without the `hologram-compute` dep (G-E1).
 - Composition (container IDs, error-log ordered product) uses **`uor-addr`'s `compose_*_blake3`** +
   TC-05 witnesses directly, and a `derive_label`-equivalent fold over operand labels via the same
   `HologramHasher`.
@@ -449,7 +449,7 @@ existing table form.
 
 | ID | Finding | Evidence | Status |
 |---|---|---|---|
-| G-E1 | Reusing `hologram-archive` (planned in §0.1/§3.1) would pull `hologram-backend` (the tensor kernel engine) into the store/route path — an RZ violation. Reuse is narrowed to `hologram-host` (σ-axis) + `uor-addr` (composition); `address_bytes`/`derive_label` are byte-identical reimpls over the same `HologramHasher`. | `crates/hologram-archive/Cargo.toml` deps `hologram-backend` | `[fixed]` §0.1/§3.1 |
+| G-E1 | Reusing `hologram-archive` (planned in §0.1/§3.1) would pull `hologram-compute` (the tensor kernel engine) into the store/route path — an RZ violation. Reuse is narrowed to `hologram-host` (σ-axis) + `uor-addr` (composition); `address_bytes`/`derive_label` are byte-identical reimpls over the same `HologramHasher`. | `crates/hologram-archive/Cargo.toml` deps `hologram-compute` | `[fixed]` §0.1/§3.1 |
 
 **D. Assumptions in this doc to validate, not trust**
 

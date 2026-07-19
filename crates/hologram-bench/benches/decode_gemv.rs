@@ -5,18 +5,18 @@
 //! Throughput is reported as **bytes of int8 weight streamed per second**
 //! (`Throughput::Bytes(k·n)`), so the ratio against calibrated stream
 //! bandwidth is directly visible. Numbers here (native, and the wasmtime lane
-//! via `hologram-backend/examples/wasm_matmul_timing.rs`) are iteration
+//! via `hologram-compute/examples/wasm_matmul_timing.rs`) are iteration
 //! signals only: acceptance for the browser kernel is witnessed downstream by
 //! hologram-ai's performance contract, which exercises the actual deployed
 //! wasm SIMD128 build. These benches exist to catch shape-level regressions
 //! before they reach it.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use hologram_backend::cpu::simd::{
+use hologram_compiler::{compile, BackendKind};
+use hologram_compute::cpu::simd::{
     matmul_i4_pc_omajor, matmul_i8_pc_omajor, matmul_i8_per_channel,
 };
-use hologram_backend::CpuBackend;
-use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::{
     constant::ConstantEntry,

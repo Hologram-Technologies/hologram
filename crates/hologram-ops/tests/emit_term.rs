@@ -2,8 +2,8 @@
 //! whose `Term::Application::operator` is restricted to the closed
 //! `PrimitiveOp` set (spec I-1).
 
-use hologram_host::HologramHostBoundsCpu;
 use hologram_ops::HoloArena;
+use hologram_types::HologramHostBoundsCpu;
 use hologram_types::{DTypeF32, Dim, Shape1, Shape2};
 use uor_foundation::enforcement::Term;
 use uor_foundation::pipeline::ConstrainedTypeShape;

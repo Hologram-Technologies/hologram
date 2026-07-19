@@ -6,39 +6,57 @@ set dotenv-load := true
 default:
     @just --list
 
-# Full CI: format check, clippy, tests
-ci: fmt-check clippy test
+# Full CI: format check, clippy, tests, supply-chain gate
+ci: fmt-check clippy test deny
+
+# Supply-chain gate (class GV): licenses stay in the permissive set (MIT/Apache + the
+# reviewed exceptions), no vulnerable/unsound/yanked crates, sources are crates.io. This
+# is the RUSTSEC advisory audit *and* the license/ban/source policy in one. See deny.toml.
+deny:
+    cargo deny check
 
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance parallel perf wasm embedded
+vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).
 conformance:
     cargo test -p hologram-archive --test conformance --test model_address --features model-formats
-    cargo test -p hologram-backend --test conformance --features cpu
+    cargo test -p hologram-compute --test conformance --features cpu
     cargo test -p hologram-exec --test conformance
+
+# BDD conformance suite (refactor classes LAW/SP/HF/NW/TL/MG/GV). Runs the cucumber
+# runner + the honesty meta-gate (catalog ↔ scenario bijection). See features/README.md.
+bdd:
+    cargo test -p hologram-conformance --test bdd
+    cargo test -p hologram-conformance --test meta_gate
+
+# Verify the BDD status column against actual scenario tags (static check). Fails on drift.
+conformance-report:
+    cargo test -p hologram-conformance --test meta_gate
 
 # Parallel-execution conformance (class PA): multi-core ≡ single-thread,
 # byte-identical + deterministic. Runs the kernel suites with the in-tree
 # worker pool active so the parallel lattice-recursion frontier is exercised.
 parallel:
-    cargo test -p hologram-backend --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+    cargo test -p hologram-compute --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
 
 # Performance V&V (class PV) — release-only budgets; no silent bottleneck.
 # `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
 # Also runs the deployment-substrate SP-class criterion floors (G1/G2 native store, mem zero-copy).
 perf:
-    cargo test --release -p hologram-backend --test performance --features cpu -- --nocapture
+    cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
     cargo test --release -p hologram-exec --test performance -- --nocapture
-    cargo bench -p hologram-store-native --bench sp_floors -- --quick
-    cargo bench -p hologram-store-mem --bench sp_floors -- --quick
+    cargo bench -p hologram-store --features native --bench sp_floors -- --quick
+    cargo bench -p hologram-tck --bench sp_floors -- --quick
 
-# Run all tests
+# Run all tests. nextest skips the cucumber `bdd` runner (harness=false — see
+# .config/nextest.toml), so run that suite explicitly with cargo test afterward.
 test:
-    cargo test --workspace
+    cargo nextest run --workspace
+    cargo test -p hologram-conformance --test bdd
 
 # Run criterion benchmarks
 bench:
@@ -58,58 +76,62 @@ clippy:
 
 # Build the no_std library stack for wasm32 (hologram-ai's deploy target).
 # `--no-default-features` deactivates every crate's `std` feature, so the
-# `#![no_std]` path is exercised; `hologram-backend` adds its CPU kernels.
+# `#![no_std]` path is exercised; `hologram-compute` adds its CPU kernels.
 wasm:
     cargo build --target wasm32-unknown-unknown --no-default-features \
-        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
+    # The space contract builds no_std for wasm32 — the wasm half of the SP-3 composition proof
+    # wasm32 — the wasm half of the composition proof (native half is the SP-3 BDD run).
+    cargo build --target wasm32-unknown-unknown --no-default-features \
+        -p hologram-space
     cargo build --target wasm32-unknown-unknown --no-default-features --features cpu \
-        -p hologram-backend
+        -p hologram-compute
     # SIMD tiers: baseline simd128 (the witnessed browser kernel) and the
     # relaxed-SIMD tier (i8 relaxed dot — same exact function, engine-fast
     # path). Building both keeps the cfg'd kernels from bit-rotting.
     RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu -p hologram-backend
+        --no-default-features --features cpu -p hologram-compute
     RUSTFLAGS="-Ctarget-feature=+simd128,+relaxed-simd" cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu -p hologram-backend
+        --no-default-features --features cpu -p hologram-compute
     # Embedder-worker pool (shared-memory build; imports the embedder futex).
     RUSTFLAGS="-Ctarget-feature=+simd128,+atomics,+bulk-memory,+mutable-globals" \
         cargo build --target wasm32-unknown-unknown \
-        --no-default-features --features cpu,wasm-threads -p hologram-backend
+        --no-default-features --features cpu,wasm-threads -p hologram-compute
     # Threaded lane (wasip1-threads carries atomics in its target spec); the
     # fork-join bit-identity test runs under `wasmtime -W threads=y -S threads`.
     RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --target wasm32-wasip1-threads \
-        --no-default-features --features cpu,std,wasm-threads -p hologram-backend
-    # Deployment substrate (TR class): the portable reference + runtime build no_std for the browser.
+        --no-default-features --features cpu,std,wasm-threads -p hologram-compute
+    # Deployment substrate (TR class): the consolidated space/tck/net/runtime crates build
+    # no_std for the browser, and the wasmi engine (browser/iOS interpreter) builds for wasm32.
     cargo build --target wasm32-unknown-unknown --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-        -p hologram-net-http -p hologram-runtime \
-        -p hologram-bare-hal -p hologram-net-bare -p hologram-runtime-bare
+        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime
+    cargo build --target wasm32-unknown-unknown --no-default-features --features engine-wasmi \
+        -p hologram-runtime
 
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-host -p hologram-types -p hologram-ops -p hologram-graph \
+        -p hologram-types -p hologram-ops -p hologram-graph \
         -p hologram-archive -p hologram-compiler -p hologram-exec
     cargo build --target thumbv7em-none-eabi --no-default-features --features cpu \
-        -p hologram-backend
+        -p hologram-compute
     # Deployment substrate (TR class): same source builds no_std for the bare-metal substrate.
     cargo build --target thumbv7em-none-eabi --no-default-features \
-        -p hologram-substrate-core -p hologram-realizations -p hologram-store-mem \
-        -p hologram-net-http -p hologram-runtime -p hologram-bare-hal -p hologram-store-bare \
-        -p hologram-net-bare
+        -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime
+    cargo build --target thumbv7em-none-eabi --no-default-features --features bare -p hologram-store
 
 # Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
 # + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
 # (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
-    cargo test -p hologram-substrate-core -p hologram-realizations -p hologram-substrate-tck \
-        -p hologram-store-mem -p hologram-store-native -p hologram-net-http -p hologram-net-tcp \
-        -p hologram-runtime -p hologram-substrate-cli -p hologram-runtime-wasmtime \
-        -p hologram-bare-hal -p hologram-store-bare -p hologram-runtime-bare -p hologram-net-bare
-    cargo test -p hologram-net-http --features live   # live HTTP-CAS transport
+    cargo test -p hologram-space -p hologram-tck \
+        -p hologram-net -p hologram-runtime
+    cargo test -p hologram-store --features bare,native   # the merged store's backend TCK tests
+    cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
+    cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
     @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
-    @for c in hologram-store-mem hologram-store-native hologram-store-bare hologram-net-http hologram-runtime hologram-runtime-wasmtime hologram-runtime-bare hologram-net-bare hologram-substrate-cli; do \
+    @for c in hologram-tck hologram-store hologram-net hologram-runtime; do \
         cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done

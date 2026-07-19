@@ -12,8 +12,8 @@
 //! so the same bench binary times both.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hologram_backend::cpu::dtype::DTYPE_F32;
-use hologram_backend::{
+use hologram_compute::cpu::dtype::DTYPE_F32;
+use hologram_compute::{
     Backend, BinaryCall, BufferRef, CpuBackend, KernelCall, NormCall, RoPECall, SoftmaxCall,
     UnaryCall,
 };

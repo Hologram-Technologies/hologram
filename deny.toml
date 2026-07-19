@@ -1,0 +1,56 @@
+# cargo-deny configuration — supply-chain gate for the Hologram workspace.
+# Run: `cargo deny check` (or `just deny`). See specs/refactor/07-governance-requirements.md.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# RUSTSEC advisories: fail the build on any known vulnerability or unmaintained
+# crate. Add IDs to `ignore` (with a justification comment) only when triaged.
+yanked = "deny"
+# The `unic-*` unmaintained advisories are gone — they entered via `rustpython-parser`, now
+# replaced by an in-tree parser (crates/hologram-compiler/src/source/frontends/pyparse/).
+# One unmaintained advisory remains, on `paste` (a proc-macro pulled by the `metal` GPU
+# backend); it has no upstream fix and only builds under `backend-metal`. Vulnerabilities,
+# unsound, and yanked stay hard failures.
+ignore = [
+    "RUSTSEC-2024-0436", # paste — unmaintained proc-macro, via metal (backend-metal only)
+]
+
+[licenses]
+version = 2
+# The workspace ships `MIT OR Apache-2.0`; transitive deps must land in this
+# permissive set. Additions require a deliberate review (they end up in what we
+# redistribute). Keep alphabetized.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+# Empty by design. The only copyleft (LGPL-3.0) crates were the `malachite*` bignum family,
+# pulled transitively by `rustpython-parser`; that dependency was removed in favour of an
+# in-tree restricted-Python parser, so the whole tree is permissive again — no exceptions.
+exceptions = []
+
+[bans]
+# Duplicate versions bloat the tree but aren't fatal during an active refactor;
+# surface them as warnings. Tighten to "deny" before the P3 release.
+multiple-versions = "warn"
+wildcards = "warn"
+allow = []
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

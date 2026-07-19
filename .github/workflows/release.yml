@@ -1,0 +1,557 @@
+name: Release CI
+
+# The heavy / release-tier suite: everything that must be green for a RELEASE but is too slow to run
+# on every PR push. Triggered ONLY by a version-tag cut (a release), the nightly schedule (artifact
+# pin-rot + drift), and manual dispatch — never by an ordinary PR/branch push, which runs the lean
+# `ci.yml` gate. Holds the QEMU/Playwright/JDK conformance jobs + the full SDK packaging matrix.
+run-name: "Release CI · ${{ github.ref_name }} · ${{ github.event.head_commit.message || github.sha }}"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  schedule:
+    # Nightly: re-run the heavy holospaces V&V (CC tier) + SDK matrix; catch artifact-pin / lock rot.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+# Release + nightly runs are never cancelled (tag refs are unique; the nightly is singular).
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Job 12: End-to-end bare-metal boot (BOOT class) — build hologram.efi and boot
+  # it in QEMU/OVMF with no OS underneath, asserting the engine's storage
+  # self-check prints PASS on the UEFI console. Mirrors the `uefi-boot` recipe.
+  substrate-uefi-boot:
+    name: Bare-metal UEFI boot (QEMU/OVMF)
+    # Release tier: heavy infra (QEMU boot). Runs on a release-tag cut, the nightly schedule, and
+    # manual dispatch — not on ordinary PR/branch pushes, which stay minimal (cargo gates only).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-uefi
+
+      - name: Install QEMU + OVMF firmware
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources || true
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: substrate-uefi
+          workspaces: crates/hologram-efi
+
+      - name: Boot hologram.efi and assert PASS
+        run: ./scripts/uefi-boot-test.sh
+
+  # Job 13: End-to-end browser OPFS store (OPFS class) — build the wasm32 store,
+  # generate JS glue, and exercise put/get round-trip + reload persistence +
+  # verify-on-receipt in real Chromium via Playwright. Mirrors the `opfs-test` recipe.
+  substrate-opfs:
+    name: Browser OPFS store (Chromium/Playwright)
+    # Release tier: heavy infra (real Chromium via Playwright). Release-tag / nightly / manual only.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: substrate-opfs
+
+      - name: Install wasm-bindgen-cli (pinned to the crate's wasm-bindgen)
+        run: cargo install wasm-bindgen-cli --version 0.2.122 --locked
+
+      - name: Install Playwright Chromium
+        run: |
+          cd crates/hologram-store/web
+          npm install
+          npx --yes playwright install --with-deps chromium
+
+      - name: Run OPFS test in Chromium
+        run: ./scripts/opfs-browser-test.sh
+
+  # Job 14: holospaces V&V — the full component-conformance (CC) tier (MG-7). Boots real
+  # OSes on the emulator under a QEMU differential (RISC-V / AArch64 / x86-64), assembles
+  # ext4/OCI rootfs (e2fsprogs), and drives the browser workbench via Playwright — all against
+  # the 170M vv/artifacts/ tree materialized on demand from the pinned holospaces revision
+  # (scripts/vv-fetch.sh). This is the gate that makes MG-7's ✅ mean "all 45 CC pass in CI".
+  #
+  # BLOCKING (in ci-success.needs, MG-7 Phase F): the CC V&V — all 45 cargo-witnessed CC + the
+  # QEMU boots + the browser workbench suites — must be green to merge. Validated locally green
+  # (holospaces at ../holospaces): every cargo CC witness + all QEMU Linux boots + the browser
+  # suites pass; three post-port browser-workbench suites (SCM/search/tasks) are quarantined
+  # non-gating in vv/run.sh (tracked). This branch (chore/refactor) does not trigger CI, so the
+  # first real CI validation happens at the PR to main; run it early via `workflow_dispatch`.
+  # holospaces is public, so the default token fetches the artifact source (override with the
+  # HOLOSPACES_ARTIFACTS_TOKEN secret if needed).
+  holospaces-vv-heavy:
+    name: holospaces V&V (CC — QEMU · e2fsprogs · Playwright)
+    # Release tier: the heaviest job (QEMU differential boots + Playwright + 170M artifacts, ≤90m).
+    # Gates a release cut, not every PR push. Also nightly (pin-rot) + manual dispatch.
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read + validate the V&V artifact pin
+        id: pin
+        run: |
+          sha="$(tr -d '[:space:]' < vv/ARTIFACTS_PIN)"
+          case "$sha" in
+            [0-9a-f]*) [ "${#sha}" -eq 40 ] || { echo "pin is not a 40-hex sha: $sha" >&2; exit 1; } ;;
+            *) echo "pin is not a lowercase hex sha: $sha" >&2; exit 1 ;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout holospaces (V&V artifact source, pinned + validated)
+        uses: actions/checkout@v6
+        with:
+          repository: Hologram-Technologies/holospaces
+          ref: ${{ steps.pin.outputs.sha }}
+          path: holospaces-src
+          token: ${{ secrets.HOLOSPACES_ARTIFACTS_TOKEN || github.token }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, thumbv7em-none-eabi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install QEMU (riscv64 · aarch64 · x86-64 · user) + e2fsprogs + OVMF
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources || true
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-misc qemu-system-arm qemu-system-x86 qemu-user \
+            e2fsprogs ovmf gcc-aarch64-linux-gnu
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: holospaces-vv-heavy
+
+      - name: Install wasm-pack + wasm-bindgen-cli (browser CC suites)
+        run: |
+          curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+          cargo install wasm-bindgen-cli --version 0.2.122 --locked
+
+      - name: Cache V&V artifacts (170M, keyed on the pin)
+        uses: actions/cache@v4
+        with:
+          path: vv/artifacts
+          key: vv-artifacts-${{ steps.pin.outputs.sha }}
+
+      - name: Materialize + verify V&V artifacts (from the pinned holospaces checkout)
+        env:
+          HOLOSPACES_DIR: ${{ github.workspace }}/holospaces-src
+        run: bash scripts/vv-fetch.sh
+
+      - name: Install Playwright Chromium
+        run: npx --yes playwright install --with-deps chromium
+
+      - name: Run the CC V&V (all 45 — fast · artifact · QEMU boots · browser)
+        env:
+          CC_ONLY: "1"
+          HOLOSPACES_SKIP_PERF: "1"
+        run: bash vv/run.sh
+
+      - name: Ledger heavy witnesses without a dedicated vv/ suite (CC-31, CC-51)
+        # These `#[ignore]`d witnesses have no vv/suites/ entry, so vv/run.sh doesn't reach them;
+        # run them explicitly so the CC-31/CC-51 ledger rows are CI-gated. (CC-45's dogfood needs
+        # ~24 GB + a real Dev Container build — vv/heavy/, not gated here; its row stays 🟡.)
+        run: |
+          cargo test -p holospaces --release --test cc31_resume_terminal -- --ignored \
+            --exact a_resumed_idle_devcontainer_is_live_and_its_scrollback_is_a_terminal_concern
+          cargo test -p holospaces --release --test cc51_nested_workspace -- --ignored \
+            --exact the_host_and_os_share_a_nested_workspace_tree_over_virtio_9p
+
+      - name: holospaces lib/unit tests (excluded from the generic matrix test)
+        run: cargo test -p holospaces --lib
+
+  # Job 15: CS docs conformance (MG-7 Phase G4 / MG-8). Validates the holospaces documentation
+  # (arc42 / C4 / OPM ISO 19450 / ISO 15288) against its external standards via validators V1–V8.
+  # Needs the docs toolchain — JDK 21, Ruby 3, Structurizr, cmark-gfm, pandoc — provisioned here.
+  # NOT yet in ci-success.needs: introduced non-blocking (the toolchain isn't locally verifiable),
+  # promoted to blocking + MG-8 flipped ✅ once observed green (run via workflow_dispatch / the PR).
+  docs-conformance:
+    name: CS docs conformance (arc42 · C4 · OPM · ISO 15288 — V1–V8)
+    # Release tier: the docs V&V toolchain (JDK 21 · Ruby 3 · Structurizr · pandoc · cmark) is heavy
+    # and the docs change rarely — run it on a release cut (+ nightly + manual), not on every PR push.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive   # fetch specs/holospaces/vendor/arc42-generator (pinned)
+
+      - name: Setup JDK 21 (Structurizr's Java exporter)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Ruby 3 (the V1/V5/V6/V7 validators + Bundler)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          working-directory: specs/holospaces
+          bundler-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install the docs toolchain (Structurizr · cmark-gfm · pandoc · playwright)
+        working-directory: specs/holospaces
+        run: bash scripts/install-tools.sh
+
+      - name: Run the docs V&V (V1–V8 — build.sh)
+        working-directory: specs/holospaces
+        run: bash scripts/build.sh
+
+  # Job 16: Deep coverage-guided fuzz of the network-facing parsers (spec refactor/03 §Parser
+  # hardening — "fuzz targets ... CI-permanent"). Nightly + manual only: the per-PR always-green gate
+  # is the deterministic in-tree mutation suites (crates/{hologram-space,hologram-archive}/tests/
+  # parser_hardening.rs, run by the `test` job). Here the libfuzzer targets run under ASan for a
+  # bounded time; a discovered crash fails the nightly run.
+  fuzz:
+    name: Fuzz (nightly, manifest parsers)
+    # Release tier: also run on a release-tag cut (in addition to the existing nightly + manual).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/hologram-space/fuzz -> target
+          key: fuzz
+
+      - name: Build + deep-fuzz the manifest decoder and registry dispatch
+        working-directory: crates/hologram-space
+        run: |
+          cargo fuzz build
+          cargo fuzz run manifest_decode -- -max_total_time=300
+          cargo fuzz run references_dispatch -- -max_total_time=300
+
+  # Drift gate: the SDK packages are workspace-EXCLUDED (wasm cdylib / N-API), so they cannot inherit
+  # `[workspace.package].version`. This fails the build if any SDK version has drifted from the
+  # workspace version — the drift that stale-locked the wasm driver a full version behind. Fix with
+  # `scripts/sync-sdk-versions.sh` (also run automatically by version-bump.yml).
+  sdk-version-consistency:
+    name: SDK version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check every SDK version matches the workspace
+        run: scripts/sync-sdk-versions.sh --check
+
+  python-wheel:
+    name: Python Wheel (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: sdk-python-${{ matrix.os }}-${{ matrix.python }}
+
+      - name: Build wheel
+        shell: bash
+        run: python -m pip wheel sdk/python --no-deps -w "$RUNNER_TEMP/wheelhouse"
+
+      - name: Smoke installed wheel
+        shell: bash
+        run: |
+          python -m pip install "$RUNNER_TEMP"/wheelhouse/*.whl
+          python sdk/python/scripts/smoke-installed.py
+
+  typescript-sdk:
+    name: TypeScript SDK Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install package dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Typecheck and pack
+        working-directory: sdk/typescript
+        run: |
+          npm run typecheck
+          npm run test:golden
+          npm run pack:check
+
+      - name: Smoke installed package
+        shell: bash
+        run: |
+          PKG=$(npm pack ./sdk/typescript --pack-destination "$RUNNER_TEMP" --silent)
+          mkdir -p "$RUNNER_TEMP/typescript-sdk-smoke"
+          cd "$RUNNER_TEMP/typescript-sdk-smoke"
+          npm init -y
+          npm install "$RUNNER_TEMP/$PKG"
+          node "$GITHUB_WORKSPACE/sdk/typescript/scripts/smoke-installed-sdk.mjs"
+
+  native-prebuild:
+    name: Native N-API Prebuild (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: sdk-native-${{ matrix.os }}
+
+      - name: Install SDK dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Install native package dependencies
+        working-directory: sdk/typescript/native
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: Build and smoke native addon
+        working-directory: sdk/typescript/native
+        run: npm run smoke:native
+
+      - name: Pack native artifacts
+        shell: bash
+        run: |
+          SDK_PKG=$(npm pack ./sdk/typescript --pack-destination "$RUNNER_TEMP" --silent)
+          NATIVE_PKG=$(npm pack ./sdk/typescript/native --pack-destination "$RUNNER_TEMP" --silent)
+          mkdir -p "$RUNNER_TEMP/native-smoke"
+          cd "$RUNNER_TEMP/native-smoke"
+          npm init -y
+          npm install "$RUNNER_TEMP/$SDK_PKG" "$RUNNER_TEMP/$NATIVE_PKG"
+          node "$GITHUB_WORKSPACE/sdk/typescript/native/test/smoke-installed.mjs"
+          mkdir -p "$GITHUB_WORKSPACE/sdk-prebuilds"
+          cp "$RUNNER_TEMP/$NATIVE_PKG" "$GITHUB_WORKSPACE/sdk-prebuilds/"
+
+      - name: Upload native prebuild
+        uses: actions/upload-artifact@v7
+        with:
+          name: hologram-native-${{ matrix.os }}
+          path: sdk-prebuilds/*.tgz
+          if-no-files-found: error
+
+  wasm-package:
+    name: WASM Driver Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: sdk-wasm
+
+      - name: Install SDK dependencies
+        working-directory: sdk/typescript
+        run: npm install
+
+      - name: Install WASM package dependencies
+        working-directory: sdk/typescript/wasm
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: Typecheck and check wasm driver
+        working-directory: sdk/typescript/wasm
+        run: |
+          npm run typecheck
+          npm run check:driver
+          npm run pack:check
+
+      - name: Smoke installed package
+        shell: bash
+        run: |
+          SDK_PKG=$(npm pack ./sdk/typescript --pack-destination "$RUNNER_TEMP" --silent)
+          WASM_PKG=$(npm pack ./sdk/typescript/wasm --pack-destination "$RUNNER_TEMP" --silent)
+          mkdir -p "$RUNNER_TEMP/wasm-smoke"
+          cd "$RUNNER_TEMP/wasm-smoke"
+          npm init -y
+          npm install "$RUNNER_TEMP/$SDK_PKG" "$RUNNER_TEMP/$WASM_PKG"
+          node "$GITHUB_WORKSPACE/sdk/typescript/wasm/test/smoke-installed.mjs"
+
+  # Release perf gate: benchmark THIS release tag against the PREVIOUS release tag and fail the
+  # release if any benchmark regresses past the threshold. This is the release-tier replacement for
+  # the old per-PR perf-gate — same interleaved best-of-N methodology (both trees benchmarked
+  # round-by-round on one runner so throughput drift hits both sides equally; `compare-benchmarks.py`
+  # exits 1 on a real, noise-adjusted regression). Runs ONLY on a tag cut (it needs a prior tag to
+  # diff against); on the first-ever release, or a nightly/dispatch run against a non-tag ref, the
+  # previous-tag resolver no-ops and every downstream step is skipped.
+  release-perf-gate:
+    name: Release perf gate (vs previous tag)
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    # Best-of-N over two trees + a compile of each; the single-run recorder budgets ~45m, so allow
+    # headroom for the repeats.
+    timeout-minutes: 120
+    env:
+      # Tunable gate (env so it can be adjusted without touching the scripts) — mirrors the retired
+      # per-PR gate: a 10% median slowdown, outside 2σ, noise-floored at 7% of baseline (shared-runner
+      # variance), best-of-N=3 (min across runs kills transient contention spikes).
+      REGRESSION_THRESHOLD: "0.10"
+      NOISE_SIGMAS: "2.0"
+      CV_FLOOR: "0.07"
+      BENCH_RUNS: "3"
+    steps:
+      - name: Checkout the release tag (full history + tags)
+        uses: actions/checkout@v6
+        with:
+          # Need the tag graph to resolve the previous release below.
+          fetch-depth: 0
+
+      - name: Resolve the previous release tag
+        id: prev
+        run: |
+          current="${GITHUB_REF_NAME}"
+          # Most recent release tag reachable from *before* this tag's commit — history-based, so it
+          # is robust to tags pushed out of version order. Matches vX.Y.Z and its pre-release forms.
+          prev="$(git describe --tags --abbrev=0 --match 'v*.*.*' "${current}^" 2>/dev/null || true)"
+          if [ -z "$prev" ]; then
+            echo "No previous release tag before ${current} (first release) — skipping the perf gate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Perf gate: ${current} vs previous ${prev}"
+            echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the previous release tag
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.prev.outputs.prev }}
+          path: baseline
+
+      - name: Install Rust toolchain
+        if: steps.prev.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Cache cargo
+        if: steps.prev.outputs.skip != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Share the dependency cache across both trees.
+          workspaces: |
+            .
+            baseline
+
+      - name: Benchmark release + previous (interleaved best-of-N)
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          # Interleave the two trees round-by-round on this one runner so runner throughput drift
+          # hits both sides equally (a two-phase comparison mistakes that drift for a regression).
+          scripts/interleave-bench-gate.sh \
+            "$GITHUB_WORKSPACE" baseline "$GITHUB_WORKSPACE/scripts" "$BENCH_RUNS" \
+            "$GITHUB_WORKSPACE/release-bench.json" "$GITHUB_WORKSPACE/prev-bench.json"
+
+      - name: Compare and gate (fail the release on regression)
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          # The previous release's manifest (if present) lets the lifecycle gate tell a proper
+          # deprecation from an undeclared benchmark removal.
+          BASE_MANIFEST_ARG=""
+          if [ -f baseline/benches/manifest.toml ]; then
+            BASE_MANIFEST_ARG="--baseline-manifest baseline/benches/manifest.toml"
+          fi
+          python3 scripts/compare-benchmarks.py \
+            prev-bench.json release-bench.json \
+            --threshold "${REGRESSION_THRESHOLD}" \
+            --noise-sigmas "${NOISE_SIGMAS}" \
+            --cv-floor "${CV_FLOOR}" \
+            --manifest benches/manifest.toml $BASE_MANIFEST_ARG \
+            --output "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark JSON
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-perf-results
+          path: |
+            prev-bench.json
+            release-bench.json
+          retention-days: 90
+          if-no-files-found: ignore

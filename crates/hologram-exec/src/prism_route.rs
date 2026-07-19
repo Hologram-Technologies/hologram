@@ -36,15 +36,15 @@ use prism::vocabulary::{CompileUnitBuilder, VerificationDomain, WittLevel};
 // `literal_u64` is a foundation-only helper (not curated through
 // `prism::operation`); reach it via `prism`'s façade re-export of
 // the substrate crate to keep the dep tree single-rooted.
-use hologram_host::HologramHasher;
 use hologram_ops::{HoloTerm, HOLOGRAM_INLINE_BYTES};
+use hologram_types::HologramHasher;
 use prism::uor_foundation::pipeline::literal_u64;
 
 /// Content-fingerprint width threaded through prism's pipeline. Single
 /// source of truth is the application's `HostBounds` selection
 /// (BLAKE3-canonical 32 bytes); every backend agrees on this width.
 const FP_MAX: usize =
-    <hologram_host::HologramHostBoundsCpu as uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES;
+    <hologram_types::HologramHostBoundsCpu as uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES;
 
 use crate::buffer::{InputBuffer, OutputBuffer};
 use crate::error::ExecError;

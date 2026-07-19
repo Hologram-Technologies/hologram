@@ -1,6 +1,8 @@
 //! Language-specific source frontends.
 
 mod hologram;
+#[cfg(feature = "frontend-python")]
+mod pyparse;
 mod python;
 mod rust;
 mod typescript;

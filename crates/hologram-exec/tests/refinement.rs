@@ -1,7 +1,7 @@
 //! Bounded refinement execution over compiled sessions.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{
     BufferArena, CompiledRefinement, ConvergenceKind, InferenceSession, InputBuffer,
     RefinementError, RefinementPlan, RefinementStateContract, RefinementStatus, RepairPolicy,

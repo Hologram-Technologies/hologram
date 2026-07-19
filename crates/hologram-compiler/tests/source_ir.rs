@@ -10,7 +10,7 @@ use hologram_compiler::source::{
 use hologram_compiler::{compile_from_source_language, BackendKind, Compiler};
 use hologram_graph::registry::ShapeDescriptor;
 use hologram_graph::{NodeId, OpKind, ReduceAttrs};
-use hologram_host::HologramHasher;
+use hologram_types::HologramHasher;
 use prism::vocabulary::Hasher;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -1118,7 +1118,7 @@ fn source_types_do_not_leak_into_runtime_crates() {
     let root = workspace_root();
     for runtime_crate in [
         "crates/hologram-exec/src",
-        "crates/hologram-backend/src",
+        "crates/hologram-compute/src",
         "crates/hologram-archive/src",
     ] {
         assert_no_source_type_refs(&root.join(runtime_crate));

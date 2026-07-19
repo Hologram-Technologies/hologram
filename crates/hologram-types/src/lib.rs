@@ -30,6 +30,13 @@ pub mod memory_tier;
 pub mod shape;
 pub use memory_tier::MemoryTier;
 
+/// σ-axis (substitution-axis) selections absorbed from the former `hologram-host`
+/// crate (D15): `HologramHasher`, `HologramHostTypes`, `ActiveCpuBounds`, the
+/// per-backend `HologramHostBounds*`, plus the `prism` / `sdk` re-exports. Flattened
+/// to the crate root so callers reach them as `hologram_types::*` (spec Part III).
+pub mod host;
+pub use host::*;
+
 pub use dtype::{
     DType, DTypeBf16, DTypeBool, DTypeF16, DTypeF32, DTypeF64, DTypeI32, DTypeI4, DTypeI64,
     DTypeI8, DTypeKind, DTypeU64, DTypeU8,

@@ -1,8 +1,8 @@
 //! Verify the executor consumes the per-level kernel-call schedule
 //! (spec VIII.2) — the runtime walks `ExecPlan` levels in order.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession, InputBuffer};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

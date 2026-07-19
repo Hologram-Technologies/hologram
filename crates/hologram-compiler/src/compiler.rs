@@ -17,10 +17,10 @@ use alloc::vec::Vec;
 use hologram_archive::certificate_codec::{self, CertificateRecord};
 use hologram_archive::constant_codec::ConstantEntry;
 use hologram_archive::{HoloWriter, PortDescriptor, WeightStore};
-use hologram_backend::{BufferRef, KernelCall, MAX_RANK};
+use hologram_compute::{BufferRef, KernelCall, MAX_RANK};
 use hologram_graph::{Graph, GraphOp};
-use hologram_host::HologramHasher;
 use hologram_ops::{HoloArena, HoloTerm};
+use hologram_types::HologramHasher;
 use prism::operation::Term;
 use prism::vocabulary::{Hasher, VerificationDomain, WittLevel};
 // `Binding` is foundation-only (not in prism::operation's curated
@@ -566,7 +566,7 @@ impl Compiler {
         // A matmul's B operand is its weight. When that weight is a *constant*
         // (known at compile time) consumed by this matmul alone, pre-pack it
         // into the panel layout the cache-oblivious leaf streams contiguously
-        // (`hologram_backend::layout`, the shared single source of truth for
+        // (`hologram_compute::layout`, the shared single source of truth for
         // the layout). The packing is a compile-time data-
         // representation transform baked into the archive — part of the single
         // monomorphism the ONNX model compiles to — so at runtime the kernel
@@ -577,7 +577,7 @@ impl Compiler {
             // matmul uniquely consumes (count == 1) packs unambiguously.
             let mut uses: hashbrown::HashMap<u32, u32> = hashbrown::HashMap::new();
             for call in kernel_calls.iter() {
-                for bref in hologram_backend::buffers(call) {
+                for bref in hologram_compute::buffers(call) {
                     if bref.slot != u32::MAX {
                         *uses.entry(bref.slot).or_insert(0) += 1;
                     }
@@ -606,7 +606,7 @@ impl Compiler {
                     }
                     // f32 weight (elem = 4); shared layout = single source of truth.
                     let pbytes =
-                        hologram_backend::layout::pack_b_panels_bytes(&entry.bytes, k, n, 4);
+                        hologram_compute::layout::pack_b_panels_bytes(&entry.bytes, k, n, 4);
                     mm.b.length = pbytes.len() as u64;
                     mm.b_packed = true;
                     packed_consts[cid] = Some(pbytes);
@@ -1001,7 +1001,7 @@ fn codebook_ref(graph: &Graph, node: &hologram_graph::Node) -> BufferRef {
                 length: len,
             }
         }
-        _ => hologram_backend::DequantizeCall::NO_CODEBOOK,
+        _ => hologram_compute::DequantizeCall::NO_CODEBOOK,
     }
 }
 
@@ -1496,7 +1496,7 @@ fn gather_plan(
 /// `hologram-exec`'s loader re-checks the same predicate and refuses rather than
 /// falling back — defence in depth for archives this compiler did not produce.
 fn validate_weight_layout_declarations(graph: &Graph) -> Result<(), CompileError> {
-    use hologram_backend::{mm_act_quant, quant_tier::quant_tier};
+    use hologram_compute::{mm_act_quant, quant_tier::quant_tier};
     use hologram_graph::{DTypeId, GraphOp, InputSource, NodeId, OpKind};
 
     for (idx, node) in graph.nodes().iter().enumerate() {
@@ -1638,14 +1638,14 @@ fn fuse_const_i8_decode(
     node_count: u32,
     packed_consts: &mut [Option<Vec<u8>>],
 ) -> (Vec<KernelCall>, Vec<Vec<u32>>) {
-    use hologram_backend::quant_tier::quant_tier;
-    use hologram_backend::{buffers, mm_act_quant, MatMulDequantCall};
+    use hologram_compute::quant_tier::quant_tier;
+    use hologram_compute::{buffers, mm_act_quant, MatMulDequantCall};
     use hologram_graph::{ConstantId, DTypeId, InputSource, NodeId};
     // The one dtype vocabulary — no locally re-declared tags.
     const DTYPE_F32: u8 = DTypeId::F32.raw();
     // The decode-shape bound lives with the kernels it gates
     // (`decode_gate::OMAJOR_W8A8_MAX_M`), not as a literal here.
-    use hologram_backend::kernel_call::decode_gate::OMAJOR_W8A8_MAX_M as M_GATE;
+    use hologram_compute::kernel_call::decode_gate::OMAJOR_W8A8_MAX_M as M_GATE;
 
     // Census: total references per slot, producer/reader counts, reader index.
     let n_calls = calls.len();

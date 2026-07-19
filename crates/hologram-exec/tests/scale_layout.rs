@@ -4,8 +4,8 @@
 //! sizes, not with `slot_count * max_size`. A regression here would
 //! make trillion-parameter / UHD-streaming workloads infeasible.
 
-use hologram_backend::CpuBackend;
 use hologram_compiler::{compile, BackendKind};
+use hologram_compute::CpuBackend;
 use hologram_exec::{BufferArena, InferenceSession};
 use hologram_graph::node::Node;
 use hologram_graph::registry::{DTypeId, ShapeDescriptor};

@@ -8,10 +8,10 @@ semantics. The provenance of an op in v0.5.0 is:
   set. Each canonical op is a marker type in `hologram-ops` plus a const-tagged IRI plus
   an `emit_term` function; the Term tree it emits is the formal specification, and
   per-op reference evaluators verify the backend kernels against it.
-- **`KernelCall`** (`crates/hologram-backend/src/kernel_call.rs`) — the lowered,
+- **`KernelCall`** (`crates/hologram-compute/src/kernel_call.rs`) — the lowered,
   pre-resolved dispatch enum. `hologram-compiler` lowers each `OpKind` graph node into
   one or more `KernelCall`s; the CPU backend dispatches them by an exhaustive match
-  (`crates/hologram-backend/src/cpu.rs`). `KernelCall` variants carry the shape
+  (`crates/hologram-compute/src/cpu.rs`). `KernelCall` variants carry the shape
   parameters needed for dispatch since the graph IR has no per-edge shape metadata.
 
 Execution runs through the content-addressed `InferenceSession`
@@ -203,8 +203,8 @@ All take 1 input (f32). Reduce along the last `size` elements of each row.
 ## KernelCall — Lowered dispatch kernels
 
 `hologram-compiler` lowers each graph `OpKind` node into one or more `KernelCall`
-variants at compile time (`crates/hologram-backend/src/kernel_call.rs`). The CPU backend
-matches on this enum exhaustively (`crates/hologram-backend/src/cpu.rs`) and calls the
+variants at compile time (`crates/hologram-compute/src/kernel_call.rs`). The CPU backend
+matches on this enum exhaustively (`crates/hologram-compute/src/cpu.rs`) and calls the
 appropriate kernel directly, eliminating vtable indirection and HashMap lookups.
 
 The variant names and groupings below describe the v0.5.0 lowering. (The historical
@@ -242,7 +242,7 @@ emits to elide intermediate buffers. These are content-addressed (κ-labelled) f
 `hologram-compiler` lowers the `OpKind` graph (after its fusion/elision passes) into a
 flat sequence of `KernelCall`s. At execution time the `InferenceSession` drives the
 backend's `dispatch(&KernelCall, &mut WS)`, which is a single closed match in
-`crates/hologram-backend/src/cpu.rs`:
+`crates/hologram-compute/src/cpu.rs`:
 
 1. Elementwise unary/binary ops dispatch to monomorphic kernels (with broadcast).
 2. Comparison/boolean ops dispatch to their comparison kernels.
