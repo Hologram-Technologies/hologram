@@ -771,10 +771,21 @@ latest commit — metadata-only change (version + SDK JSON/locks) touches no ben
   and `vv` runs `--test cc_gate --test meta_gate --test bdd` explicitly. This supersedes MG-7's "heavy
   CC blocks every PR" posture → **heavy CC now blocks the release cut** (`release.yml`), with the cheap
   in-tree conformance still per-PR. **perf**: the per-PR blocking `perf-gate.yml` was **deleted** (perf
-  off PRs per the directive); `benchmarks.yml` still records post-merge perf on `main`. A hard
-  release-time perf gate (tag-vs-previous-tag) is a tracked follow-up. Net PR footprint: docs/spec-only
-  push → `ci.yml` only; Rust push → `ci.yml` + path-gated `semver-gate` + `api-gate`. Workflow count
-  9 (was 10): consolidated `sdk-packages` + `perf-gate` away, added `release.yml`.
+  off PRs per the directive); `benchmarks.yml` still records post-merge perf on `main`. Net PR
+  footprint: docs/spec-only push → `ci.yml` only; Rust push → `ci.yml` + path-gated `semver-gate` +
+  `api-gate`. Workflow count 9 (was 10): consolidated `sdk-packages` + `perf-gate` away, added
+  `release.yml`.
+- [x] **Release-time perf gate (2026-07-19, follow-up done)**: `release.yml`'s `release-perf-gate` job
+  replaces the retired per-PR perf gate at the release tier. On a `v*` tag it resolves the **previous
+  release tag** (`git describe --tags --abbrev=0 --match 'v*.*.*' <tag>^` — history-based, robust to
+  out-of-order tags), checks out both trees, and runs the **same interleaved best-of-N** methodology
+  as the old gate (`scripts/interleave-bench-gate.sh` benchmarks both round-by-round on one runner so
+  throughput drift hits both sides equally), then `scripts/compare-benchmarks.py` **fails the release**
+  (exit 1) on a noise-adjusted regression (10% median · 2σ · 7% CV floor · best-of-3) or a
+  benchmark-lifecycle violation. First-ever release (no prior tag) no-ops; nightly/dispatch against a
+  non-tag ref is guarded off by `if: startsWith(github.ref,'refs/tags/v')`. Verified the resolver
+  against the live tag graph (14 tags; `v0.10.0^` → `v0.9.0`), so the next cut (v0.11.0) gates vs
+  v0.10.0. Results uploaded as the `release-perf-results` artifact (90-day retention).
 - [x] **Meaningful CI run titles (2026-07-19)**: `pull_request`-triggered runs defaulted to the (single,
   static) PR title, so every run in the Actions list read "Sprint 40: Ecosystem refactor…". Added a
   `run-name` to `ci` / `release` / `semver-gate` / `api-gate` / `benchmarks` — e.g.

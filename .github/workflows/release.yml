@@ -448,3 +448,110 @@ jobs:
           npm init -y
           npm install "$RUNNER_TEMP/$SDK_PKG" "$RUNNER_TEMP/$WASM_PKG"
           node "$GITHUB_WORKSPACE/sdk/typescript/wasm/test/smoke-installed.mjs"
+
+  # Release perf gate: benchmark THIS release tag against the PREVIOUS release tag and fail the
+  # release if any benchmark regresses past the threshold. This is the release-tier replacement for
+  # the old per-PR perf-gate — same interleaved best-of-N methodology (both trees benchmarked
+  # round-by-round on one runner so throughput drift hits both sides equally; `compare-benchmarks.py`
+  # exits 1 on a real, noise-adjusted regression). Runs ONLY on a tag cut (it needs a prior tag to
+  # diff against); on the first-ever release, or a nightly/dispatch run against a non-tag ref, the
+  # previous-tag resolver no-ops and every downstream step is skipped.
+  release-perf-gate:
+    name: Release perf gate (vs previous tag)
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    # Best-of-N over two trees + a compile of each; the single-run recorder budgets ~45m, so allow
+    # headroom for the repeats.
+    timeout-minutes: 120
+    env:
+      # Tunable gate (env so it can be adjusted without touching the scripts) — mirrors the retired
+      # per-PR gate: a 10% median slowdown, outside 2σ, noise-floored at 7% of baseline (shared-runner
+      # variance), best-of-N=3 (min across runs kills transient contention spikes).
+      REGRESSION_THRESHOLD: "0.10"
+      NOISE_SIGMAS: "2.0"
+      CV_FLOOR: "0.07"
+      BENCH_RUNS: "3"
+    steps:
+      - name: Checkout the release tag (full history + tags)
+        uses: actions/checkout@v6
+        with:
+          # Need the tag graph to resolve the previous release below.
+          fetch-depth: 0
+
+      - name: Resolve the previous release tag
+        id: prev
+        run: |
+          current="${GITHUB_REF_NAME}"
+          # Most recent release tag reachable from *before* this tag's commit — history-based, so it
+          # is robust to tags pushed out of version order. Matches vX.Y.Z and its pre-release forms.
+          prev="$(git describe --tags --abbrev=0 --match 'v*.*.*' "${current}^" 2>/dev/null || true)"
+          if [ -z "$prev" ]; then
+            echo "No previous release tag before ${current} (first release) — skipping the perf gate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Perf gate: ${current} vs previous ${prev}"
+            echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the previous release tag
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.prev.outputs.prev }}
+          path: baseline
+
+      - name: Install Rust toolchain
+        if: steps.prev.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        if: steps.prev.outputs.skip != 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Cache cargo
+        if: steps.prev.outputs.skip != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Share the dependency cache across both trees.
+          workspaces: |
+            .
+            baseline
+
+      - name: Benchmark release + previous (interleaved best-of-N)
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          # Interleave the two trees round-by-round on this one runner so runner throughput drift
+          # hits both sides equally (a two-phase comparison mistakes that drift for a regression).
+          scripts/interleave-bench-gate.sh \
+            "$GITHUB_WORKSPACE" baseline "$GITHUB_WORKSPACE/scripts" "$BENCH_RUNS" \
+            "$GITHUB_WORKSPACE/release-bench.json" "$GITHUB_WORKSPACE/prev-bench.json"
+
+      - name: Compare and gate (fail the release on regression)
+        if: steps.prev.outputs.skip != 'true'
+        run: |
+          # The previous release's manifest (if present) lets the lifecycle gate tell a proper
+          # deprecation from an undeclared benchmark removal.
+          BASE_MANIFEST_ARG=""
+          if [ -f baseline/benches/manifest.toml ]; then
+            BASE_MANIFEST_ARG="--baseline-manifest baseline/benches/manifest.toml"
+          fi
+          python3 scripts/compare-benchmarks.py \
+            prev-bench.json release-bench.json \
+            --threshold "${REGRESSION_THRESHOLD}" \
+            --noise-sigmas "${NOISE_SIGMAS}" \
+            --cv-floor "${CV_FLOOR}" \
+            --manifest benches/manifest.toml $BASE_MANIFEST_ARG \
+            --output "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark JSON
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-perf-results
+          path: |
+            prev-bench.json
+            release-bench.json
+          retention-days: 90
+          if-no-files-found: ignore
