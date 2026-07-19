@@ -705,8 +705,13 @@ CI status breakdown on PR #45:
   both use the same `hologram-ffi` path dep, so the wasm driver should also report 3; tracked as a
   follow-up). Fixed all three to accept the **range {2, 3}** (the archive reads both via
   MIN_READ_VERSION) — unblocks native/python/wasm, backward+forward compatible.
-- [ ] **wasm driver format lag (follow-up)**: `sdk/typescript/wasm/driver` reports archive format 2
-  while native reports 3 despite the same path dep — investigate the stale wasm build and align to 3.
+- [x] **wasm driver format lag (DONE 2026-07-18)**: root cause = both SDK driver `Cargo.lock`s were
+  stale at `0.6.0` and still referenced `hologram-backend` (renamed to hologram-compute). A stale lock
+  referencing a removed crate kept a stale build alive; since Swatinem/rust-cache hashes `Cargo.lock`
+  into its key, CI's `sdk-wasm` cache never invalidated → the wasm driver kept a FORMAT_VERSION=2
+  artifact (native's cache happened to rebuild to 3). Regenerated both locks to the 0.10.0 graph →
+  correct resolution + cache invalidation → both report 3. SDK guards keep the tolerant {2,3} range
+  (archive reads v2 via MIN_READ_VERSION); a maintainer can tighten to exact 3 once CI confirms.
 - [x] **Archive parser hardening (DONE 2026-07-18)**: capped the untrusted-u32 `with_capacity` in
   `hologram-archive`'s `decoder`/`certificate_codec`/`constant_codec`/`schedule_codec` to
   `count.min(bytes.len())` (same class as `extract_refs`) + a hostile-count regression test
