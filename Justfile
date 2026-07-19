@@ -203,11 +203,11 @@ opfs-test:
 # Run the real-world container examples (CAS cache, event bus, least-privilege, Wasm inference,
 # live migration) — each a runnable narrative of a substrate capability.
 examples:
-    cargo run -q -p hologram-runtime-wasmtime --example cas_artifact_cache
-    cargo run -q -p hologram-runtime-wasmtime --example event_bus
-    cargo run -q -p hologram-runtime-wasmtime --example least_privilege
-    cargo run -q -p hologram-runtime-wasmtime --example wasm_inference_container
-    cargo run -q -p hologram-runtime-wasmtime --example live_migration
+    cargo run -q -p hologram-runtime --features engine-wasmtime --example cas_artifact_cache
+    cargo run -q -p hologram-runtime --features engine-wasmtime --example event_bus
+    cargo run -q -p hologram-runtime --features engine-wasmtime --example least_privilege
+    cargo run -q -p hologram-runtime --features engine-wasmtime --example wasm_inference_container
+    cargo run -q -p hologram-runtime --features engine-wasmtime --example live_migration
 
 # ── Release ──────────────────────────────────────────────────────────────────
 # Cutting a release IS the `version-bump` GitHub workflow: it bumps every crate + SDK to the new
