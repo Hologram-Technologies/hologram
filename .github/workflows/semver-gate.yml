@@ -56,11 +56,16 @@ jobs:
           # build on the Linux runner. The default std+cpu API is the contract
           # every consumer sees.
           feature-group: default-features
-          # Adding the root facade turns the workspace root into package
-          # `hologram`; without an explicit package set, cargo-semver-checks
-          # selects only that root package. The target-branch baseline for this
-          # PR still has a virtual workspace root, so `hologram` cannot be
-          # compared until it exists on both sides. Check the established
-          # library crates here and add the facade itself in a follow-up once it
-          # ships on the baseline branch.
-          package: "hologram-host,hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-compute,hologram-archive,hologram-ffi,hologram-bench"
+          # cargo-semver-checks can only compare a crate that exists on BOTH sides.
+          # This refactor renames/removes some, so they cannot be diffed against the
+          # pre-refactor baseline (they simply do not exist there) — check the
+          # established library crates that persist across both, and re-add the rest
+          # once they ship on the baseline branch (post-merge):
+          #   - `hologram` (root facade): the baseline is still a virtual workspace
+          #     root, so `hologram` cannot be compared until it exists on both sides.
+          #   - `hologram-host`: consolidated into `hologram-types` (D15) — gone here.
+          #   - `hologram-compute`: renamed from `hologram-backend`; the baseline
+          #     still has `hologram-backend`, so `hologram-compute` has no counterpart.
+          # The crates below all report "no semver update required" — the refactor's
+          # breaking changes are structural (renames/removals), documented in the PR.
+          package: "hologram-types,hologram-ops,hologram-graph,hologram-compiler,hologram-exec,hologram-archive,hologram-ffi,hologram-bench"
