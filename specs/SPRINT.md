@@ -301,13 +301,16 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       boot) — they have no vv/ suite, so an explicit step was added to `holospaces-vv-heavy` to gate
       them. **CC-45 stays 🟡** — its dogfood witness needs ~24 GB + a real Dev Container build
       (`vv/heavy/`, manual), not automatically gatable.
-    - [ ] **F-followup (tracked): browser workbench V&V gaps** — three browser-only suites
-      (`cc51-scm-git`, `cc52-search`, `cc53-tasks`; VS Code workbench SCM/search/tasks) fail
-      consistently on vscode-cdn / welcome-media asset loads + command-palette timing (post-port
-      workbench regressions; **not** in the 45-row cargo ledger — CC-52/53 have no `cc*.rs`).
-      **Quarantined non-gating** in `vv/run.sh` (`VV_QUARANTINE`, clearly logged); fix + un-quarantine.
-      **Gate (2026-07-19):** validating a fix needs the heavy browser V&V env (Playwright +
-      vscode-web assets) — not locally reproducible; stays a tracked follow-on.
+    - [ ] **F-followup (tracked): browser workbench V&V — confirm on networked CI** — three
+      browser-only suites (`cc51-scm-git`, `cc52-search`, `cc53-tasks`; VS Code web-workbench
+      SCM/search/tasks; cc52/53 have no `cc*.rs`, so outside the 45-row cargo ledger). They failed
+      **only locally** on vscode-cdn / welcome-media asset loads (no CDN network) + command-palette
+      timing under concurrent load — assessed as **local-run artifacts, not real regressions**
+      (`vv/run.sh` §49–54). The "fix + un-quarantine" step is **done**: they are **already
+      un-quarantined** (`VV_QUARANTINE` default empty) so the **networked CI runner gates them**.
+      **Remaining (not local code work):** confirm green on the next networked V&V CI run;
+      re-quarantine a specific suite (`VV_QUARANTINE="ccNN-…"`) only if a genuine, non-environmental
+      failure surfaces.
   - [x] **Phase G — CS-\* docs conformance (in progress, started 2026-07-16)**. Absorb holospaces'
     *specification* conformance (the docs V&V) alongside the CC work. Scope from investigation:
     holospaces `docs/` is 1.7G but only ~1–2MB is source — **105 git-tracked source files** (arc42
