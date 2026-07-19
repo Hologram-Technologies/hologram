@@ -1,5 +1,8 @@
 name: SDK Packages
 
+# Meaningful per-run title (else PR runs inherit the identical PR title). Branch/tag + event.
+run-name: "SDK Packages · ${{ github.head_ref || github.ref_name }} · ${{ github.event_name }}"
+
 on:
   push:
     branches: [main]

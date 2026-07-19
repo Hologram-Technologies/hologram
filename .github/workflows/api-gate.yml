@@ -1,5 +1,8 @@
 name: API Snapshot Gate
 
+# Meaningful per-run title (else PR runs inherit the identical PR title).
+run-name: "API Snapshot Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event_name }}"
+
 # The public API of every library crate is snapshotted to committed files under
 # `api/<crate>.txt`. This gate regenerates them and fails if any differs from
 # what's committed — so every public-API change (add / update / deprecate /

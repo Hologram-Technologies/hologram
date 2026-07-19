@@ -1,5 +1,8 @@
 name: Performance Gate
 
+# Meaningful per-run title (else PR runs inherit the identical PR title).
+run-name: "Performance Gate · ${{ github.head_ref || github.ref_name }} · ${{ github.event_name }}"
+
 # Blocks a PR from merging if it regresses benchmarked performance relative to
 # the target branch. Both sides are benchmarked back-to-back on the *same*
 # runner so machine variance is controlled; `scripts/compare-benchmarks.py`
