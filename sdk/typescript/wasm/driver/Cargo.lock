@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-archive"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hashbrown",
  "hologram-compute",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compiler"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hashbrown",
  "hologram-archive",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compute"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "hologram-ops",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-exec"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hashbrown",
  "hologram-archive",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hologram-archive",
  "hologram-compiler",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -273,7 +273,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ops"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hologram-types",
  "libm",
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-types"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-wasm-driver"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "hologram-ffi",
  "js-sys",

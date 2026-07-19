@@ -695,17 +695,27 @@ CI status breakdown on PR #45:
   pre-existing tooling-debts (`hologram`→`uor-hologram` package rename; dropped consolidated
   `hologram-host`) + deleted the stray empty `crates/hologram-host/` dir and orphan
   `api/hologram-{host,backend}.txt`. `--check` passes.
-- **Semver compliance (FIXED — not a version bump)**: the gate failed with "package hologram-compute
-  not found in baseline" — a tooling mismatch, not a breaking-change violation (every comparable crate
-  reports "no semver update required"). `hologram-compute` (renamed from hologram-backend) +
-  `hologram-host` (consolidated) have no counterpart on the pre-refactor baseline, so cargo-semver-
-  checks can't diff them. Removed both from the checked package set (like the `hologram` facade
-  already is); the 8 stable library crates pass. No in-crate API broke → no version bump needed.
-- **CS docs conformance (G1/G2 — nearly done, submodule added)**: the docs (arc42/C4/OPM/ISO) +
-  V1–V8 validators + CI job were already imported to `specs/holospaces/`; the job failed only because
-  the `arc42-generator` submodule was declared in `.gitmodules` but its gitlink was never committed.
-  Added the submodule (pinned) → the V1–V8 toolchain can initialize. The validators run in CI (heavy:
-  JDK 21 · Ruby 3 · Structurizr · pandoc · cmark) — monitoring whether they pass on the imported docs.
+- **Semver compliance (FIXED — bumped 0.11.0)**: two-part. (a) A tooling mismatch — `hologram-compute`
+  (renamed from hologram-backend) + `hologram-host` (consolidated) have no counterpart on the
+  pre-refactor baseline, so cargo-semver-checks can't diff them; removed both from the checked package
+  set (like the `hologram` facade already is). (b) With the tooling error cleared, the gate surfaced a
+  **real, previously-masked breaking change**: P4's `.holo` v3 work added `SectionKind::AppManifest` +
+  `::ContentBlob` to a `pub enum` that is deliberately **closed** (its escape hatch is `Extension = 14`,
+  so `#[non_exhaustive]` would contradict the design) — an exhaustive-enum variant addition, breaking
+  under semver. The honest fix is a version bump: **workspace 0.10.0 → 0.11.0** (a minor bump covers
+  breaking changes under 0.x). Re-synced all SDKs to 0.11.0 + regenerated the main + both driver locks.
+  The gate stays strong (archive is still checked) and the version now tells the truth.
+- **CS docs conformance (G1/G2 — DONE ✅)**: the docs (arc42/C4/OPM/ISO) + V1–V8 validators + CI job
+  were already imported to `specs/holospaces/`; the job failed only because the `arc42-generator`
+  submodule was declared in `.gitmodules` but its gitlink was never committed. Added the submodule
+  (pinned) → the V1–V8 toolchain initializes and **the validators pass in CI** (heavy: JDK 21 · Ruby 3
+  · Structurizr · pandoc · cmark). Phase G1/G2 of the MG-7 plan is complete and green.
+- **SDK peer-dep ERESOLVE (version-bump-caused, FIXED)**: the `sync-sdk-versions.sh` bump moved the SDK
+  `version` fields but not the `peerDependencies` pin — `@hologram/native`/`@hologram/wasm` still
+  required `@hologram/sdk@0.7.0` (an exact pin) while the SDK moved to 0.11.0, so the "Pack native
+  artifacts" / wasm smoke jobs (which install packed tarballs **without** `--legacy-peer-deps`) tripped
+  npm's peer-dep resolver → ERESOLVE. Extended the sync script to also sync **and `--check`-gate** the
+  `@hologram/sdk` peer pin, so this class of drift can't recur; re-ran it → both pins now track 0.11.0.
 - **SDK format guards (refactor-caused, FIXED)**: the TS (`native`/`wasm` `index.ts`) + Python
   (`_hologram.py`) SDKs hardcoded `archiveFormatVersion == 2`; P4 bumped `.holo` to v3. The **native**
   addon + **Python** FFI report 3, but the **wasm** driver still reports 2 (a stale-build anomaly —
