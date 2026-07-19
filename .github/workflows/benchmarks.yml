@@ -1,13 +1,15 @@
 name: Benchmarks
 
+run-name: "Benchmarks · ${{ github.ref_name }} · ${{ github.event_name }}"
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
-  # PRs are handled by `perf-gate.yml`, which benchmarks the PR against the
-  # target branch and blocks merges on regression. This workflow records the
-  # post-merge results for `main` (and publishes them to the website), so it
-  # only runs on push to `main` — avoiding a redundant PR benchmark run.
+  # Perf is a release-tier concern (per the two-tier CI split): this records the post-merge
+  # benchmark results for `main` (and publishes them to the website), so a regression surfaces
+  # off the PR path. It runs only on push to `main` — never on a PR. (The old per-PR blocking
+  # perf-gate was removed; a hard release-time perf gate, tag-vs-previous-tag, is a follow-up.)
 
 env:
   CARGO_TERM_COLOR: always

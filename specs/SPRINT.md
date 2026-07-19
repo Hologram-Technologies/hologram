@@ -756,24 +756,29 @@ latest commit — metadata-only change (version + SDK JSON/locks) touches no ben
   **docs/spec/site-only pushes skip them entirely**: `sdk-packages` (12 jobs), `semver-gate`, and
   `api-gate` now trigger only on `crates/**` / `Cargo.*` / `sdk/**` (as applicable). Dropped the
   non-existent `develop` branch from all triggers. No required checks exist so no merge-blocking footgun.
-- [x] **Two-tier CI — release-gated heavy jobs (2026-07-19, user directive)**: `ci.yml` is now split so a
-  **release cut (a `v*.*.*` tag) runs EVERYTHING, and ordinary PR/branch pushes run only the minimal
-  cargo gates**. The five heavy infra jobs — `holospaces-vv-heavy` (QEMU · e2fsprogs · Playwright),
-  `docs-conformance` (JDK 21 · Ruby 3 · Structurizr), `substrate-uefi-boot` (QEMU/OVMF),
-  `substrate-opfs` (Chromium/Playwright), and `fuzz` (ASan) — are gated
-  `if: startsWith(github.ref,'refs/tags/v') || schedule || workflow_dispatch`. They still gate a
-  **release** and run **nightly** (pin-rot) + on manual dispatch, but not on every PR push. This
-  supersedes MG-7's "heavy CC blocks every PR" posture → **heavy CC now blocks the release cut**; the
-  cheap in-tree conformance (`cargo test --workspace`: meta_gate + cc_gate + bdd + parser_hardening)
-  still runs per-PR. Added `push.tags: [v*]` so a tag triggers the full suite. Per-PR now runs 10 cargo
-  jobs (format · clippy · test · docs · security · cross-targets · vv · tooling-tests · substrate ·
-  exit-criteria-demos); a release runs all 15. `ci-success` passes on PRs because skipped heavy jobs
-  report `skipped` (≠ failure). **Note:** "docs" here = the heavy arc42/OPM `docs-conformance` job; the
-  cheap `cargo doc` gate stays per-PR.
+- [x] **Two-tier CI consolidation — `ci.yml` (lean) + `release.yml` (heavy) (2026-07-19, user directive)**:
+  restructured so **a release cut (a `v*.*.*` tag) runs EVERYTHING and an ordinary PR/branch push runs
+  only the lean cargo gates**. Rather than `if:`-skipping the heavy jobs inside `ci.yml` (which left 5
+  *skipped* entries cluttering every PR's checks), the heavy tier moved to a **new `release.yml`** that
+  simply doesn't trigger on PRs — so they vanish from the PR view entirely. `release.yml` (triggers:
+  `push.tags:[v*]` + nightly `schedule` + `workflow_dispatch`) holds the 5 heavy infra jobs
+  (`holospaces-vv-heavy` QEMU·e2fsprogs·Playwright, `docs-conformance` JDK·Ruby·Structurizr,
+  `substrate-uefi-boot` QEMU/OVMF, `substrate-opfs` Chromium/Playwright, `fuzz` ASan) **plus the folded
+  SDK packaging matrix** (from the now-deleted `sdk-packages.yml` — SDK build/smoke is release-only per
+  the directive). `ci.yml` keeps the 10 lean jobs + `ci-success` and still triggers on `push.tags` so a
+  release also runs the lean gate → the two workflows together are the full suite. **Tests + BDD run
+  per-PR**: the `test` job (`cargo test --workspace --exclude holospaces`, 3-OS) runs the BDD target,
+  and `vv` runs `--test cc_gate --test meta_gate --test bdd` explicitly. This supersedes MG-7's "heavy
+  CC blocks every PR" posture → **heavy CC now blocks the release cut** (`release.yml`), with the cheap
+  in-tree conformance still per-PR. **perf**: the per-PR blocking `perf-gate.yml` was **deleted** (perf
+  off PRs per the directive); `benchmarks.yml` still records post-merge perf on `main`. A hard
+  release-time perf gate (tag-vs-previous-tag) is a tracked follow-up. Net PR footprint: docs/spec-only
+  push → `ci.yml` only; Rust push → `ci.yml` + path-gated `semver-gate` + `api-gate`. Workflow count
+  9 (was 10): consolidated `sdk-packages` + `perf-gate` away, added `release.yml`.
 - [x] **Meaningful CI run titles (2026-07-19)**: `pull_request`-triggered runs defaulted to the (single,
   static) PR title, so every run in the Actions list read "Sprint 40: Ecosystem refactor…". Added a
-  `run-name` to `ci` / `sdk-packages` / `semver-gate` / `api-gate` / `perf-gate` — e.g.
-  `CI · chore/refactor · pull_request` / `CI · v0.11.0 · push` — so runs are distinguishable by
+  `run-name` to `ci` / `release` / `semver-gate` / `api-gate` / `benchmarks` — e.g.
+  `CI · chore/refactor · pull_request` / `Release CI · v0.11.0 · push` — so runs are distinguishable by
   branch-or-tag + event (display-only context; no shell, no injection surface).
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
