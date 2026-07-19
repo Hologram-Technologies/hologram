@@ -3,9 +3,15 @@ name: Version Bump
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Explicit version, e.g. 0.12.0 (overrides version_type when set)'
+        required: false
+        type: string
+        default: ''
       version_type:
-        description: 'Version bump type'
-        required: true
+        description: 'Bump type (used only when `version` is empty)'
+        required: false
+        default: patch
         type: choice
         options:
           - patch
@@ -55,9 +61,18 @@ jobs:
 
       - name: Bump version
         id: bump
+        env:
+          EXPLICIT_VERSION: ${{ inputs.version }}
+          VERSION_TYPE: ${{ inputs.version_type }}
         run: |
-          # Bump the version
-          cargo set-version --workspace --bump ${{ inputs.version_type }}
+          # Set an explicit version if provided (`just release 0.12.0`); otherwise bump by type
+          # (`just release-auto minor`). Env-indirected so the untrusted input never lands in the
+          # shell verbatim.
+          if [ -n "$EXPLICIT_VERSION" ]; then
+            cargo set-version --workspace "$EXPLICIT_VERSION"
+          else
+            cargo set-version --workspace --bump "$VERSION_TYPE"
+          fi
 
           # Get the new version
           NEW_VERSION=$(scripts/workspace-version.sh)
