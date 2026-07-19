@@ -11,11 +11,14 @@ holospaces becomes the space contract's implementations, `.holo` becomes the app
 container, one `hologram` facade + `Client` under everything. Phased always-green
 (P0.5 spike → P0 → P1 → P2 → P3 hard stop → P4–P6 follow-on). Decisions D1–D29.
 
-### STATUS (2026-07-17) — the refactor's IMPLEMENTABLE SCOPE IS COMPLETE on `chore/refactor`
+### STATUS (2026-07-19) — the refactor's IMPLEMENTABLE SCOPE IS COMPLETE on `chore/refactor`; PR #45 green
 
-`chore/refactor` is **151 commits ahead of `main`, 0 behind**. Every gate green at every commit
-(`cargo check --workspace`, CI clippy `-D warnings`, conformance meta-gate + cc_gate + bdd,
-tri-target native/wasm32/thumbv7em). End state:
+`chore/refactor` is **170 commits ahead of `main`, 0 behind**, at workspace version **0.11.0** (bumped
+from 0.10.0 — the honest semver for P4's breaking `.holo` v3 `SectionKind` growth; see CI breakdown).
+Every gate green at every commit (`cargo check --workspace`, CI clippy `-D warnings`, conformance
+meta-gate + cc_gate + bdd, tri-target native/wasm32/thumbv7em). **PR #45 CI: 31/34 SUCCESS, 1 skipped,
+0 failures** — the only non-green are the two heaviest jobs (Benchmark regression gate + holospaces V&V
+CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End state:
 
 - **`crates/` (20 workspace members, down from 24 after consolidation)** — the compute stack +
   `hologram-space` (the contract + σ-axis core), `hologram-net` (5 transports), `hologram-runtime`
@@ -43,7 +46,10 @@ tri-target native/wasm32/thumbv7em). End state:
 2. **Live-I/O demo variants** (the in-process versions ship + are CI-gated): browser-peer ↔
    native-peer over a real transport; multi-space boot over live nodes; the live multi-node TCK
    battery (heavy runner). **iroh** stays blocked until `uor-prism-crypto` bumps its `blake3` pin.
-3. **G1/G2 docs-conformance import** (arc42 docs + V1–V8 validators; needs JDK/Ruby/Structurizr).
+3. ~~**G1/G2 docs-conformance import** (arc42 docs + V1–V8 validators)~~ — **DONE ✅** (2026-07-19):
+   docs + V1–V8 validators + CI job imported; the `CS docs conformance` job **passes in CI** (JDK 21 ·
+   Ruby 3 · Structurizr · pandoc · cmark). (G3–G5 — a CS-\* ledger class + BDD gate — remain a tracked
+   follow-on, but the docs-conformance toolchain itself is now green.)
 4. Client **naming-review gate** (D29 — human review). (The two "V&V env issues" were *local-only*
    false-negatives — CI already pins JDK 21 and uses rustup for cross-targets; no CI fix needed.)
 
@@ -687,10 +693,15 @@ found and fixed three real issues (all committed):
   to `n.min(bytes.len()/KAPPA71+1)`. This was the root cause of BOTH the `Test (ubuntu)` and
   `Substrate V&V` failures (both run hologram-space's `parser_hardening`).
 
-CI status breakdown on PR #45:
-- **Core Rust gates green**: Clippy, Format, Docs, Cross wasm32/aarch64, Test (macOS), V&V
-  (perf/parallel/model-formats), Security, **Exit-criteria demos**, Browser OPFS (Chromium), UEFI
-  boot (QEMU), tooling tests. `Test (ubuntu)` + `Substrate V&V` re-running after the extract_refs fix.
+CI status breakdown on PR #45 — **31/34 SUCCESS, 1 skipped, 0 failures** (as of 2026-07-19, head
+`2b9a60d`, v0.11.0). All six formerly-red checks are now green (Semver · SDK version consistency ·
+Native N-API ×4 · WASM Driver · CS docs conformance). The only non-green are the two heaviest jobs
+(Benchmark regression gate + holospaces V&V CC — QEMU · e2fsprogs · Playwright) *re-running* on the
+latest commit — metadata-only change (version + SDK JSON/locks) touches no bench or boot code:
+- **Core Rust gates green**: Clippy, Format, Docs, Cross wasm32/aarch64, Test (ubuntu + macOS), V&V
+  (perf/parallel/model-formats), Security Audit, **Exit-criteria demos**, Browser OPFS (Chromium), UEFI
+  boot (QEMU), Public-API snapshot, tooling tests. (The extract_refs DoS fix cleared the earlier
+  `Test (ubuntu)` + `Substrate V&V` reds.)
 - **Public-API snapshot (FIXED)**: regenerated all 9 snapshots for the refactored surface + fixed two
   pre-existing tooling-debts (`hologram`→`uor-hologram` package rename; dropped consolidated
   `hologram-host`) + deleted the stray empty `crates/hologram-host/` dir and orphan
