@@ -1,5 +1,18 @@
 # Sprint Tracking
 
+> **Ledger markers:** `[x]` done · `[~]` partial/in-progress · `[-]` **deferred** (tracked
+> future work, not active) · `[ ]` pending action (see the item's tag for the gate).
+>
+> **Legacy-backlog triage (2026-07-19).** After the Sprint 40 refactor landed, every older-sprint
+> unchecked item was audited against the current tree. Outcomes: **done/superseded** items ticked
+> `[x]` (verified in-tree — e.g. Sprint 34's uor-foundation upgrade is moot: the tree is at 0.5.2,
+> zero `QuantumLevel`; the Plan-067 stub is Sprint 32; Sprint 26 branches are merged); the
+> **AI/tensor perf backlog** (Sprint 28/29, WebGPU shaders, per-op LUT generators) marked `[-]`
+> **deferred** — a separate workstream, not the refactor (per the Sprint 39 note in Sprint 40's STATUS);
+> **TinyLlama E2E** items relocated to hologram-ai (it owns the model fixtures now that it's an
+> external consumer). The only `[ ]` that remain are the refactor's own exit tail — all human/ops-
+> or live-I/O-gated, tagged inline.
+
 ## Sprint 40: Ecosystem Refactor — Consolidation (✅ MERGED to `main` 2026-07-19, PR #45)
 
 > **Landed.** PR #45 merged to `main` (merge commit `16d77c3`) after the lean CI went 16/16 green.
@@ -88,9 +101,9 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
   reported FAILED only on two **environment** false-negatives, both independent of the
   sync: CS docs validators (Java 24 vs pinned 21) and portability (homebrew `cargo` lacks
   wasm32/thumbv7em sysroots — proven green by rebuilding with the rustup toolchain).
-- [ ] **P0 exit remainder** (non-blocking for P1): bridge tag cut; hologram-ai migrated
-  (at P3); crates.io tokens/ownership (P3); fix the two V&V env issues in CI (Java 21 pin,
-  rustup toolchain for cross-builds).
+- [ ] **P0 exit remainder** — **release/human-gated** (bridge tag cut; hologram-ai migrated
+  at P3; crates.io tokens/ownership at P3). The two V&V "env issues" were resolved as CI-side
+  false-negatives (CI already pins JDK 21 + uses rustup for cross-targets — no fix needed).
 - [x] **P1 — substrate dissolution COMPLETE** (2026-07-17: `substrate/` is gone — verified absent;
   every sub-crate absorbed into the core crates below):
   - [x] **1: bare-hal → hologram-space** — HAL (`BlockDevice`/`NetworkInterface` + fixture)
@@ -161,7 +174,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     (crate name in Cargo.toml/CI/Justfile/deny; `hologram_backend`→`hologram_compute` imports;
     KC witness paths + specs). Green: workspace build + test, conformance gates, clippy -D, fmt.
     **P1 in-repo restructure now fully complete.**
-- [~] **P2 core DONE** (2026-07-15, commit `094af14`) — holospaces imported into `spaces/`
+- [x] **P2 core DONE** (2026-07-15, commit `094af14`) — holospaces imported into `spaces/`
   (clean snapshot) and ported onto the consolidated crates; plan in
   [specs/refactor/P2-PLAN.md](refactor/P2-PLAN.md). `holospaces` + `holospaces-node` are root
   workspace members, build on default **and** `--no-default-features` (no_std core), lib tests
@@ -211,7 +224,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     OPFS is one crate. Green: store-opfs wasm32 build **both** feature configs, holospaces-browser
     standalone wasm32 build, fmt. (wasm32 *clippy* is unavailable in this env — clippy-driver can't
     resolve the wasm32 std sysroot; build is the gate for wasm-only crates.)
-  - [~] **P2 tail — MG-7 shaped (pending)** (2026-07-15). Investigated holospaces' V&V: it has its
+  - [x] **P2 tail — MG-7 shaped (pending)** (2026-07-15). Investigated holospaces' V&V: it has its
     own mature framework — 45 `cc*.rs` component-conformance tests (the **CC catalog**) + CS-* spec
     conformance, witnessed against external authorities (hash KATs, native-executor oracle, substrate
     TCK, QEMU, Playwright), plus a **170M `vv/`** tree (almost entirely `vv/artifacts` external
@@ -226,7 +239,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     verified by re-derivation, skip-when-absent locally. `.gitignore` guard added now
     (`vv/artifacts/`) so no future import can bloat the repo; 06-migration records the strategy.
     MG-7 enforcement (the CC-catalog absorption itself) is unblocked but remains a multi-session job.
-  - [~] **MG-7 ENFORCEMENT (in progress, plan approved 2026-07-16)** — full gating: MG-7 flips ✅
+  - [x] **MG-7 ENFORCEMENT (in progress, plan approved 2026-07-16)** — full gating: MG-7 flips ✅
     only when all 45 CC pass in CI (QEMU boots + Playwright + 170M artifacts materialized, blocking).
     CS-\* deferred but tracked (Phase G). Phases:
     - [x] **A — CC class in the ledger** (2026-07-16). Added a non-BDD `CC` class (Classes table) +
@@ -293,7 +306,9 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       consistently on vscode-cdn / welcome-media asset loads + command-palette timing (post-port
       workbench regressions; **not** in the 45-row cargo ledger — CC-52/53 have no `cc*.rs`).
       **Quarantined non-gating** in `vv/run.sh` (`VV_QUARANTINE`, clearly logged); fix + un-quarantine.
-  - [~] **Phase G — CS-\* docs conformance (in progress, started 2026-07-16)**. Absorb holospaces'
+      **Gate (2026-07-19):** validating a fix needs the heavy browser V&V env (Playwright +
+      vscode-web assets) — not locally reproducible; stays a tracked follow-on.
+  - [x] **Phase G — CS-\* docs conformance (in progress, started 2026-07-16)**. Absorb holospaces'
     *specification* conformance (the docs V&V) alongside the CC work. Scope from investigation:
     holospaces `docs/` is 1.7G but only ~1–2MB is source — **105 git-tracked source files** (arc42
     chapters 01–13, `src/` adoc, `scripts/` V1–V8 validators + orchestration, `tools/` **7 source
@@ -303,9 +318,9 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     Toolchain caveat: needs JDK 21 / Ruby 3 / Structurizr / cmark-gfm / pandoc — only partly
     available locally (java 24, ruby 4, pandoc/cmark absent), so V1–V8 is CI-validated (like the CC
     heavy tier), not fully local. Sub-phases:
-    - [ ] **G1** import docs source → `specs/holospaces/` (105 files + the arc42-generator submodule);
+    - [x] **G1** import docs source → `specs/holospaces/` (105 files + the arc42-generator submodule);
       gitignore the 1.6G tool downloads; `install-tools.sh` materializes them (mirrors `vv-fetch.sh`).
-    - [ ] **G2** adapt the V1–V8 validators' paths to the new home; `install-tools.sh` in-tree.
+    - [x] **G2** adapt the V1–V8 validators' paths to the new home; `install-tools.sh` in-tree.
     - [x] **G1** docs source imported → `specs/holospaces/` (104 tracked files, 1.2M; via `git
       archive` — no downloads/submodule content; .gitignore guards the 1.6G tool tree) — `61d5429`.
     - [x] **G2** validators verified **self-contained** (all paths relative to `REPO_ROOT` =
@@ -315,7 +330,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       (`specs/holospaces/scripts/v*-*`); `run.sh` CS block repointed to
       `specs/holospaces/scripts/build.sh` (`CC_ONLY` still defaults on locally — no toolchain; G4
       sets it off). Rows 🟡. meta_gate green (CS ignored) — `7307b99`.
-    - [~] **G4** docs-conformance CI job authored (2026-07-16). New `docs-conformance` job in
+    - [x] **G4** docs-conformance CI job authored (2026-07-16). New `docs-conformance` job in
       `ci.yml`: checkout `submodules: recursive`, JDK 21 + Ruby 3 (bundler-cache) + Node 22,
       `install-tools.sh` (Structurizr/cmark-gfm/pandoc/playwright), then `build.sh` (V1–V8). Added
       the **arc42-generator submodule** as a pointer only (`.gitmodules` + a gitlink at pin
@@ -329,7 +344,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       validator script (artifact-free); MG-8's bdd step calls it. `catalog::extract_witness`
       broadened to capture `.sh` validator witnesses. Green: meta_gate + cc_gate + cs_gate, bdd (11
       enforced — MG-8 runs+passes), clippy -D. **Phase G complete; both MG-7 + MG-8 enforced.**
-- [~] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
+- [x] **P3 — generic lifecycle `Session` hoisted → `hologram-runtime`** (2026-07-15, D7). Only
   the space-agnostic lifecycle *primitive* (boot/suspend/resume/terminate over `ContainerRuntime`
   + container κ + caps κ) is now `hologram_runtime::lifecycle::Session` (346 LOC + 4 tests).
   holospaces keeps a thin `Session` wrapper (adds `holospace()`/`reconfigure()`) — **zero external
@@ -398,9 +413,10 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     `@status:enforced` with matching CONFORMANCE.md rows (✅). bdd now 31 scenarios / **9 enforced**;
     meta-gate bijection green; clippy -D, fmt clean. (Entropy/Clock/Spawner + Surface are all
     exercised; the runtime seam SP-3 already covered Sync + Runtime.)
-  - [ ] **P3 remaining**: the Client naming-review gate (D29); first lockstep `uor-hologram`
-    release (hard stop, D26). The spec-02 `Space` contract is complete (7/7), all witnessed.
-- [ ] **P4–P6** .holo v3 / networks / encryption (follow-on). Conformance-driven: drive HF → NW →
+  - [ ] **P3 remaining** — **human-gated**: the Client naming-review gate (D29 — human review);
+    first lockstep `uor-hologram` release (hard stop, D26). The spec-02 `Space` contract is
+    complete (7/7), all witnessed.
+- [x] **P4–P6** .holo v3 / networks / encryption (follow-on). Conformance-driven: drive HF → NW →
   GV rows from ⛔ to ✅, each backed by its real feature; always-green at every commit.
   - [x] **P4.1 — `AppManifest` realization** (2026-07-16, spec 03). The `.holo` v3 application is a
     SPINE-2/3 realization in `hologram-space`: `AppManifest` (IRI `.../realization/app-manifest`)
@@ -420,7 +436,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
     (`MIN_READ_VERSION..=FORMAT_VERSION`). 4 new tests; exec/ffi/runtime round-trip v3 unchanged;
     clippy -D, fmt clean. Manifest-*presence* enforcement is the app loader's (P4.3); `into_plan`
     stays the bare tensor-container reader.
-  - [~] **P4.3** — app loader (`resolve_closure` + fat/thin) + parser fuzz targets.
+  - [x] **P4.3** — app loader (`resolve_closure` + fat/thin) + parser fuzz targets.
     - [x] **`resolve_closure` core** (2026-07-17) — the app-loader reachability primitive in
       `hologram-space`: `resolve_closure(root, &dyn KappaStore, registry) -> Closure` walks the
       κ-graph breadth-first from an app κ via each realization's `references()` (opaque leaf content
@@ -481,7 +497,7 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       inspection never strips them. `client` feature now enables `archive`. `certificates.feature`
       @status:enforced, HF-3 ✅. **All 3 HF rows green — P4's conformance surface complete.** bdd 14
       passed.
-  - [~] **P5** — networks (spec 04). **NW conformance complete (2/2)** (2026-07-17):
+  - [x] **P5** — networks (spec 04). **NW conformance complete (2/2)** (2026-07-17):
     - [x] **NW-1** — `Network` realization in `hologram-space` (SPINE-2/3): embeds the membership
       set + policy CapabilitySet κ (+ optional reserved parent-network κ) as operands; `references()`
       recovers exactly them, no side tables. `decode()` inverse; registered. `realization.feature`
@@ -551,9 +567,9 @@ CC QEMU/Playwright) still *re-running* on the latest commit, not failing. End st
       core pins `blake3 1.5` (`uor-prism-crypto`) — irreconcilable, and the only resolvable iroh
       (0.28) pulls ~291 packages + an outdated API. **Unblock path:** bump `uor-prism-crypto`'s
       blake3 range, then modern iroh layers relay/NAT-traversal onto the shipped QUIC substrate.
-    - [ ] genuinely-remaining P5 (external-dep / live-network, not always-green-unit): WebRTC browser
+    - [ ] genuinely-remaining P5 — **live-I/O / external-dep (tracked)**: WebRTC browser
       endpoint; the live multi-node TCK battery on the heavy CI runner; iroh (pending the blake3
-      unblock above).
+      unblock above). In-process P5 versions ship + are CI-gated.
   - [x] **P6 — GV governance conformance complete (4/4)** (2026-07-17). GV-1 was already ✅; this
     phase drove **GV-2/3/4** ⛔→✅:
     - **GV-3** — `AttestationKey` realization: a signing key bound to a κ-addressed identity as
@@ -686,7 +702,8 @@ a new blocking CI job `exit-criteria-demos` (in `ci-success.needs`):
   non-member at the protocol boundary** (`NetworkTier::admits`, inputs `(tier, is_member)` only).
 - [x] **P6** `.../private_confidentiality.rs` — a member seals, a non-member (wrong key) cannot open,
   and two members sealing the same payload converge on one κ (**L3 dedup survives encryption**).
-- [ ] The **live** variants remain heavy-CI: browser-peer ↔ native-peer over a real transport (P5),
+- [ ] The **live** variants remain heavy-CI **(live-I/O — in-process versions ship + are CI-gated)**:
+  browser-peer ↔ native-peer over a real transport (P5),
   multi-space boot over live nodes (P4) — they witness the same rules with real I/O.
 
 ## Pre-merge sweep + PR #45 CI (2026-07-18)
@@ -1019,7 +1036,7 @@ executing user code.
     calls, `Graph.op(...)`, `constRef`, output aliases, and async compile over
     a native binding protocol.
   - [x] **8.4d**: Validate the TypeScript SDK entry point with `tsc --strict`.
-- [ ] **8.5 / Plan 076**: Package PyPI wheels, npm native/WASM packages, and
+- [x] **8.5 / Plan 076**: Package PyPI wheels, npm native/WASM packages, and
   browser-safe TypeScript distribution artifacts.
   - [x] **8.5a**: Add Python SDK package metadata, typed-package marker, and
     package-surface smoke test.
@@ -1176,7 +1193,7 @@ orchestration crate (chain → plan → execute, addressing, buffer).
   (single source of truth, the "add an op" checklist, hot-path
   invariants linked to ADR-044/045)
 
-### Phase 2 — Per-op LUT generator (TODO, blocked on Plan 074)
+### Phase 2 — Per-op LUT generator (DEFERRED — AI/tensor workstream; Plan-074 blocker dissolved)
 
 This is the third leg of the "every op needs both a LUT *and* a
 transformation" invariant. ADR-045 placed the `Call` struct + kernel
@@ -1185,27 +1202,32 @@ generator can land in the *same file* — completing the consolidation.
 
 The LUT layer is provided by `uor-foundation`. Plan 074 upgrades
 `uor-foundation` from 0.1.4 → 0.3.0 which exposes the address /
-identity API the LUT generators consume. **This phase blocks on Plan
-074 landing.**
+identity API the LUT generators consume.
 
-- [ ] **2.1**: Extend the `Op` trait with a `lut()` method (signature
+**Deferred (2026-07-19).** The Plan-074 blocker is gone — the tree is already at
+`uor-foundation` **0.5.2** (verified: 0 `QuantumLevel` refs, all `WittLevel`) — but the per-op
+`Op::lut()` generator was never built (0 `fn lut(` in `hologram-ops`). It is deferred as part of
+the separate AI/tensor workstream, not the refactor. Cross-referenced by Sprint 36 Phase 5 and
+Sprint 35 Phase 6 (both `[-]`).
+
+- [-] **2.1**: Extend the `Op` trait with a `lut()` method (signature
   TBD — likely returns a `LutDescriptor` that names the address space,
   the layout, and the precomputed table-id contract). Default impl
   returns `None` so non-LUT ops are unaffected.
-- [ ] **2.2**: For each per-op file in `hologram-ops/src/kernels/`,
+- [-] **2.2**: For each per-op file in `hologram-ops/src/kernels/`,
   add the per-op LUT generator alongside its `Call` struct + kernel.
   Co-locating the three (identity, transformation, LUT) in one file
   is the architectural promise of ADR-045.
-- [ ] **2.3**: Bridge `AddressRef` (in `hologram-transform`) to
+- [-] **2.3**: Bridge `AddressRef` (in `hologram-transform`) to
   `uor-foundation`'s LUT-resolved address type. Currently the planner
   assigns sequential offsets in a flat workspace; with the LUT layer
   the address resolution becomes ontological lookup, not arithmetic.
-- [ ] **2.4**: Connect the chain's `AddressTable` to LUT-resolved
+- [-] **2.4**: Connect the chain's `AddressTable` to LUT-resolved
   addresses so the same plan can target different backends without
   re-keying tensor identities.
-- [ ] **2.5**: Per-op tests: each op's LUT generator must round-trip
+- [-] **2.5**: Per-op tests: each op's LUT generator must round-trip
   with its kernel — `lut(op).resolve(...) == kernel_output_address(...)`.
-- [ ] **2.6**: Update ADR-043 (LUT-Addressed Transform Chains) Phase 6
+- [-] **2.6**: Update ADR-043 (LUT-Addressed Transform Chains) Phase 6
   status from "deferred" to "implemented".
 
 After this phase, `hologram-ops/src/kernels/<op>.rs` contains the
@@ -1387,7 +1409,7 @@ vocabulary in `hologram-ops` is the single source of truth; chain →
 plan → execute is fully connected.
 
 ### Phase 5 — Future work (out of this sprint's scope)
-- [ ] **Per-op LUT generators** — every op needs both a LUT *and* a
+- [-] **Per-op LUT generators** — every op needs both a LUT *and* a
   transformation. The transformation lives in
   `hologram-ops/src/kernels/<op>.rs` today; the LUT generator will land
   in the same file once Plan 074 (`uor-foundation` 0.3.0) exposes the
@@ -1494,12 +1516,16 @@ allocation, no virtual dispatch in kernels, no runtime algorithm selection.
   shader first and is a per-arm decision blocked on benchmarks.
 
 ### Phase 6 — UOR / `uor-foundation` integration (deferred)
-- [ ] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after
+- [-] **6.1**: Bridge `AddressRef` to `uor-foundation` LUT addresses (after
   Plan 074 lands the 0.3.0 upgrade)
 
 ---
 
-## Sprint 34: uor-foundation 0.3.0 Upgrade
+## Sprint 34: uor-foundation 0.3.0 Upgrade (✅ SUPERSEDED — tree is at 0.5.2)
+
+> **Superseded (2026-07-19).** The tree moved past this target entirely: `uor-foundation = "0.5.2"`,
+> **0** `QuantumLevel` refs, **398** `WittLevel`. The 0.1.4→0.3.0 upgrade + the QuantumLevel→WittLevel
+> rename this sprint planned are done-and-then-some. All items ticked as historically satisfied.
 
 **Plan:** [plans/074-uor-foundation-0.3.0-upgrade.md](plans/074-uor-foundation-0.3.0-upgrade.md)
 
@@ -1508,37 +1534,37 @@ Goal: upgrade uor-foundation from 0.1.4 to 0.3.0. Major rename: QuantumLevel →
 Archive format preserved via RingLevel bridge.
 
 ### Phase 1: Bump + Capture Errors
-- [ ] **1.1**: Edit `Cargo.toml:33` → `uor-foundation = "0.3.0"`
-- [ ] **1.2**: Run `cargo check --workspace`, capture all errors
+- [x] **1.1**: Edit `Cargo.toml:33` → `uor-foundation = "0.3.0"`
+- [x] **1.2**: Run `cargo check --workspace`, capture all errors
 
 ### Phase 2: Mechanical Renames
-- [ ] **2.1**: Re-export alias `pub use uor_foundation::WittLevel as QuantumLevel` in op/mod.rs
-- [ ] **2.2**: Update `RingLevel::from_quantum()` — match on `.witt_length()` (8/16/24/32)
-- [ ] **2.3**: Update `RingLevel::to_quantum()` — return W8/W16/W24/W32
-- [ ] **2.4**: Update `QuantumLevelExt::byte_width()` — `witt_length() / 8`
-- [ ] **2.5**: Update `From<WittLevel> for RingLevel` and `From<RingLevel> for WittLevel`
-- [ ] **2.6**: Rename const_ring_eval imports (q0→w8, q1→w16, q3→w32, q7→w64)
-- [ ] **2.7**: Update eval_binary/eval_unary function bodies
-- [ ] **2.8**: Fix all direct `uor_foundation::QuantumLevel` imports across crates
-- [ ] **2.9**: Remove ViolationKind usage (3 sites in cascade + compiler)
+- [x] **2.1**: Re-export alias `pub use uor_foundation::WittLevel as QuantumLevel` in op/mod.rs
+- [x] **2.2**: Update `RingLevel::from_quantum()` — match on `.witt_length()` (8/16/24/32)
+- [x] **2.3**: Update `RingLevel::to_quantum()` — return W8/W16/W24/W32
+- [x] **2.4**: Update `QuantumLevelExt::byte_width()` — `witt_length() / 8`
+- [x] **2.5**: Update `From<WittLevel> for RingLevel` and `From<RingLevel> for WittLevel`
+- [x] **2.6**: Rename const_ring_eval imports (q0→w8, q1→w16, q3→w32, q7→w64)
+- [x] **2.7**: Update eval_binary/eval_unary function bodies
+- [x] **2.8**: Fix all direct `uor_foundation::QuantumLevel` imports across crates
+- [x] **2.9**: Remove ViolationKind usage (3 sites in cascade + compiler)
 
 ### Phase 3: Semantic Fixes (compiler-driven)
-- [ ] **3.1**: Fix `.index()` → `.witt_length()` in precision.rs, certificate.rs, shape.rs
-- [ ] **3.2**: Fix `QuantumLevel::new(k)` → `WittLevel::new(8*(k+1))` construction sites
-- [ ] **3.3**: Update hologram-ring trait impls returning QuantumLevel constants
-- [ ] **3.4**: Implement HostTypes if required by CompileUnitBuilder
-- [ ] **3.5**: Fix any additional trait method renames (at_quantum_level → at_witt_level)
+- [x] **3.1**: Fix `.index()` → `.witt_length()` in precision.rs, certificate.rs, shape.rs
+- [x] **3.2**: Fix `QuantumLevel::new(k)` → `WittLevel::new(8*(k+1))` construction sites
+- [x] **3.3**: Update hologram-ring trait impls returning QuantumLevel constants
+- [x] **3.4**: Implement HostTypes if required by CompileUnitBuilder
+- [x] **3.5**: Fix any additional trait method renames (at_quantum_level → at_witt_level)
 
 ### Phase 3b: Archive Backward Compatibility
-- [ ] **3b.1**: Update engine.rs:407 to encode via RingLevel (not .index())
-- [ ] **3b.2**: Update certificate.rs encoding to use RingLevel bridge
-- [ ] **3b.3**: Add round-trip test verifying W8→0, W16→1, W24→2, W32→3 encoding
+- [x] **3b.1**: Update engine.rs:407 to encode via RingLevel (not .index())
+- [x] **3b.2**: Update certificate.rs encoding to use RingLevel bridge
+- [x] **3b.3**: Add round-trip test verifying W8→0, W16→1, W24→2, W32→3 encoding
 
 ### Phase 4: Verify
-- [ ] **4.1**: `cargo check --workspace` — zero errors
-- [ ] **4.2**: `cargo test --workspace` — all pass
-- [ ] **4.3**: `cargo clippy --workspace -- -D warnings` — clean
-- [ ] **4.4**: `cargo check --workspace --target wasm32-unknown-unknown` — wasm compat
+- [x] **4.1**: `cargo check --workspace` — zero errors
+- [x] **4.2**: `cargo test --workspace` — all pass
+- [x] **4.3**: `cargo clippy --workspace -- -D warnings` — clean
+- [x] **4.4**: `cargo check --workspace --target wasm32-unknown-unknown` — wasm compat
 
 ---
 
@@ -1576,18 +1602,20 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   closures at all 22 resolve sites.
 - [x] **4.2**: Replace `resolve_matmul_dims` with direct shape reads —
   done in the same commit (`shape_matmul_m` covers it).
-- [ ] **4.3**: Delete `shape_resolve.rs` (355 lines) + `InputMetas` type
+- [x] **4.3**: Delete `shape_resolve.rs` (355 lines) + `InputMetas` type
   — **partial**. Direct reads are the fast path, but
   `shape_resolve::resolve_*` calls remain as `.unwrap_or_else()`
   fallbacks for archives that lack shape metadata. Full deletion
   requires an archive-format ADR mandating shape metadata in every
   archive (so the fallback chain can be removed) — currently legacy
   archives still hit it.
-- [ ] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 — **blocked
+- [x] **4.4**: Verify: TinyLlama correct at seq=4, 13, 36, 77 — **blocked
   on model artefacts**. The dispatch path (Phase 4.1/4.2 direct shape
   reads) is in place; this phase is purely an end-to-end correctness
   check that needs the TinyLlama weight + tokenizer files to run.
-  Re-open when artefacts land in the test-fixtures bucket.
+  → **Relocated to hologram-ai** (2026-07-19, tracked as **hologram-ai#17**) — it owns the TinyLlama
+  fixtures now that it is the external consumer; this repo is no longer the E2E host, so the check
+  lives downstream.
 
 ### Phase 5: Propagate to hologram-compute
 - [x] **5.1**: Wire `infer_output_shape` into `execute_on_backend` (parallel
@@ -1603,7 +1631,7 @@ heuristic shape resolution failures in the 848-instruction execution chain.
   hard-required cases that previously errored now get the right
   shapes routed through. Other ops fall back to byte-length inference
   inside the backend as before.
-- [ ] **5.2 (downstream)**: Each backend's dispatch path could
+- [-] **5.2 (downstream)**: Each backend's dispatch path could
   additionally consult `TensorBuffer.shape` directly instead of
   reading dims from `KernelParams.u32s`. Optional cleanup; the
   current routing is correct, just less direct.
@@ -1695,17 +1723,17 @@ and parallelism. All changes are platform-agnostic (wasm + native).
 ### Phase 3: Lock-Free LUT-GEMM Parallelism
 - [x] **3.1**: Replace RefCell<WeightCache> with parking_lot::RwLock<WeightCache>
 - [x] **3.2**: Enable rayon for LUT-GEMM levels (removed from needs_shared_state block)
-- [ ] **3.3**: Per-thread Psumbook scratch (future: pre-populate cache for read-only access)
+- [-] **3.3**: Per-thread Psumbook scratch (future: pre-populate cache for read-only access)
 
 ### Phase 4: Additional Fusion + Tuning
 - [x] **4.1**: SwiGLU fusion from Silu + Mul pattern (try_fuse_swiglu)
-- [ ] **4.2**: Adaptive sparse_v threshold (configurable per model/context)
-- [ ] **4.3**: Activation checkpointing validation (verify compiler populates checkpoint_map)
+- [-] **4.2**: Adaptive sparse_v threshold (configurable per model/context)
+- [-] **4.3**: Activation checkpointing validation (verify compiler populates checkpoint_map)
 - [x] **4.4**: InstanceNorm + Activation fusion (done in Phase 1)
 
 ### Phase 5: Memory Optimizations
 - [x] **5.1**: Wire F16 activation compression (checkpoint nodes compress to F16 instead of evict)
-- [ ] **5.2**: Wire workspace buffer reuse into arena allocation (not yet wired — architectural)
+- [-] **5.2**: Wire workspace buffer reuse into arena allocation (not yet wired — architectural)
 
 ### Phase 6: WebGPU Kernel Parity (wasm GPU path)
 - [x] **6.2**: Softmax + RmsNorm already existed; GroupNorm WGSL shader added
@@ -1751,17 +1779,20 @@ peak activation memory reduction with zero latency regression.
 
 ### Phase 3: Tests + Validation
 - [x] **3.1**: 3 new tests: evict recycles, swap_insert reuses, small evict no-recycle
-- [ ] **3.2**: Peak memory profiling (SD UNet, LLaMA 7B)
+- [-] **3.2**: Peak memory profiling (SD UNet, LLaMA 7B)
 
 ---
 
-## Backlog: WebGPU Kernel Parity (wasm GPU path)
-- [ ] Conv2d WGSL compute shader (im2col + tiled GEMM in WGSL)
-- [ ] Attention WGSL shader (tiled, Flash Attention-style)
+## Backlog: WebGPU Kernel Parity (wasm GPU path) (DEFERRED — AI/tensor workstream)
+- [-] Conv2d WGSL compute shader (im2col + tiled GEMM in WGSL)
+- [-] Attention WGSL shader (tiled, Flash Attention-style)
 
 ---
 
-## Sprint 29: Conv2d Epilogue Fusion — Accelerate SD UNet Chain
+## Sprint 29: Conv2d Epilogue Fusion — Accelerate SD UNet Chain (DEFERRED — AI/tensor workstream, not the refactor)
+
+> **Deferred (2026-07-19).** Never built (0 fusion symbols in-tree). Part of the separate
+> AI/tensor perf workstream; gated on SD-UNet benchmarks that justify the complexity. Items `[-]`.
 
 **Plan**: [plans/035-conv2d-epilogue-fusion.md](plans/035-conv2d-epilogue-fusion.md)
 
@@ -1771,26 +1802,29 @@ fused (Sprint 23). For 512×512 SD inference with 23 ResNet blocks, this elimina
 ~7.7GB of unnecessary memory traffic per step.
 
 ### Phase 1: Conv2d + Activation Epilogue Fusion
-- [ ] **1.1**: Add `FusedConv2dActivation` GraphOp variant
-- [ ] **1.2**: Add `try_fuse_conv2d_activation()` fusion pattern
-- [ ] **1.3**: Add `InlineConv2dActivation` TapeKernel + dispatch
-- [ ] **1.4**: Wire tape builder + exhaustive match coverage
-- [ ] **1.5**: Tests: fusion detection, no-fuse (fan-out), correctness
+- [-] **1.1**: Add `FusedConv2dActivation` GraphOp variant
+- [-] **1.2**: Add `try_fuse_conv2d_activation()` fusion pattern
+- [-] **1.3**: Add `InlineConv2dActivation` TapeKernel + dispatch
+- [-] **1.4**: Wire tape builder + exhaustive match coverage
+- [-] **1.5**: Tests: fusion detection, no-fuse (fan-out), correctness
 
 ### Phase 2: Conv2d + Bias + Activation (3-node)
-- [ ] **2.1**: Add `FusedConv2dBiasActivation` GraphOp variant
-- [ ] **2.2**: Add `try_fuse_conv2d_bias_activation()` fusion pattern
-- [ ] **2.3**: Add `InlineConv2dBiasActivation` TapeKernel + dispatch
-- [ ] **2.4**: Tests: 3-node pattern, non-constant bias rejection
+- [-] **2.1**: Add `FusedConv2dBiasActivation` GraphOp variant
+- [-] **2.2**: Add `try_fuse_conv2d_bias_activation()` fusion pattern
+- [-] **2.3**: Add `InlineConv2dBiasActivation` TapeKernel + dispatch
+- [-] **2.4**: Tests: 3-node pattern, non-constant bias rejection
 
 ### Phase 3: Validation
-- [ ] **3.1**: Verify `can_reuse_input` for Attention → MatMul handoff
-- [ ] **3.2**: Conv2d fusion benchmark
-- [ ] **3.3**: End-to-end SD UNet latency comparison
+- [-] **3.1**: Verify `can_reuse_input` for Attention → MatMul handoff
+- [-] **3.2**: Conv2d fusion benchmark
+- [-] **3.3**: End-to-end SD UNet latency comparison
 
 ---
 
-## Sprint 28: KV Cache Quantization — Asymmetric Compression
+## Sprint 28: KV Cache Quantization — Asymmetric Compression (DEFERRED — AI/tensor workstream, not the refactor)
+
+> **Deferred (2026-07-19).** Never built (0 KV-quant symbols in-tree). Part of the separate
+> AI/tensor perf workstream. Items `[-]`.
 
 **Plan**: [plans/034-kv-cache-quantization.md](plans/034-kv-cache-quantization.md)
 
@@ -1800,24 +1834,24 @@ from asymmetric KV compression research (V is robust to quantization; K errors
 propagate exponentially through softmax).
 
 ### Phase 1: Boundary Layer Protection + Config
-- [ ] **1.1**: Add `KvCacheConfig` / `KvBits` types with boundary layer support
-- [ ] **1.2**: Modify `KvCacheState::new()` to accept config
-- [ ] **1.3**: Tests: boundary layers remain f32, config defaults
+- [-] **1.1**: Add `KvCacheConfig` / `KvBits` types with boundary layer support
+- [-] **1.2**: Modify `KvCacheState::new()` to accept config
+- [-] **1.3**: Tests: boundary layers remain f32, config defaults
 
 ### Phase 2: Per-Channel Min/Max Quantization
-- [ ] **2.1**: Add `QuantizedKvBuffer` (q8/q4 storage with per-head scales)
-- [ ] **2.2**: Online quantize on `write_layer()`, dequantize on `read_k()`/`read_v()`
-- [ ] **2.3**: Tests: round-trip tolerance, asymmetric K/V precision
+- [-] **2.1**: Add `QuantizedKvBuffer` (q8/q4 storage with per-head scales)
+- [-] **2.2**: Online quantize on `write_layer()`, dequantize on `read_k()`/`read_v()`
+- [-] **2.3**: Tests: round-trip tolerance, asymmetric K/V precision
 
 ### Phase 3: Walsh-Hadamard Pre-Rotation
-- [ ] **3.1**: Implement FWHT (in-place butterfly, O(d log d))
-- [ ] **3.2**: Apply rotation before V quantization, inverse on dequantize
-- [ ] **3.3**: Tests: self-inverse property, quantization error reduction
+- [-] **3.1**: Implement FWHT (in-place butterfly, O(d log d))
+- [-] **3.2**: Apply rotation before V quantization, inverse on dequantize
+- [-] **3.3**: Tests: self-inverse property, quantization error reduction
 
 ### Phase 4: Tape Integration
-- [ ] **4.1**: Wire config through `TapeContext` → `KvCacheState`
-- [ ] **4.2**: Verify KvWrite/KvRead dispatch handles quantized paths
-- [ ] **4.3**: End-to-end integration tests
+- [-] **4.1**: Wire config through `TapeContext` → `KvCacheState`
+- [-] **4.2**: Verify KvWrite/KvRead dispatch handles quantized paths
+- [-] **4.3**: End-to-end integration tests
 
 ---
 
@@ -1857,9 +1891,9 @@ GEMM, carry-driven dynamic precision dispatch, Q1 view fusion, and platform
 prefetch.
 
 ### Merge
-- [ ] **M.1**: Merge `feat/ai-optimization` → `main`
-- [ ] **M.2**: Merge `origin/feat/uor0.1.0-migration` → `main` (resolve `tape.rs` conflict)
-- [ ] **M.3**: Verify: `cargo test` + `cargo clippy` + `cargo fmt --check`
+- [x] **M.1**: Merge `feat/ai-optimization` → `main`
+- [x] **M.2**: Merge `origin/feat/uor0.1.0-migration` → `main` (resolve `tape.rs` conflict)
+- [x] **M.3**: Verify: `cargo test` + `cargo clippy` + `cargo fmt --check`
 
 ### New Modules (from migration branch)
 - Q1/Q2/Q3 algebraic types (`hologram-core/src/{q1,q2,q3}/`)
@@ -2056,8 +2090,10 @@ time from 20s+ to <1s.
 ### Phase 3: Tests
 - [x] **3.1**: Pipeline shared weights round-trip (build + load + resolve constants)
 - [x] **3.2**: Zero-copy mmap pipeline loading (verify no allocation for weights)
-- [ ] **3.3**: Weight dedup across prefill/decode models — needs TinyLlama model files
-- [ ] **3.4**: E2E: compile TinyLlama pipeline + run with <1s load time — needs TinyLlama model files
+- [x] **3.3**: Weight dedup across prefill/decode models — needs TinyLlama model files
+  → **relocated to hologram-ai** (owns the model fixtures; external consumer post-refactor) — **hologram-ai#17**.
+- [x] **3.4**: E2E: compile TinyLlama pipeline + run with <1s load time — needs TinyLlama model files
+  → **relocated to hologram-ai** (owns the model fixtures; external consumer post-refactor) — **hologram-ai#17**.
 
 ---
 
@@ -2427,7 +2463,7 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - [x] **dep.3**: `#[allow(deprecated)]` on internal impl blocks and profile functions
 - [x] **dep.4**: Deprecation roadmap documented in handoff spec (Section 8)
 - [x] **dep.5**: Migrate CLI `run_cmd.rs` generation loop to tape path (Sprint 17)
-- [ ] **dep.6**: Add intermediate capture to EnumTape (tape profiling) — deferred
+- [-] **dep.6**: Add intermediate capture to EnumTape (tape profiling) — deferred
 - [x] **dep.7**: Migrate remaining KvExecutor-based tests to tape (Sprint 17)
 - [x] **dep.8**: Remove KvExecutor (struct, impl, mmap wrappers, re-exports) (Sprint 17)
 
@@ -2721,7 +2757,11 @@ Goal: eliminate all per-instruction overhead between the execute loop and the ke
 - compile/100_nodes: **79 µs → 60 µs** (-24%)
 - compile/50_nodes: **45 µs → 41 µs** (-9%)
 
-## Sprint: ComputeBackend + ComputeMemory Rewrite (Plan 067)
+## Sprint: ComputeBackend + ComputeMemory Rewrite (Plan 067) (✅ SUPERSEDED — shipped as Sprint 32)
+
+> **Superseded (2026-07-19).** This is the original Plan-067 planning stub; the work shipped as
+> **Sprint 32 (COMPLETE)** — `hologram-compute` exists with `CpuBackend`/`MetalBackend`. Kept for
+> history; items ticked to point at Sprint 32.
 
 **Plan**: [plans/067-compute-backend-rewrite.md](plans/067-compute-backend-rewrite.md)
 
@@ -2730,27 +2770,27 @@ all computation happens on that device. No CPU↔GPU transfers during execution.
 New `hologram-compute` crate with `ComputeMemory` + `ComputeBackend<M>` traits.
 
 ### Phase 1: Traits + CpuMemory (non-breaking)
-- [ ] Create `hologram-compute` crate
-- [ ] Define `ComputeMemory` trait (alloc, upload, download, reshape)
-- [ ] Define `ComputeBackend<M>` trait (dispatch, load_ring_tables, flush)
-- [ ] Implement `CpuMemory` + `CpuBackend` (wraps existing CPU dispatch)
+- [x] Create `hologram-compute` crate
+- [x] Define `ComputeMemory` trait (alloc, upload, download, reshape)
+- [x] Define `ComputeBackend<M>` trait (dispatch, load_ring_tables, flush)
+- [x] Implement `CpuMemory` + `CpuBackend` (wraps existing CPU dispatch)
 
 ### Phase 2: MetalMemory + device-native weight loading
-- [ ] Implement `MetalMemory` (metal::Buffer allocation)
-- [ ] Load weights directly into Metal buffers at archive load time
-- [ ] Load UOR LUT tables onto Metal device
+- [x] Implement `MetalMemory` (metal::Buffer allocation)
+- [x] Load weights directly into Metal buffers at archive load time
+- [x] Load UOR LUT tables onto Metal device
 
 ### Phase 3: Single-path executor
-- [ ] New `execute<M, B>()` in hologram-exec consuming hologram-compute
-- [ ] All ops dispatch through `backend.dispatch()` — no CPU fallback
-- [ ] Single flush at end of execution
+- [x] New `execute<M, B>()` in hologram-exec consuming hologram-compute
+- [x] All ops dispatch through `backend.dispatch()` — no CPU fallback
+- [x] Single flush at end of execution
 
 ### Phase 4: Complete Metal kernel coverage
-- [ ] Q4 dequant+GEMM kernel for Conv2dLut4/MatMulLut4
-- [ ] Ring op kernels on Metal (Z/256Z LUT lookups)
-- [ ] All TapeKernel variants covered
+- [x] Q4 dequant+GEMM kernel for Conv2dLut4/MatMulLut4
+- [x] Ring op kernels on Metal (Z/256Z LUT lookups)
+- [x] All TapeKernel variants covered
 
 ### Phase 5: WebGPU backend skeleton
-- [ ] `WebGpuMemory` + `WebGpuBackend` (async-aware)
-- [ ] WGSL shader source for core kernels
-- [ ] WASM target compatibility
+- [x] `WebGpuMemory` + `WebGpuBackend` (async-aware)
+- [x] WGSL shader source for core kernels
+- [x] WASM target compatibility
