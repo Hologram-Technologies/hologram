@@ -52,9 +52,11 @@ perf:
     cargo bench -p hologram-store --features native --bench sp_floors -- --quick
     cargo bench -p hologram-tck --bench sp_floors -- --quick
 
-# Run all tests
+# Run all tests. nextest skips the cucumber `bdd` runner (harness=false — see
+# .config/nextest.toml), so run that suite explicitly with cargo test afterward.
 test:
     cargo nextest run --workspace
+    cargo test -p hologram-conformance --test bdd
 
 # Run criterion benchmarks
 bench:
