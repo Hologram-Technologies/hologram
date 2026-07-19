@@ -2,13 +2,22 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
   schedule:
     # Nightly: re-run the heavy holospaces V&V (CC tier) and catch artifact-pin rot.
     - cron: "0 6 * * *"
   workflow_dispatch: {}
+
+# Only the newest commit on a ref needs full CI: a new push cancels the superseded
+# in-flight run instead of letting stale full-matrix runs (QEMU boots, Playwright,
+# docs-conformance) pile up on the runners. Keyed per PR (or per branch/tag on push)
+# so distinct PRs never cancel each other. `main` is exempt from cancellation so every
+# landed commit keeps its own verified run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always

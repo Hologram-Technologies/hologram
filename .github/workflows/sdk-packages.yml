@@ -2,10 +2,30 @@ name: SDK Packages
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    paths: &sdk_paths
+      # The SDKs wrap the Rust core (native N-API via hologram-ffi; the wasm driver over the
+      # core crates), so any crate or lockfile change can move their output — but docs, specs,
+      # features, site, and unrelated workflows cannot. Skip the 12-job packaging matrix for
+      # those. `--check` version-consistency piggybacks on the same filter (it only matters when
+      # a manifest version could have moved, which lives under these paths).
+      - "sdk/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/sync-sdk-versions.sh"
+      - "scripts/workspace-version.sh"
+      - ".github/workflows/sdk-packages.yml"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
+    paths: *sdk_paths
   workflow_dispatch:
+
+# A new push supersedes the in-flight SDK matrix (6 Python wheels + 4 N-API prebuilds + wasm);
+# cancel the stale run rather than building both. `main` keeps every landed run.
+concurrency:
+  group: sdk-packages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always

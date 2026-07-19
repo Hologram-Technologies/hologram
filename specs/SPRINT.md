@@ -748,6 +748,17 @@ latest commit — metadata-only change (version + SDK JSON/locks) touches no ben
   `hologram-conformance::bdd` (a cucumber `harness=false` runner without libtest `--list`). Added
   `.config/nextest.toml` excluding it + a `cargo test --test bdd` step in the recipe (CI uses plain
   `cargo test`, so it was unaffected). Verified end-to-end.
+- [x] **CI per-push cost cut (2026-07-19)**: the two heaviest workflows (`ci.yml`, `sdk-packages.yml`)
+  had **no `concurrency`** — every push started a fresh full run without cancelling the superseded one,
+  so rapid pushes stacked full QEMU/Playwright/12-job-SDK runs on the runners. Added
+  `concurrency: cancel-in-progress` (keyed per-PR; `main` exempt so every landed commit keeps its run)
+  to both. Path-filtered the three surface-derived gates so **docs/spec/site-only pushes skip them
+  entirely**: `sdk-packages` (12 jobs), `semver-gate`, and `api-gate` now trigger only on `crates/**` /
+  `Cargo.*` / `sdk/**` (as applicable). Dropped the non-existent `develop` branch from all triggers.
+  Net: a docs-only push drops from ~30 checks to ~16 (ci.yml only); no required checks exist so no
+  merge-blocking footgun. (Deeper lever — gating ci.yml's heavy `holospaces-vv-heavy` / `docs-
+  conformance` / `fuzz` jobs off every-push — left untouched pending a call on the MG-7 "blocking on
+  every PR" decision.)
 
 ## Sprint 39: Decode Residual — Browser (ACTIVE)
 

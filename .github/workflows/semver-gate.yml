@@ -14,6 +14,14 @@ name: Semver Gate
 on:
   pull_request:
     branches: [main]
+    # The gate rebuilds every library crate's public API for both the PR and the baseline —
+    # expensive, and only meaningful when Rust surface or the dependency graph can change.
+    # Docs/spec/site/SDK-only changes cannot alter the checked API, so skip them.
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/semver-gate.yml"
   workflow_dispatch:
 
 permissions:
