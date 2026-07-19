@@ -123,16 +123,16 @@ embedded:
 
 # Deployment-substrate V&V (see specs/docs/container-substrate-vv.md): conformance + worked example
 # + SP floors across native, then the no_std tripling builds. RZ gate: the tensor compute engine
-# (hologram-exec/-backend) must NOT appear in the store/route crates' dependency tree.
+# (hologram-exec/-compute) must NOT appear in the store/route crates' dependency tree.
 vv-substrate:
     cargo test -p hologram-space -p hologram-tck \
         -p hologram-net -p hologram-runtime
     cargo test -p hologram-store --features bare,native   # the merged store's backend TCK tests
     cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
     cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
-    @echo "RZ gate — compute engine (exec/backend/ops/graph/compiler/archive) absent from store/route:"
+    @echo "RZ gate — compute engine (exec/compute/ops/graph/compiler/archive) absent from store/route:"
     @for c in hologram-tck hologram-store hologram-net hologram-runtime; do \
-        cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)" \
+        cargo tree -p $c -e normal 2>/dev/null | grep -E "hologram-(exec|compute|ops|graph|compiler|archive)" \
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done
     just wasm embedded

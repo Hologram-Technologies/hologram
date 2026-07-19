@@ -312,7 +312,7 @@ jobs:
           set -euo pipefail
           for c in hologram-space hologram-tck hologram-store \
                    hologram-net hologram-runtime; do
-            if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|backend|ops|graph|compiler|archive)"; then
+            if cargo tree -p "$c" -e normal | grep -E "hologram-(exec|compute|ops|graph|compiler|archive)"; then
               echo "RZ VIOLATION: compute engine reachable from $c"; exit 1
             fi
             echo "  $c: RZ ok"
