@@ -184,13 +184,12 @@ dependencies = [
 
 [[package]]
 name = "hologram-archive"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
- "bytemuck",
  "hashbrown",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
- "hologram-host",
+ "hologram-types",
  "memmap2",
  "smallvec",
  "thiserror",
@@ -201,11 +200,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-backend"
-version = "0.6.0"
+name = "hologram-compiler"
+version = "0.10.0"
+dependencies = [
+ "hashbrown",
+ "hologram-archive",
+ "hologram-compute",
+ "hologram-graph",
+ "hologram-ops",
+ "hologram-types",
+ "nom",
+ "smallvec",
+ "thiserror",
+ "tracing",
+ "uor-foundation",
+ "uor-prism",
+]
+
+[[package]]
+name = "hologram-compute"
+version = "0.10.0"
 dependencies = [
  "bytemuck",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "libm",
@@ -218,33 +234,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-compiler"
-version = "0.6.0"
-dependencies = [
- "hashbrown",
- "hologram-archive",
- "hologram-backend",
- "hologram-graph",
- "hologram-host",
- "hologram-ops",
- "hologram-types",
- "nom",
- "smallvec",
- "thiserror",
- "tracing",
- "uor-foundation",
- "uor-prism",
-]
-
-[[package]]
 name = "hologram-exec"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "hashbrown",
  "hologram-archive",
- "hologram-backend",
+ "hologram-compute",
  "hologram-graph",
- "hologram-host",
  "hologram-ops",
  "hologram-types",
  "smallvec",
@@ -255,11 +251,11 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "hologram-archive",
- "hologram-backend",
  "hologram-compiler",
+ "hologram-compute",
  "hologram-exec",
  "hologram-graph",
  "uor-prism",
@@ -267,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -276,32 +272,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "hologram-host"
-version = "0.6.0"
-dependencies = [
- "uor-foundation",
- "uor-foundation-sdk",
- "uor-prism",
-]
-
-[[package]]
 name = "hologram-ops"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
- "hologram-host",
  "hologram-types",
  "libm",
  "uor-foundation",
- "uor-foundation-sdk",
  "uor-prism",
 ]
 
 [[package]]
 name = "hologram-types"
-version = "0.6.0"
+version = "0.10.0"
 dependencies = [
- "hologram-host",
  "uor-foundation",
+ "uor-foundation-sdk",
  "uor-prism",
 ]
 
