@@ -1,6 +1,13 @@
 # Sprint Tracking
 
-## Sprint 40: Ecosystem Refactor — Consolidation (STRUCTURALLY COMPLETE — READY TO LAND)
+## Sprint 40: Ecosystem Refactor — Consolidation (✅ MERGED to `main` 2026-07-19, PR #45)
+
+> **Landed.** PR #45 merged to `main` (merge commit `16d77c3`) after the lean CI went 16/16 green.
+> First release is human-gated (crates.io tokens, D26): cut it with `just release-auto minor` (or
+> `just release 0.11.0`) → the `v*` tag drives `publish.yml` + the release-tier `release.yml`. Post-merge
+> tooling follow-ups in **PR #46**: `just release`/`release-auto` recipes; fixed the `examples` recipe
+> (`hologram-runtime-wasmtime` → `hologram-runtime --features engine-wasmtime`); fixed the RZ-gate to
+> grep `hologram-compute` (was the renamed-away `hologram-backend` — a silently-weakened invariant).
 
 **Plan:** [specs/refactor/00-overview.md](refactor/00-overview.md) · P0 gates
 [specs/refactor/P0-PREP.md](refactor/P0-PREP.md) · branch `chore/refactor`
