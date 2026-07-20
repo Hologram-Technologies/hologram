@@ -1,14 +1,14 @@
-# @hologram/native
+# @uor-foundation/native
 
 Node adapter and N-API driver for the Hologram TypeScript SDK.
 
-This package is intentionally split from `@hologram/sdk`: the SDK is pure ESM
+This package is intentionally split from `@uor-foundation/sdk`: the SDK is pure ESM
 and browser-safe, while this package loads a Node native binary and implements
 the SDK `NativeBinding` protocol.
 
 ```ts
-import { compileSourceFile, createNativeBinding } from "@hologram/native";
-import { Graph, Session, f32 } from "@hologram/sdk";
+import { compileSourceFile, createNativeBinding } from "@uor-foundation/native";
+import { Graph, Session, f32 } from "@uor-foundation/sdk";
 
 const native = createNativeBinding();
 const g = new Graph("encoder");
@@ -69,7 +69,7 @@ npm run --prefix sdk/typescript/native pack:check
 ```
 
 The adapter converts `lastErrorCode()` / `lastErrorMessage()` into the
-`@hologram/sdk` error classes. For example, a bad archive load rejects with
+`@uor-foundation/sdk` error classes. For example, a bad archive load rejects with
 `ArchiveLoadError`, invalid execute inputs reject with `InvalidArgumentError`,
 and failed kernels reject with `ExecutionError`.
 

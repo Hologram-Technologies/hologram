@@ -22,7 +22,7 @@ import {
   type OpAttrs,
   type OpName,
   type Shape,
-} from "@hologram/sdk";
+} from "@uor-foundation/sdk";
 
 export type WasmBuilderHandle = object | number;
 

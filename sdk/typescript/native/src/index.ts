@@ -23,7 +23,7 @@ import {
   type OpAttrs,
   type OpName,
   type Shape,
-} from "@hologram/sdk";
+} from "@uor-foundation/sdk";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -145,7 +145,7 @@ export function loadNativeAddon(): NativeAddon {
       continue;
     }
   }
-  throw new HologramNativeError(0, "unable to load @hologram/native binary");
+  throw new HologramNativeError(0, "unable to load @uor-foundation/native binary");
 }
 
 class NativeSourceBuilder implements LowLevelBuilder {
@@ -401,5 +401,5 @@ function positive(value: number): number | undefined {
 }
 
 function addonCandidates(): readonly string[] {
-  return ["./hologram.node", "../hologram.node", "@hologram/native-bin"];
+  return ["./hologram.node", "../hologram.node", "@uor-foundation/native-bin"];
 }
