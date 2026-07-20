@@ -1,32 +1,49 @@
 # Hologram
 
-**A content-addressed, UOR-native runtime — from tensor kernels to a portable execution substrate**
+**One content address for everything — from tensor kernels to a portable, resumable execution substrate.**
 
 [![CI](https://github.com/Hologram-Technologies/hologram/actions/workflows/ci.yml/badge.svg)](https://github.com/Hologram-Technologies/hologram/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 Hologram compiles a tensor graph to a `.holo` archive and executes it through a
 content-addressed runtime: every value carries a UOR-ADDR κ-label, so identical
-computation is addressed once and reused (memoized, deduplicated, replayed)
+computation is addressed once and reused — memoized, deduplicated, replayed —
 instead of recomputed. Where a function has a finite quantum domain it is
-**materialized once as a lookup table** — the compute-once form of the function —
-and dispatched in O(1). The same `.holo` archive runs on x86_64, WebAssembly, and
-ARM bare-metal (`no_std`).
+**materialized once as a lookup table** (its compute-once form) and dispatched in
+O(1). The same `.holo` runs on x86_64, WebAssembly, and ARM bare-metal (`no_std`).
 
-The recent **consolidation** (`specs/refactor/`) extends that same κ-identity past
-the tensor engine into a full portable substrate. A `.holo` is now an application
-of κ-addressed layers; content-addressed storage (`KappaStore`), a
-capability-secured container runtime, a κ-native network (SPINE-4 `KappaSync` + a
-κ-XOR Kademlia DHT), and deterministic system emulators all sit behind one **space
-contract** — the trait surface any host (browser, native, or bare-metal)
-implements to become *a place Hologram runs*. A single `hologram::Client` drives
-`compile → provision → run` over any space, so the CLI, C ABI, and SDKs are thin
-shells over exactly one type.
+The **consolidation** (`specs/refactor/`) extends that same κ-identity past the
+tensor engine into a full portable substrate. A `.holo` becomes an application of
+κ-addressed layers; content-addressed storage (`KappaStore`), a capability-secured
+container runtime, a κ-native network (SPINE-4 `KappaSync` + a κ-XOR Kademlia DHT),
+and deterministic system emulators all sit behind one **space contract** — the
+trait surface any host (browser, native, or bare-metal) implements to become *a
+place Hologram runs*. A single `hologram::Client` drives `compile → provision →
+run` over any space, so the CLI, C ABI, and SDKs are thin shells over exactly one
+type.
 
 > **κ (kappa)** is a content-addressed label (BLAKE3 σ-axis derivation via
 > `uor-addr`) — the only identity in the system: for bytes, apps, peers,
 > operators, and networks. There is no second naming surface (no UUIDs, PeerIds,
 > or hostnames as identity).
+
+**Highlights**
+
+- **One identity.** Every byte, model, container, peer, and network is a κ. No parallel naming scheme to keep in sync.
+- **Compute once.** Identical work is addressed once and reused; finite-domain functions become lookup tables dispatched in O(1) — **~28×** on bf16 GELU, bit-identical.
+- **One archive, every target.** The same `.holo` runs on x86_64, WebAssembly, and ARM bare-metal (`no_std` + `alloc`).
+- **One contract, any host.** A browser tab, a server, or a bare-metal board becomes a *space* by implementing one trait — and a session suspends to a κ here and resumes there.
+- **One surface.** The CLI, C ABI, and language SDKs are thin shells over a single `hologram::Client`, so bindings cannot drift.
+
+---
+
+## Contents
+
+- **Get started** — [Quickstart](#quickstart)
+- **Concepts** — [How it works: the tensor engine](#how-it-works--the-tensor-engine) · [The space substrate](#the-space-substrate)
+- **Use it** — [Tensor engine (library)](#using-the-tensor-engine) · [Opening a holospace](#opening-a-holospace) · [Programmatic control](#programmatic-control) · [CLI](#cli) · [C FFI](#c-ffi)
+- **Reference** — [Workspace crates](#workspace-crates) · [Feature flags](#feature-flags) · [Platform support](#platform-support) · [Benchmarks](#benchmarks) · [Build & development](#build--development)
+- **Project** — [Architecture](#architecture) · [Contributing](#contributing) · [License](#license)
 
 ---
 
@@ -63,15 +80,10 @@ hologram = {
 }
 ```
 
-**Where to go next**
-
-| I want to… | See |
-|---|---|
-| Compile & run tensors from Rust / Python / TS | [Using the tensor engine](#using-the-tensor-engine) |
-| Provision and boot a container / devcontainer | [Opening a holospace](#opening-a-holospace) |
-| Drive `compile → provision → run` from one type | [Programmatic control](#programmatic-control) |
-| Use the CLI (`compile` / `node` / `app` / `network`) | [CLI](#cli) |
-| Contribute | [Contributing](#contributing) |
+From here: run tensors from [Rust / Python / TS](#using-the-tensor-engine),
+provision and boot containers with [holospaces](#opening-a-holospace), drive the
+whole pipeline from one [`Client`](#programmatic-control), reach for the
+[CLI](#cli), or jump to [Contributing](#contributing).
 
 ---
 
@@ -214,87 +226,6 @@ A full, compilable walkthrough — including the minimal `Space` wiring — is i
 
 ---
 
-## Workspace crates
-
-Every library crate is `no_std` + `alloc` by default and exposes a `std` feature
-for host builds. Applications depend on the one `hologram` facade crate and opt
-into the surfaces they need (see [Root facade crate](#root-facade-crate)).
-
-Dependencies flow in three tiers (a repo law): **core** (`crates/`, tensor engine
-+ substrate) → **spaces** (`spaces/`, depend on core only) → **leaf** (facade +
-`Client`, CLI, SDK packaging — may depend on anything; nothing depends on a leaf).
-
-### Tensor engine (the content-addressed compute core)
-
-| Crate | Role | Key types |
-|---|---|---|
-| `hologram-types` | Type vocabulary: dtype markers, shape markers, host/σ-axis selection (absorbs the former `hologram-host`) | `DType`, `Shape1`/`Shape2`, `Digest`, `host::HologramHasher` |
-| `hologram-ops` | The closed 64-op catalog: Term-tree emitters + per-op reference evaluators | `OpKind`, `emit_op_term`, `ReferenceEvaluator` |
-| `hologram-graph` | Arena DAG IR, schedules, registries, backward-graph construction | `Graph`, `Node`, `GraphOp`, `Schedule`, `ShapeRegistry` |
-| `hologram-compiler` | Graph → `.holo` (lowering, fusion, fingerprint caching, source frontends) | `Compiler`, `compile`, `BackendKind`, `source` |
-| `hologram-archive` | `.holo` format: sections, BLAKE3-deduped weights, per-layer certificates, footer, κ-labels | `HoloWriter`, `HoloLoader`, `SectionKind`, `compose_model` |
-| `hologram-compute` | Per-target kernel dispatch (CPU SIMD/parallel, Metal, wgpu) — was `hologram-backend` | `Backend`, `KernelCall`, `Workspace`, `CpuBackend` |
-| `hologram-exec` | Content-addressed sync executor, buffer pool, warm-start | `InferenceSession`, `BufferArena`, `InputBuffer`, `WarmStore` |
-
-### The κ substrate (storage / containers / network / emulation)
-
-| Crate | Role | Key types |
-|---|---|---|
-| `hologram-space` | **The space contract** + the portable σ-axis κ-addressing core | `Space`, `KappaStore`, `KappaSync`, `MemKappaStore`, `verify_kappa` |
-| `hologram-tck` | Technology Compatibility Kit: the conformance battery every `KappaStore` backend must pass | `store_battery`, `MemKappaStore` |
-| `hologram-store` | The `KappaStore` backends in one feature-gated crate — `bare` / `native` (redb) / `opfs` | `native::*` (redb + cache), `bare`, `opfs::OpfsKappaStore` |
-| `hologram-net` | uor-native network (SPINE-4 `KappaSync`): bare frames, HTTP-CAS, κ-XOR Kademlia DHT | `bare::BareNetSync`, `http::live::HttpKappaSync`, `tcp`, `quic` |
-| `hologram-runtime` | Container-runtime orchestration: lifecycle (`Session`), snapshot-as-κ, capability enforcement | `Runtime`, `lifecycle::Session`, `ContainerEngine` |
-| `hologram-emulator` | Deterministic RISC-V / x86-64 / aarch64 cores that boot an OS on the substrate | `Arch`, `Emulator`, `MachineSpec` |
-| `hologram-efi` | Bare-metal UEFI boot binary `hologram.efi` (workspace-excluded; `x86_64-unknown-uefi`) | measured-boot self-test over `BareMetalKappaStore` |
-
-### Facade, tooling & conformance (leaf tier)
-
-| Crate | Role | Key types |
-|---|---|---|
-| `hologram` | Facade: feature-gated re-exports + the `Client` type | `Client`, `ClientBuilder`, `Holo` |
-| `hologram-cli` | The one `hologram` binary: `compile` / `execute` / `inspect` / `bench` + `node` / `app` / `network` | `cmd::run_from_env` |
-| `hologram-ffi` | C ABI + WASM bindings over the CPU backend | `hologram_session_*`, `hologram_source_builder_*` |
-| `hologram-bench` | Criterion performance battery (roofline, matmul, fusion, decode, …) | `[[bench]]` targets |
-| `hologram-conformance` | BDD (cucumber) conformance runner + honesty meta-gate | `ConformanceWorld`, `bdd` / `meta_gate` |
-
-### Spaces (platform implementations of the contract)
-
-| Crate | Role | Key types |
-|---|---|---|
-| `spaces/holospaces` | Portable `Space` + Platform Manager: provisions & boots content-addressed environments | `Holospace`, `boot::Session`, `peer` / `manager` |
-| `spaces/holospaces-browser` | wasm32 browser peer (excluded): loading the bundle makes the browser *be* the substrate — no server | `Workspace`, `WebRtcLink`, `#[wasm_bindgen]` console |
-| `spaces/holospaces-node` | Edge/native peer: NIC egress + durable storage a browser routes through, OTA-updated | `EgressServer`, `storage`, `ota` |
-
-### Root facade crate
-
-The root `hologram` package is the application-facing import surface. It does not
-add execution logic; [`src/lib.rs`](src/lib.rs) owns the export policy — each
-enabled Cargo feature creates a module and re-exports the matching backing crate.
-
-| Feature | Public surface | Backing crate |
-|---|---|---|
-| `types` | `hologram::types` | `hologram-types` |
-| `ops` | `hologram::ops` | `hologram-ops` |
-| `graph` | `hologram::graph` | `hologram-graph` |
-| `compiler` | `hologram::compiler` | `hologram-compiler` |
-| `archive` | `hologram::archive` | `hologram-archive` |
-| `backend` | `hologram::backend` | `hologram-compute` |
-| `exec` | `hologram::exec` | `hologram-exec` |
-| `space` | `hologram::space` | `hologram-space` |
-| `ffi` | `hologram::ffi` | `hologram-ffi` |
-| `cli` | `hologram::cli` | `hologram-cli` |
-| `bench` | `hologram::bench` | `hologram-bench` |
-| `client` | `hologram::Client` (+ `Holo`, `ClientBuilder`) | composition over `hologram-space` + `hologram-runtime` |
-
-The remaining substrate crates (`hologram-net`, `-store`, `-tck`, `-emulator`, and
-`-runtime` beyond what `client` pulls) are currently consumed directly, wired by
-the CLI's `node` command and the `spaces/` peers rather than re-exported as facade
-modules. Direct dependencies on individual crates remain supported for low-level
-crate authors, but applications should prefer the root facade.
-
----
-
 ## Using the tensor engine
 
 Add the facade crate and enable the surfaces you need:
@@ -416,7 +347,7 @@ let output = compile_from_source_language(
 )?;
 ```
 
-### Python source frontend
+#### Python source frontend
 
 The Python frontend is feature-gated behind `frontend-python`. It parses Python
 source as an AST and extracts only restricted Hologram builder functions; it
@@ -449,7 +380,7 @@ and the same op attributes accepted by native Hologram source.
 For files without a `.py` extension, pass `--source-language python`
 explicitly.
 
-### TypeScript source frontend
+#### TypeScript source frontend
 
 The TypeScript frontend is feature-gated behind `frontend-typescript`. It uses
 the TypeScript AST to extract restricted Hologram builder functions from normal
@@ -484,7 +415,7 @@ Current TypeScript support covers `h.input`, `h.const` / `h.constant`,
 For files without a `.ts` or `.tsx` extension, pass `--source-language
 typescript` explicitly.
 
-### Rust source frontend
+#### Rust source frontend
 
 The Rust frontend is feature-gated behind `frontend-rust`. It uses `syn` to
 parse Rust source as an AST and extracts only restricted Hologram builder
@@ -784,25 +715,189 @@ the space's store implements `GarbageCollect` (the reference `MemKappaStore` doe
 
 ---
 
-## Build & development
+## CLI
 
-Requires: Rust stable, [`just`](https://github.com/casey/just).
+`hologram-cli` builds the single `hologram` binary — the one programmatic surface
+for the tensor engine *and* the substrate node. Install it with `cargo install
+--path crates/hologram-cli`.
 
-| Command | What it does |
-|---|---|
-| `just ci` | fmt check + clippy + test suite + supply-chain gate (`cargo deny`) |
-| `just test` | `cargo nextest run --workspace` + the cucumber `bdd` suite |
-| `just vv` | full Verification & Validation: conformance + bdd + parallel + perf + deny + wasm + embedded |
-| `just conformance` | external-authority conformance suites (archive/compute/exec) |
-| `just bdd` | cucumber conformance runner + honesty meta-gate (catalog ↔ scenario bijection) |
-| `just bench` | Criterion benchmarks |
-| `just fmt` | `cargo fmt --all` |
-| `just clippy` | `cargo clippy --workspace -- -D warnings` |
-| `just wasm` | Build the `no_std` stack (tensor engine + substrate) for `wasm32-unknown-unknown` |
-| `just embedded` | Build the `no_std` stack for bare-metal ARM (`thumbv7em-none-eabi`) |
-| `just examples` | Run the container-substrate examples (CAS cache, event bus, least-privilege, Wasm inference, live migration) |
-| `just uefi-boot` | Build `hologram.efi` and boot it in QEMU/OVMF (no OS), asserting the storage self-check passes |
-| `just release <version>` / `just release-auto [bump]` | Cut a lockstep workspace release via the `version-bump` GitHub workflow |
+```bash
+# compile native Hologram source (or an empty graph) to a .holo archive
+hologram compile --source graph.txt --output model.holo
+
+# compile a Python / TypeScript / Rust file containing Hologram builder functions
+cargo run -p hologram-cli --features frontend-python -- compile \
+  --source graph.py --graph encoder --output model.holo
+
+# override extension-based language detection when needed
+hologram compile --source embedded.txt --source-language python --graph encoder --output model.holo
+
+# inspect an archive's section table
+hologram inspect --archive model.holo
+
+# execute against zero-byte inputs; prints each output port's byte length
+hologram execute --archive model.holo
+
+# micro-bench: run an archive N times, report wall-clock per iteration
+hologram bench --archive model.holo --iterations 100
+```
+
+Substrate tooling is unified into the same binary (D13):
+
+```bash
+# node — a content store / router / server over a KappaStore (redb)
+hologram node put weights.bin           # store bytes, print the κ-label
+hologram node get <kappa>               # write a κ's canonical bytes to stdout
+hologram node verify <kappa> weights.bin  # re-derive and check (SPINE-4)
+hologram node serve --listen 127.0.0.1:8080 --tcp 127.0.0.1:9000  # HTTP-CAS + κ-XOR DHT
+# (also: pin / unpin / gc / ls / inspect / manifest / spawn / caps — see `hologram node --help`)
+
+# app — .holo v3 application tooling (inspect layers + certificates; fat<->thin, app κ unchanged)
+hologram app inspect --archive app.holo
+hologram app thin --input app.holo --output app.thin.holo
+hologram app fat  --input app.holo --output app.fat.holo --store node.redb
+
+# network — Network (VPC-analogue) realizations: membership / policy / key are all κ
+hologram network create --member founder.key --policy caps.bin --tier restricted --output net.bin
+hologram network show --network net.bin
+hologram network delegate --parent parent.caps --child child.caps --output deleg.bin  # attenuation only
+```
+
+---
+
+## C FFI
+
+`hologram-ffi` exposes the pipeline through a C ABI. A session is referenced by
+an integer handle into a process-local table:
+
+```c
+// compile native Hologram source into a .holo archive (written to `out`)
+int len = hologram_compile_source(src, src_len, out, out_capacity);
+
+// or build the same SourceProgram through the ABI without parsing source text
+HologramSourceBuilder *b = hologram_source_builder_new();
+hologram_source_builder_input(b, &input_desc);
+hologram_source_builder_const(b, &small_inline_const);
+hologram_source_builder_const_ref(b, &file_backed_const); // path + byte range + BLAKE3
+hologram_source_builder_op(b, &op_desc);
+hologram_source_builder_output(b, output_name);
+int built_len = hologram_source_builder_compile(b, out, out_capacity);
+if (built_len < 0) {
+    int code = hologram_last_error_code();
+    const char *message = hologram_last_error_message();
+    size_t line = hologram_last_error_line();
+    size_t column = hologram_last_error_column();
+    const char *rejected = hologram_last_error_rejected();
+}
+hologram_source_builder_free(b);
+
+// load an archive into a session, returning a handle (or a negative error)
+int h = hologram_session_load(archive, archive_len);
+int in_count  = hologram_session_input_count(h);
+int out_count = hologram_session_output_count(h);
+
+// ports carry a semantic name + shape (multi-input models map by identity)
+hologram_session_input_name(h, 0, name_buf, name_cap);   // snprintf-style copy
+int rank = hologram_session_input_shape(h, 0, dims, dim_cap);
+int dtype = hologram_session_input_dtype(h, 0);
+// (and hologram_session_output_name / output_shape / output_dtype)
+
+// open producer-defined metadata (tokenizer, gen config, …) travels in the archive
+int n = hologram_session_extension(h, key, key_len, out, out_cap); // bytes, or -1
+
+// execute (inputs/outputs marshalled as byte buffers), then release
+hologram_session_execute(h, /* … */);
+hologram_session_close(h);
+```
+
+Ownership, versioning, feature probing, and error-code rules are captured in
+[`specs/docs/ffi-abi-contract.md`](specs/docs/ffi-abi-contract.md).
+SDK bindings should check `hologram_abi_version()` and required
+`hologram_feature_supported(...)` strings before calling optional builder APIs.
+
+Built for `wasm32-unknown-unknown` with `--features wasm`; the browser demo
+under `site/` loads the resulting module.
+
+---
+
+## Workspace crates
+
+Every library crate is `no_std` + `alloc` by default and exposes a `std` feature
+for host builds. Applications depend on the one `hologram` facade crate and opt
+into the surfaces they need (see [Root facade crate](#root-facade-crate)).
+
+Dependencies flow in three tiers (a repo law): **core** (`crates/`, tensor engine
++ substrate) → **spaces** (`spaces/`, depend on core only) → **leaf** (facade +
+`Client`, CLI, SDK packaging — may depend on anything; nothing depends on a leaf).
+
+### Tensor engine (the content-addressed compute core)
+
+| Crate | Role | Key types |
+|---|---|---|
+| `hologram-types` | Type vocabulary: dtype markers, shape markers, host/σ-axis selection (absorbs the former `hologram-host`) | `DType`, `Shape1`/`Shape2`, `Digest`, `host::HologramHasher` |
+| `hologram-ops` | The closed 64-op catalog: Term-tree emitters + per-op reference evaluators | `OpKind`, `emit_op_term`, `ReferenceEvaluator` |
+| `hologram-graph` | Arena DAG IR, schedules, registries, backward-graph construction | `Graph`, `Node`, `GraphOp`, `Schedule`, `ShapeRegistry` |
+| `hologram-compiler` | Graph → `.holo` (lowering, fusion, fingerprint caching, source frontends) | `Compiler`, `compile`, `BackendKind`, `source` |
+| `hologram-archive` | `.holo` format: sections, BLAKE3-deduped weights, per-layer certificates, footer, κ-labels | `HoloWriter`, `HoloLoader`, `SectionKind`, `compose_model` |
+| `hologram-compute` | Per-target kernel dispatch (CPU SIMD/parallel, Metal, wgpu) — was `hologram-backend` | `Backend`, `KernelCall`, `Workspace`, `CpuBackend` |
+| `hologram-exec` | Content-addressed sync executor, buffer pool, warm-start | `InferenceSession`, `BufferArena`, `InputBuffer`, `WarmStore` |
+
+### The κ substrate (storage / containers / network / emulation)
+
+| Crate | Role | Key types |
+|---|---|---|
+| `hologram-space` | **The space contract** + the portable σ-axis κ-addressing core | `Space`, `KappaStore`, `KappaSync`, `MemKappaStore`, `verify_kappa` |
+| `hologram-tck` | Technology Compatibility Kit: the conformance battery every `KappaStore` backend must pass | `store_battery`, `MemKappaStore` |
+| `hologram-store` | The `KappaStore` backends in one feature-gated crate — `bare` / `native` (redb) / `opfs` | `native::*` (redb + cache), `bare`, `opfs::OpfsKappaStore` |
+| `hologram-net` | uor-native network (SPINE-4 `KappaSync`): bare frames, HTTP-CAS, κ-XOR Kademlia DHT | `bare::BareNetSync`, `http::live::HttpKappaSync`, `tcp`, `quic` |
+| `hologram-runtime` | Container-runtime orchestration: lifecycle (`Session`), snapshot-as-κ, capability enforcement | `Runtime`, `lifecycle::Session`, `ContainerEngine` |
+| `hologram-emulator` | Deterministic RISC-V / x86-64 / aarch64 cores that boot an OS on the substrate | `Arch`, `Emulator`, `MachineSpec` |
+| `hologram-efi` | Bare-metal UEFI boot binary `hologram.efi` (workspace-excluded; `x86_64-unknown-uefi`) | measured-boot self-test over `BareMetalKappaStore` |
+
+### Facade, tooling & conformance (leaf tier)
+
+| Crate | Role | Key types |
+|---|---|---|
+| `hologram` | Facade: feature-gated re-exports + the `Client` type | `Client`, `ClientBuilder`, `Holo` |
+| `hologram-cli` | The one `hologram` binary: `compile` / `execute` / `inspect` / `bench` + `node` / `app` / `network` | `cmd::run_from_env` |
+| `hologram-ffi` | C ABI + WASM bindings over the CPU backend | `hologram_session_*`, `hologram_source_builder_*` |
+| `hologram-bench` | Criterion performance battery (roofline, matmul, fusion, decode, …) | `[[bench]]` targets |
+| `hologram-conformance` | BDD (cucumber) conformance runner + honesty meta-gate | `ConformanceWorld`, `bdd` / `meta_gate` |
+
+### Spaces (platform implementations of the contract)
+
+| Crate | Role | Key types |
+|---|---|---|
+| `spaces/holospaces` | Portable `Space` + Platform Manager: provisions & boots content-addressed environments | `Holospace`, `boot::Session`, `peer` / `manager` |
+| `spaces/holospaces-browser` | wasm32 browser peer (excluded): loading the bundle makes the browser *be* the substrate — no server | `Workspace`, `WebRtcLink`, `#[wasm_bindgen]` console |
+| `spaces/holospaces-node` | Edge/native peer: NIC egress + durable storage a browser routes through, OTA-updated | `EgressServer`, `storage`, `ota` |
+
+### Root facade crate
+
+The root `hologram` package is the application-facing import surface. It does not
+add execution logic; [`src/lib.rs`](src/lib.rs) owns the export policy — each
+enabled Cargo feature creates a module and re-exports the matching backing crate.
+
+| Feature | Public surface | Backing crate |
+|---|---|---|
+| `types` | `hologram::types` | `hologram-types` |
+| `ops` | `hologram::ops` | `hologram-ops` |
+| `graph` | `hologram::graph` | `hologram-graph` |
+| `compiler` | `hologram::compiler` | `hologram-compiler` |
+| `archive` | `hologram::archive` | `hologram-archive` |
+| `backend` | `hologram::backend` | `hologram-compute` |
+| `exec` | `hologram::exec` | `hologram-exec` |
+| `space` | `hologram::space` | `hologram-space` |
+| `ffi` | `hologram::ffi` | `hologram-ffi` |
+| `cli` | `hologram::cli` | `hologram-cli` |
+| `bench` | `hologram::bench` | `hologram-bench` |
+| `client` | `hologram::Client` (+ `Holo`, `ClientBuilder`) | composition over `hologram-space` + `hologram-runtime` |
+
+The remaining substrate crates (`hologram-net`, `-store`, `-tck`, `-emulator`, and
+`-runtime` beyond what `client` pulls) are currently consumed directly, wired by
+the CLI's `node` command and the `spaces/` peers rather than re-exported as facade
+modules. Direct dependencies on individual crates remain supported for low-level
+crate authors, but applications should prefer the root facade.
 
 ---
 
@@ -892,113 +987,25 @@ The κ-store performance floors (`sp_floors`, under `hologram-store` /
 
 ---
 
-## CLI
+## Build & development
 
-`hologram-cli` builds the single `hologram` binary — the one programmatic surface
-for the tensor engine *and* the substrate node.
+Requires: Rust stable, [`just`](https://github.com/casey/just).
 
-```bash
-# compile native Hologram source (or an empty graph) to a .holo archive
-hologram compile --source graph.txt --output model.holo
-
-# compile a Python / TypeScript / Rust file containing Hologram builder functions
-cargo run -p hologram-cli --features frontend-python -- compile \
-  --source graph.py --graph encoder --output model.holo
-
-# override extension-based language detection when needed
-hologram compile --source embedded.txt --source-language python --graph encoder --output model.holo
-
-# inspect an archive's section table
-hologram inspect --archive model.holo
-
-# execute against zero-byte inputs; prints each output port's byte length
-hologram execute --archive model.holo
-
-# micro-bench: run an archive N times, report wall-clock per iteration
-hologram bench --archive model.holo --iterations 100
-```
-
-Substrate tooling unified into the same binary (D13):
-
-```bash
-# node — a content store / router / server over a KappaStore (redb)
-hologram node put weights.bin           # store bytes, print the κ-label
-hologram node get <kappa>               # write a κ's canonical bytes to stdout
-hologram node verify <kappa> weights.bin  # re-derive and check (SPINE-4)
-hologram node serve --listen 127.0.0.1:8080 --tcp 127.0.0.1:9000  # HTTP-CAS + κ-XOR DHT
-# (also: pin / unpin / gc / ls / inspect / manifest / spawn / caps — see `hologram node --help`)
-
-# app — .holo v3 application tooling (inspect layers + certificates; fat<->thin, app κ unchanged)
-hologram app inspect --archive app.holo
-hologram app thin --input app.holo --output app.thin.holo
-hologram app fat  --input app.holo --output app.fat.holo --store node.redb
-
-# network — Network (VPC-analogue) realizations: membership / policy / key are all κ
-hologram network create --member founder.key --policy caps.bin --tier restricted --output net.bin
-hologram network show --network net.bin
-hologram network delegate --parent parent.caps --child child.caps --output deleg.bin  # attenuation only
-```
-
-Install:
-
-```bash
-cargo install --path crates/hologram-cli
-```
-
----
-
-## C FFI
-
-`hologram-ffi` exposes the pipeline through a C ABI. A session is referenced by
-an integer handle into a process-local table:
-
-```c
-// compile native Hologram source into a .holo archive (written to `out`)
-int len = hologram_compile_source(src, src_len, out, out_capacity);
-
-// or build the same SourceProgram through the ABI without parsing source text
-HologramSourceBuilder *b = hologram_source_builder_new();
-hologram_source_builder_input(b, &input_desc);
-hologram_source_builder_const(b, &small_inline_const);
-hologram_source_builder_const_ref(b, &file_backed_const); // path + byte range + BLAKE3
-hologram_source_builder_op(b, &op_desc);
-hologram_source_builder_output(b, output_name);
-int built_len = hologram_source_builder_compile(b, out, out_capacity);
-if (built_len < 0) {
-    int code = hologram_last_error_code();
-    const char *message = hologram_last_error_message();
-    size_t line = hologram_last_error_line();
-    size_t column = hologram_last_error_column();
-    const char *rejected = hologram_last_error_rejected();
-}
-hologram_source_builder_free(b);
-
-// load an archive into a session, returning a handle (or a negative error)
-int h = hologram_session_load(archive, archive_len);
-int in_count  = hologram_session_input_count(h);
-int out_count = hologram_session_output_count(h);
-
-// ports carry a semantic name + shape (multi-input models map by identity)
-hologram_session_input_name(h, 0, name_buf, name_cap);   // snprintf-style copy
-int rank = hologram_session_input_shape(h, 0, dims, dim_cap);
-int dtype = hologram_session_input_dtype(h, 0);
-// (and hologram_session_output_name / output_shape / output_dtype)
-
-// open producer-defined metadata (tokenizer, gen config, …) travels in the archive
-int n = hologram_session_extension(h, key, key_len, out, out_cap); // bytes, or -1
-
-// execute (inputs/outputs marshalled as byte buffers), then release
-hologram_session_execute(h, /* … */);
-hologram_session_close(h);
-```
-
-Ownership, versioning, feature probing, and error-code rules are captured in
-[`specs/docs/ffi-abi-contract.md`](specs/docs/ffi-abi-contract.md).
-SDK bindings should check `hologram_abi_version()` and required
-`hologram_feature_supported(...)` strings before calling optional builder APIs.
-
-Built for `wasm32-unknown-unknown` with `--features wasm`; the browser demo
-under `site/` loads the resulting module.
+| Command | What it does |
+|---|---|
+| `just ci` | fmt check + clippy + test suite + supply-chain gate (`cargo deny`) |
+| `just test` | `cargo nextest run --workspace` + the cucumber `bdd` suite |
+| `just vv` | full Verification & Validation: conformance + bdd + parallel + perf + deny + wasm + embedded |
+| `just conformance` | external-authority conformance suites (archive/compute/exec) |
+| `just bdd` | cucumber conformance runner + honesty meta-gate (catalog ↔ scenario bijection) |
+| `just bench` | Criterion benchmarks |
+| `just fmt` | `cargo fmt --all` |
+| `just clippy` | `cargo clippy --workspace -- -D warnings` |
+| `just wasm` | Build the `no_std` stack (tensor engine + substrate) for `wasm32-unknown-unknown` |
+| `just embedded` | Build the `no_std` stack for bare-metal ARM (`thumbv7em-none-eabi`) |
+| `just examples` | Run the container-substrate examples (CAS cache, event bus, least-privilege, Wasm inference, live migration) |
+| `just uefi-boot` | Build `hologram.efi` and boot it in QEMU/OVMF (no OS), asserting the storage self-check passes |
+| `just release <version>` / `just release-auto [bump]` | Cut a lockstep workspace release via the `version-bump` GitHub workflow |
 
 ---
 
@@ -1018,8 +1025,10 @@ for a detailed walkthrough of the execution model, quantum levels (Q0/Q1), the
 ## Contributing
 
 Contributions are welcome. Fork the repository, create a topic branch off `main`,
-make your change, and open a pull request. Before submitting, run the full quality
-gate locally — CI runs the same one and it must be green:
+make your change, and open a pull request. `main` is governed by a merge queue,
+and every PR must pass the aggregate `CI Success` check before it can land — so
+run the full quality gate locally first (CI runs the same one, and it must be
+green):
 
 ```bash
 just ci   # fmt check + clippy (-D warnings) + test suite + supply-chain gate (cargo deny)
