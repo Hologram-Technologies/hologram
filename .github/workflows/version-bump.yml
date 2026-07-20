@@ -155,8 +155,12 @@ jobs:
           VERSION=${{ steps.bump.outputs.new_version }}
 
           # Add all Cargo.toml files, the changelogs, and the API snapshots +
-          # history archived by the API-snapshot step.
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md api/ \
+          # history archived by the API-snapshot step. NOTE: `crates/*/Cargo.toml` catches the
+          # excluded `hologram-efi`, but the workspace-excluded `spaces/holospaces-browser` lives
+          # under spaces/, so it must be listed explicitly — otherwise the sync bumps it in the
+          # working tree but this step never stages it and it drifts a version behind.
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml spaces/holospaces-browser/Cargo.toml \
+                  CHANGELOG.md api/ \
                   sdk/typescript/package.json sdk/typescript/native/package.json \
                   sdk/typescript/wasm/package.json sdk/typescript/native/native/Cargo.toml \
                   sdk/typescript/wasm/driver/Cargo.toml sdk/python/pyproject.toml \
