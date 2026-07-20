@@ -186,6 +186,12 @@ jobs:
         env:
           CC_ONLY: "1"
           HOLOSPACES_SKIP_PERF: "1"
+          # Re-quarantine the 3 VS Code web-workbench suites (non-gating; still reported). The
+          # refactor un-quarantined them betting the CI runner has CDN access, but it can't reach
+          # the vscode-cdn / welcome-media assets either (net::ERR_FAILED) — an environmental gap,
+          # not a real regression. See vv/run.sh's VV_QUARANTINE hook. Drop these once the assets are
+          # vendored/proxied so the browser loads them offline.
+          VV_QUARANTINE: "cc51-scm-git cc52-search cc53-tasks"
         run: bash vv/run.sh
 
       - name: Ledger heavy witnesses without a dedicated vv/ suite (CC-31, CC-51)
