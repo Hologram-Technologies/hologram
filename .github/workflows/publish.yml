@@ -62,7 +62,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace
+        # Exclude holospaces (mirrors ci.yml): its CC integration tests need the vv/artifacts
+        # fixtures + Linux tools (qemu/e2fsprogs/docker); on a plain runner where a tool is present
+        # but the fixture isn't, they fail instead of skipping. They're gated by release.yml's
+        # holospaces-vv-heavy job (fixtures materialized), which the release tag also triggers.
+        run: cargo test --workspace --exclude holospaces
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
