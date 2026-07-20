@@ -16,6 +16,9 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+-*"
   pull_request:
     branches: [main]
+  # Merge queue: GitHub builds each queued PR on a temporary `merge_group` ref, so the lean gate
+  # must run there too — otherwise the required `CI Success` check never reports and the queue stalls.
+  merge_group:
   workflow_dispatch: {}
   # Nightly rot-detection lives in `release.yml` (it owns the heavy jobs); this lean gate has nothing
   # to re-run on a schedule.
