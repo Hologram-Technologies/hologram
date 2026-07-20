@@ -1,14 +1,20 @@
-# Publish the three TypeScript SDK packages to npm under the @uor-foundation scope:
-#   - @uor-foundation/sdk     (meta / pure-TS surface)
-#   - @uor-foundation/native  (N-API addon — BUNDLED multi-platform: every target's hologram-*.node
+# Publish the three TypeScript SDK packages to npm under the @tryhologram scope:
+#   - @tryhologram/sdk     (meta / pure-TS surface)
+#   - @tryhologram/native  (N-API addon — BUNDLED multi-platform: every target's hologram-*.node
 #                              ships in one package; src/index.ts `targetTag` picks the match at load)
-#   - @uor-foundation/wasm    (wasm32 driver)
+#   - @tryhologram/wasm    (wasm32 driver)
 #
-# Auth is npm TRUSTED PUBLISHING (OIDC) — there is NO NPM_TOKEN. Each package must have a trusted
-# publisher configured on npmjs.com pointing at THIS workflow (publish-npm.yml) in this repo. That's
-# why there is no token `gate` job like publish-crates.yml / publish-pypi.yml: OIDC can't be probed
-# from a secret, so an unconfigured publisher just fails the publish step loudly. If the npm trusted
-# publisher requires a GitHub Environment, add `environment: <name>` to the `publish` job to match.
+# Auth is npm TRUSTED PUBLISHING (OIDC) in the steady state — no long-lived token. Each package must
+# have a trusted publisher configured on npmjs.com pointing at THIS workflow (publish-npm.yml) in this
+# repo. There is no token `gate` job like publish-crates.yml / publish-pypi.yml: OIDC can't be probed
+# from a secret, so an unconfigured publisher just fails the publish step loudly.
+#
+# BOOTSTRAP: npm (unlike PyPI) will not let you configure a trusted publisher until the package already
+# exists. To create the packages the first time, set an `NPM_TOKEN` repo secret (a granular Automation
+# token with publish rights to @tryhologram) — the publish step uses it when present, else it falls
+# through to OIDC. Then configure the trusted publishers, set each package's 2FA to allow automation
+# tokens, and delete NPM_TOKEN. If a trusted publisher requires a GitHub Environment, add
+# `environment: <name>` to the `publish` job to match.
 name: publish-npm
 
 run-name: >-
@@ -39,7 +45,7 @@ jobs:
   # Build the N-API addon on every target OS. Each job emits exactly one
   # sdk/typescript/native/dist/hologram-<platform>-<arch>.node (the tag is chosen by
   # scripts/copy-native.mjs from process.platform/arch). These are the per-platform binaries the
-  # bundled @uor-foundation/native package carries and selects between at load time.
+  # bundled @tryhologram/native package carries and selects between at load time.
   native-addon:
     name: native addon (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -65,7 +71,7 @@ jobs:
           key: publish-npm-native-${{ matrix.os }}
 
       # --ignore-scripts: don't run prepack (we build explicitly below).
-      # --legacy-peer-deps: the @uor-foundation/sdk peer isn't on npm yet during a first release.
+      # --legacy-peer-deps: the @tryhologram/sdk peer isn't on npm yet during a first release.
       - name: Install SDK deps
         working-directory: sdk/typescript
         run: npm install --ignore-scripts --legacy-peer-deps
@@ -95,16 +101,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # No `registry-url:` — that would seed .npmrc with an empty `_authToken` line that can shadow
+      # OIDC. Auth is set explicitly in the publish step (OIDC by default; NPM_TOKEN when bootstrapping).
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
 
       # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10.x.
       - name: Upgrade npm for OIDC trusted publishing
         run: npm install -g npm@latest
 
-      # Only @uor-foundation/wasm's check:driver touches cargo (cargo check --target wasm32).
+      # Only @tryhologram/wasm's check:driver touches cargo (cargo check --target wasm32).
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -115,11 +122,11 @@ jobs:
           npm install --ignore-scripts --legacy-peer-deps --prefix sdk/typescript/native
           npm install --ignore-scripts --legacy-peer-deps --prefix sdk/typescript/wasm
 
-      # --- @uor-foundation/sdk (meta, pure TS) — prepack is `npm run build`. ---
+      # --- @tryhologram/sdk (meta, pure TS) — prepack is `npm run build`. ---
       - name: Build sdk
         run: npm run build --prefix sdk/typescript
 
-      # --- @uor-foundation/native — assemble the bundle: all per-platform .node + tsc output. ---
+      # --- @tryhologram/native — assemble the bundle: all per-platform .node + tsc output. ---
       - name: Gather every platform's addon into native/dist
         uses: actions/download-artifact@v7
         with:
@@ -136,7 +143,7 @@ jobs:
           # 4 mainstream targets today (linux-x64, darwin-x64, darwin-arm64, win32-x64).
           if [ "$n" -lt 4 ]; then echo "::error::expected >=4 bundled addons, found $n"; exit 1; fi
 
-      # --- @uor-foundation/wasm — prepack is `npm run build`; check:driver mirrors release.yml. ---
+      # --- @tryhologram/wasm — prepack is `npm run build`; check:driver mirrors release.yml. ---
       - name: Build + check wasm
         run: |
           npm run build --prefix sdk/typescript/wasm
@@ -145,8 +152,19 @@ jobs:
       - name: Publish (or dry-run)
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          # Steady state: unset → OIDC trusted publishing. Bootstrap: set to a granular Automation
+          # token to create the packages the first time (see the BOOTSTRAP note in the header).
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ -n "${NPM_TOKEN:-}" ]; then
+              echo "Publishing with NPM_TOKEN (bootstrap — OIDC trusted publisher not yet configured)."
+              echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
+            else
+              echo "Publishing via OIDC trusted publishing (no token; provenance is automatic)."
+            fi
+          fi
           ship() {
             dir="$1"
             if [ "$DRY_RUN" = "true" ]; then
@@ -155,7 +173,8 @@ jobs:
               echo "::endgroup::"
             else
               # --ignore-scripts: dist is already built above; skip prepack's cargo rebuild.
-              npm publish "./$dir" --provenance --access public --ignore-scripts
+              # No --provenance: it's automatic under OIDC, and unwanted for a token bootstrap.
+              npm publish "./$dir" --access public --ignore-scripts
             fi
           }
           # sdk first: native + wasm declare it as an exact-version peer.

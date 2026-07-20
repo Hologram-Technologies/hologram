@@ -469,10 +469,10 @@ build the same graph contract directly. The initial package scaffolds live under
 The demos below use only package-root exports: Python re-exports `Graph`,
 `Session`, `f32`, `compile_source`, and `compile_source_file` from
 `hologram`; TypeScript re-exports `Graph`, `Session`, `f32`, and
-`compileSource` from `@uor-foundation/sdk`; the Node adapter re-exports
-`createNativeBinding` and `compileSourceFile` from `@uor-foundation/native`; the
+`compileSource` from `@tryhologram/sdk`; the Node adapter re-exports
+`createNativeBinding` and `compileSourceFile` from `@tryhologram/native`; the
 WASM adapter re-exports `loadWasmBinding` and `createWasmBinding` from
-`@uor-foundation/wasm`.
+`@tryhologram/wasm`.
 
 ```python
 import hologram as hg
@@ -491,8 +491,8 @@ with hg.Session.load(archive) as session:
 ```
 
 ```ts
-import { Graph, Session, f32 } from "@uor-foundation/sdk";
-import { createNativeBinding } from "@uor-foundation/native";
+import { Graph, Session, f32 } from "@tryhologram/sdk";
+import { createNativeBinding } from "@tryhologram/native";
 
 const native = createNativeBinding();
 const g = new Graph("encoder");
@@ -512,8 +512,8 @@ await session.close();
 ```
 
 Python packages as `hologram` from `sdk/python/`; TypeScript packages as
-`@uor-foundation/sdk` from `sdk/typescript/`. `@uor-foundation/native` provides the Node
-N-API binding, while `@uor-foundation/wasm` provides the browser-safe adapter plus
+`@tryhologram/sdk` from `sdk/typescript/`. `@tryhologram/native` provides the Node
+N-API binding, while `@tryhologram/wasm` provides the browser-safe adapter plus
 WASM driver crate. The prebuild and installed-package smoke matrix is tracked
 in [`sdk/PREBUILD.md`](sdk/PREBUILD.md).
 
@@ -525,8 +525,8 @@ archive = hg.compile_source_file("graph.txt")
 ```
 
 ```ts
-import { compileSource } from "@uor-foundation/sdk";
-import { compileSourceFile, createNativeBinding } from "@uor-foundation/native";
+import { compileSource } from "@tryhologram/sdk";
+import { compileSourceFile, createNativeBinding } from "@tryhologram/native";
 
 const native = createNativeBinding();
 const archive = await compileSourceFile("graph.txt", native);
@@ -540,7 +540,7 @@ callers can catch categories instead of parsing message text. Python exports
 `hg.ArchiveLoadError`, `hg.ExecutionError`, `hg.AbiMismatchError`,
 `hg.InvalidArgumentError`, `hg.UnsupportedDTypeError`, and
 `hg.CompileError`. TypeScript exports the same classes plus
-`errorFromCode(code, message)` and `ERROR_*` constants from `@uor-foundation/sdk`.
+`errorFromCode(code, message)` and `ERROR_*` constants from `@tryhologram/sdk`.
 Where a frontend can identify source position, errors also preserve
 `line`, `column`, and `rejected` fields. File-backed `const_ref` values are
 read and hash-checked during compile; runtime sessions never reopen source

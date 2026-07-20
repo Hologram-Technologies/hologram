@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const sdk = await import(installedEntry("@uor-foundation/sdk"));
-const native = await import(installedEntry("@uor-foundation/native"));
+const sdk = await import(installedEntry("@tryhologram/sdk"));
+const native = await import(installedEntry("@tryhologram/native"));
 
 const binding = native.createNativeBinding();
 const graph = new sdk.Graph("installed_native_smoke");
