@@ -1,0 +1,1536 @@
+pub mod hologram_types
+pub use hologram_types::Digest
+pub use hologram_types::MatrixShape
+pub use hologram_types::VectorShape
+pub use hologram_types::prism
+pub use hologram_types::sdk
+pub mod hologram_types::act_quant
+pub const hologram_types::act_quant::W8A32: u8
+pub const hologram_types::act_quant::W8A8_TOKEN_SYM: u8
+pub mod hologram_types::dtype
+pub enum hologram_types::dtype::DTypeKind
+pub hologram_types::dtype::DTypeKind::Bfloat
+pub hologram_types::dtype::DTypeKind::Bool
+pub hologram_types::dtype::DTypeKind::Float
+pub hologram_types::dtype::DTypeKind::SignedInt
+pub hologram_types::dtype::DTypeKind::UnsignedInt
+impl core::clone::Clone for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::clone(&self) -> hologram_types::dtype::DTypeKind
+impl core::cmp::Eq for hologram_types::dtype::DTypeKind
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::eq(&self, &hologram_types::dtype::DTypeKind) -> bool
+impl core::fmt::Debug for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeKind
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeKind
+impl core::marker::Freeze for hologram_types::dtype::DTypeKind
+impl core::marker::Send for hologram_types::dtype::DTypeKind
+impl core::marker::Sync for hologram_types::dtype::DTypeKind
+impl core::marker::Unpin for hologram_types::dtype::DTypeKind
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeKind
+pub struct hologram_types::dtype::DTypeBf16
+impl core::clone::Clone for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::clone(&self) -> hologram_types::dtype::DTypeBf16
+impl core::cmp::Eq for hologram_types::dtype::DTypeBf16
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::eq(&self, &hologram_types::dtype::DTypeBf16) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::default() -> hologram_types::dtype::DTypeBf16
+impl core::fmt::Debug for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeBf16
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBf16
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBf16::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeBf16::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeBf16::IRI: &'static str
+pub const hologram_types::dtype::DTypeBf16::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeBf16
+impl core::marker::Send for hologram_types::dtype::DTypeBf16
+impl core::marker::Sync for hologram_types::dtype::DTypeBf16
+impl core::marker::Unpin for hologram_types::dtype::DTypeBf16
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBf16
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBf16
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBf16
+pub struct hologram_types::dtype::DTypeBool
+impl core::clone::Clone for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::clone(&self) -> hologram_types::dtype::DTypeBool
+impl core::cmp::Eq for hologram_types::dtype::DTypeBool
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::eq(&self, &hologram_types::dtype::DTypeBool) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::default() -> hologram_types::dtype::DTypeBool
+impl core::fmt::Debug for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeBool
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBool
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBool::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeBool::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeBool::IRI: &'static str
+pub const hologram_types::dtype::DTypeBool::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeBool
+impl core::marker::Send for hologram_types::dtype::DTypeBool
+impl core::marker::Sync for hologram_types::dtype::DTypeBool
+impl core::marker::Unpin for hologram_types::dtype::DTypeBool
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBool
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBool
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBool
+pub struct hologram_types::dtype::DTypeF16
+impl core::clone::Clone for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::clone(&self) -> hologram_types::dtype::DTypeF16
+impl core::cmp::Eq for hologram_types::dtype::DTypeF16
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::eq(&self, &hologram_types::dtype::DTypeF16) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::default() -> hologram_types::dtype::DTypeF16
+impl core::fmt::Debug for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF16
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF16
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF16::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF16::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF16::IRI: &'static str
+pub const hologram_types::dtype::DTypeF16::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF16
+impl core::marker::Send for hologram_types::dtype::DTypeF16
+impl core::marker::Sync for hologram_types::dtype::DTypeF16
+impl core::marker::Unpin for hologram_types::dtype::DTypeF16
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF16
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF16
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF16
+pub struct hologram_types::dtype::DTypeF32
+impl core::clone::Clone for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::clone(&self) -> hologram_types::dtype::DTypeF32
+impl core::cmp::Eq for hologram_types::dtype::DTypeF32
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::eq(&self, &hologram_types::dtype::DTypeF32) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::default() -> hologram_types::dtype::DTypeF32
+impl core::fmt::Debug for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF32
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF32
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF32::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF32::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF32::IRI: &'static str
+pub const hologram_types::dtype::DTypeF32::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF32
+impl core::marker::Send for hologram_types::dtype::DTypeF32
+impl core::marker::Sync for hologram_types::dtype::DTypeF32
+impl core::marker::Unpin for hologram_types::dtype::DTypeF32
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF32
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF32
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF32
+pub struct hologram_types::dtype::DTypeF64
+impl core::clone::Clone for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::clone(&self) -> hologram_types::dtype::DTypeF64
+impl core::cmp::Eq for hologram_types::dtype::DTypeF64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::eq(&self, &hologram_types::dtype::DTypeF64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::default() -> hologram_types::dtype::DTypeF64
+impl core::fmt::Debug for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF64::IRI: &'static str
+pub const hologram_types::dtype::DTypeF64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF64
+impl core::marker::Send for hologram_types::dtype::DTypeF64
+impl core::marker::Sync for hologram_types::dtype::DTypeF64
+impl core::marker::Unpin for hologram_types::dtype::DTypeF64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF64
+pub struct hologram_types::dtype::DTypeI32
+impl core::clone::Clone for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::clone(&self) -> hologram_types::dtype::DTypeI32
+impl core::cmp::Eq for hologram_types::dtype::DTypeI32
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::eq(&self, &hologram_types::dtype::DTypeI32) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::default() -> hologram_types::dtype::DTypeI32
+impl core::fmt::Debug for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI32
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI32
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI32::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI32::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI32::IRI: &'static str
+pub const hologram_types::dtype::DTypeI32::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI32
+impl core::marker::Send for hologram_types::dtype::DTypeI32
+impl core::marker::Sync for hologram_types::dtype::DTypeI32
+impl core::marker::Unpin for hologram_types::dtype::DTypeI32
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI32
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI32
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI32
+pub struct hologram_types::dtype::DTypeI4
+impl core::clone::Clone for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::clone(&self) -> hologram_types::dtype::DTypeI4
+impl core::cmp::Eq for hologram_types::dtype::DTypeI4
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::eq(&self, &hologram_types::dtype::DTypeI4) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::default() -> hologram_types::dtype::DTypeI4
+impl core::fmt::Debug for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI4
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI4
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI4::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI4::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI4::IRI: &'static str
+pub const hologram_types::dtype::DTypeI4::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI4
+impl core::marker::Send for hologram_types::dtype::DTypeI4
+impl core::marker::Sync for hologram_types::dtype::DTypeI4
+impl core::marker::Unpin for hologram_types::dtype::DTypeI4
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI4
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI4
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI4
+pub struct hologram_types::dtype::DTypeI64
+impl core::clone::Clone for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::clone(&self) -> hologram_types::dtype::DTypeI64
+impl core::cmp::Eq for hologram_types::dtype::DTypeI64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::eq(&self, &hologram_types::dtype::DTypeI64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::default() -> hologram_types::dtype::DTypeI64
+impl core::fmt::Debug for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI64::IRI: &'static str
+pub const hologram_types::dtype::DTypeI64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI64
+impl core::marker::Send for hologram_types::dtype::DTypeI64
+impl core::marker::Sync for hologram_types::dtype::DTypeI64
+impl core::marker::Unpin for hologram_types::dtype::DTypeI64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI64
+pub struct hologram_types::dtype::DTypeI8
+impl core::clone::Clone for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::clone(&self) -> hologram_types::dtype::DTypeI8
+impl core::cmp::Eq for hologram_types::dtype::DTypeI8
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::eq(&self, &hologram_types::dtype::DTypeI8) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::default() -> hologram_types::dtype::DTypeI8
+impl core::fmt::Debug for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI8
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI8
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI8::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI8::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI8::IRI: &'static str
+pub const hologram_types::dtype::DTypeI8::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI8
+impl core::marker::Send for hologram_types::dtype::DTypeI8
+impl core::marker::Sync for hologram_types::dtype::DTypeI8
+impl core::marker::Unpin for hologram_types::dtype::DTypeI8
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI8
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI8
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI8
+pub struct hologram_types::dtype::DTypeU64
+impl core::clone::Clone for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::clone(&self) -> hologram_types::dtype::DTypeU64
+impl core::cmp::Eq for hologram_types::dtype::DTypeU64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::eq(&self, &hologram_types::dtype::DTypeU64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::default() -> hologram_types::dtype::DTypeU64
+impl core::fmt::Debug for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeU64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeU64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeU64::IRI: &'static str
+pub const hologram_types::dtype::DTypeU64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeU64
+impl core::marker::Send for hologram_types::dtype::DTypeU64
+impl core::marker::Sync for hologram_types::dtype::DTypeU64
+impl core::marker::Unpin for hologram_types::dtype::DTypeU64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU64
+pub struct hologram_types::dtype::DTypeU8
+impl core::clone::Clone for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::clone(&self) -> hologram_types::dtype::DTypeU8
+impl core::cmp::Eq for hologram_types::dtype::DTypeU8
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::eq(&self, &hologram_types::dtype::DTypeU8) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::default() -> hologram_types::dtype::DTypeU8
+impl core::fmt::Debug for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeU8
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU8
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeU8::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeU8::IRI: &'static str
+pub const hologram_types::dtype::DTypeU8::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeU8
+impl core::marker::Send for hologram_types::dtype::DTypeU8
+impl core::marker::Sync for hologram_types::dtype::DTypeU8
+impl core::marker::Unpin for hologram_types::dtype::DTypeU8
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU8
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU8
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU8
+pub trait hologram_types::dtype::DType: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::dtype::DType::BIT_WIDTH: u32
+pub const hologram_types::dtype::DType::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBf16::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBool::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF16::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF32::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI32::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI4::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI8::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+pub mod hologram_types::dtype_id
+pub mod hologram_types::dtype_id::act_quant
+pub const hologram_types::dtype_id::act_quant::W8A32: u8
+pub const hologram_types::dtype_id::act_quant::W8A8_TOKEN_SYM: u8
+pub mod hologram_types::dtype_id::weight_layout
+pub const hologram_types::dtype_id::weight_layout::OUTPUT_MAJOR: u8
+pub const hologram_types::dtype_id::weight_layout::ROW_MAJOR: u8
+#[repr(transparent)] pub struct hologram_types::dtype_id::DTypeId(pub u8)
+impl hologram_types::dtype_id::DTypeId
+pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]
+pub const hologram_types::dtype_id::DTypeId::BF16: Self
+pub const hologram_types::dtype_id::DTypeId::BOOL: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB_GROUP_DIM: u32
+pub const hologram_types::dtype_id::DTypeId::E8CB_MAX_ENTRIES: usize
+pub const hologram_types::dtype_id::DTypeId::F16: Self
+pub const hologram_types::dtype_id::DTypeId::F32: Self
+pub const hologram_types::dtype_id::DTypeId::F64: Self
+pub const hologram_types::dtype_id::DTypeId::I32: Self
+pub const hologram_types::dtype_id::DTypeId::I4: Self
+pub const hologram_types::dtype_id::DTypeId::I64: Self
+pub const hologram_types::dtype_id::DTypeId::I8: Self
+pub const hologram_types::dtype_id::DTypeId::U64: Self
+pub const hologram_types::dtype_id::DTypeId::U8: Self
+pub const fn hologram_types::dtype_id::DTypeId::bytes_per_element(self) -> core::option::Option<usize>
+pub const fn hologram_types::dtype_id::DTypeId::is_float(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_quantized_weight(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_sub_byte(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::known(self) -> core::option::Option<Self>
+pub const fn hologram_types::dtype_id::DTypeId::name(self) -> &'static str
+pub const fn hologram_types::dtype_id::DTypeId::raw(self) -> u8
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes(self, u32) -> core::option::Option<u32>
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes_u64(self, u64) -> core::option::Option<u64>
+impl core::clone::Clone for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::clone(&self) -> hologram_types::dtype_id::DTypeId
+impl core::cmp::Eq for hologram_types::dtype_id::DTypeId
+impl core::cmp::Ord for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::eq(&self, &hologram_types::dtype_id::DTypeId) -> bool
+impl core::cmp::PartialOrd for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::partial_cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype_id::DTypeId
+impl core::marker::StructuralPartialEq for hologram_types::dtype_id::DTypeId
+impl core::marker::Freeze for hologram_types::dtype_id::DTypeId
+impl core::marker::Send for hologram_types::dtype_id::DTypeId
+impl core::marker::Sync for hologram_types::dtype_id::DTypeId
+impl core::marker::Unpin for hologram_types::dtype_id::DTypeId
+impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId
+pub mod hologram_types::host
+pub use hologram_types::host::prism
+pub use hologram_types::host::sdk
+pub struct hologram_types::host::HologramHostBoundsAvx2
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::clone(&self) -> hologram_types::HologramHostBoundsAvx2
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx2
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::eq(&self, &hologram_types::HologramHostBoundsAvx2) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::default() -> hologram_types::HologramHostBoundsAvx2
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx2
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx2
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx2
+pub const hologram_types::HologramHostBoundsAvx2::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx2::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx2::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx2
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx2
+pub struct hologram_types::host::HologramHostBoundsAvx512
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::clone(&self) -> hologram_types::HologramHostBoundsAvx512
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx512
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::eq(&self, &hologram_types::HologramHostBoundsAvx512) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::default() -> hologram_types::HologramHostBoundsAvx512
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx512
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx512
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx512
+pub const hologram_types::HologramHostBoundsAvx512::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx512::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx512::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx512
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx512
+pub struct hologram_types::host::HologramHostBoundsCpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::clone(&self) -> hologram_types::HologramHostBoundsCpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsCpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::eq(&self, &hologram_types::HologramHostBoundsCpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::default() -> hologram_types::HologramHostBoundsCpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsCpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsCpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsCpu
+pub const hologram_types::HologramHostBoundsCpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsCpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsCpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsCpu
+impl core::marker::Send for hologram_types::HologramHostBoundsCpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsCpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsCpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsCpu
+pub struct hologram_types::host::HologramHostBoundsMetal
+impl core::clone::Clone for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::clone(&self) -> hologram_types::HologramHostBoundsMetal
+impl core::cmp::Eq for hologram_types::HologramHostBoundsMetal
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::eq(&self, &hologram_types::HologramHostBoundsMetal) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::default() -> hologram_types::HologramHostBoundsMetal
+impl core::fmt::Debug for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsMetal
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsMetal
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsMetal
+pub const hologram_types::HologramHostBoundsMetal::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsMetal::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsMetal::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsMetal
+impl core::marker::Send for hologram_types::HologramHostBoundsMetal
+impl core::marker::Sync for hologram_types::HologramHostBoundsMetal
+impl core::marker::Unpin for hologram_types::HologramHostBoundsMetal
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsMetal
+pub struct hologram_types::host::HologramHostBoundsNeon
+impl core::clone::Clone for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::clone(&self) -> hologram_types::HologramHostBoundsNeon
+impl core::cmp::Eq for hologram_types::HologramHostBoundsNeon
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::eq(&self, &hologram_types::HologramHostBoundsNeon) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::default() -> hologram_types::HologramHostBoundsNeon
+impl core::fmt::Debug for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsNeon
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsNeon
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsNeon
+pub const hologram_types::HologramHostBoundsNeon::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsNeon::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsNeon::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsNeon
+impl core::marker::Send for hologram_types::HologramHostBoundsNeon
+impl core::marker::Sync for hologram_types::HologramHostBoundsNeon
+impl core::marker::Unpin for hologram_types::HologramHostBoundsNeon
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsNeon
+pub struct hologram_types::host::HologramHostBoundsWgpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::clone(&self) -> hologram_types::HologramHostBoundsWgpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsWgpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::eq(&self, &hologram_types::HologramHostBoundsWgpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::default() -> hologram_types::HologramHostBoundsWgpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsWgpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsWgpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsWgpu
+pub const hologram_types::HologramHostBoundsWgpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsWgpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsWgpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Send for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu
+pub type hologram_types::host::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu
+pub type hologram_types::host::HologramHasher = prism_crypto::hash::Blake3Hasher
+pub type hologram_types::host::HologramHostTypes = uor_foundation::DefaultHostTypes
+pub mod hologram_types::memory_tier
+#[repr(u8)] pub enum hologram_types::memory_tier::MemoryTier
+pub hologram_types::memory_tier::MemoryTier::CpuL1 = 0
+pub hologram_types::memory_tier::MemoryTier::CpuL2 = 1
+pub hologram_types::memory_tier::MemoryTier::CpuMain = 2
+pub hologram_types::memory_tier::MemoryTier::Device = 3
+impl hologram_types::memory_tier::MemoryTier
+pub const fn hologram_types::memory_tier::MemoryTier::from_u8(u8) -> core::option::Option<Self>
+pub const fn hologram_types::memory_tier::MemoryTier::from_witt(u16, bool) -> Self
+pub const fn hologram_types::memory_tier::MemoryTier::is_cpu(&self) -> bool
+impl core::clone::Clone for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::clone(&self) -> hologram_types::memory_tier::MemoryTier
+impl core::cmp::Eq for hologram_types::memory_tier::MemoryTier
+impl core::cmp::Ord for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::eq(&self, &hologram_types::memory_tier::MemoryTier) -> bool
+impl core::cmp::PartialOrd for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::partial_cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::memory_tier::MemoryTier
+impl core::marker::StructuralPartialEq for hologram_types::memory_tier::MemoryTier
+impl core::marker::Freeze for hologram_types::memory_tier::MemoryTier
+impl core::marker::Send for hologram_types::memory_tier::MemoryTier
+impl core::marker::Sync for hologram_types::memory_tier::MemoryTier
+impl core::marker::Unpin for hologram_types::memory_tier::MemoryTier
+impl core::marker::UnsafeUnpin for hologram_types::memory_tier::MemoryTier
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::memory_tier::MemoryTier
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::memory_tier::MemoryTier
+pub mod hologram_types::shape
+pub struct hologram_types::shape::Dim<const N: u64>
+impl<const N: u64> core::clone::Clone for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::clone(&self) -> hologram_types::shape::Dim<N>
+impl<const N: u64> core::cmp::Eq for hologram_types::shape::Dim<N>
+impl<const N: u64> core::cmp::PartialEq for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::eq(&self, &hologram_types::shape::Dim<N>) -> bool
+impl<const N: u64> core::default::Default for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::default() -> hologram_types::shape::Dim<N>
+impl<const N: u64> core::fmt::Debug for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const N: u64> core::hash::Hash for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<const N: u64> core::marker::Copy for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::StructuralPartialEq for hologram_types::shape::Dim<N>
+impl<const N: u64> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Dim<N>
+pub const hologram_types::shape::Dim<N>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Dim<N>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Dim<N>::IRI: &'static str
+pub const hologram_types::shape::Dim<N>::SITE_COUNT: usize
+impl<const N: u64> core::marker::Freeze for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Send for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Sync for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Unpin for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::UnsafeUnpin for hologram_types::shape::Dim<N>
+impl<const N: u64> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Dim<N>
+impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Dim<N>
+pub struct hologram_types::shape::Shape1<D0, const SITES: usize>(_)
+impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self
+impl<D0, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape1<D0, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::shape::Shape1<D0, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Shape1<D0, SITES>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Shape1<D0, SITES>::IRI: &'static str
+pub const hologram_types::shape::Shape1<D0, SITES>::SITE_COUNT: usize
+impl<D0: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::clone(&self) -> hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::eq(&self, &hologram_types::shape::Shape1<D0, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<D0: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<D0: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::marker::Send for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Send
+impl<D0, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Sync
+impl<D0, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Unpin
+impl<D0, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe
+impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::UnwindSafe
+pub struct hologram_types::shape::Shape2<D0, D1, const SITES: usize>(_)
+impl<D0, D1, const SITES: usize> core::default::Default for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::default() -> Self
+impl<D0, D1, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape2<D0, D1, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape, D1: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::IRI: &'static str
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::SITE_COUNT: usize
+impl<D0: core::clone::Clone, D1: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::clone(&self) -> hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::cmp::Eq, D1: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::eq(&self, &hologram_types::shape::Shape2<D0, D1, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::fmt::Debug, D1: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<D0: core::hash::Hash, D1: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<D0: core::marker::Copy, D1: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::marker::Send for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Send, D1: core::marker::Send
+impl<D0, D1, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Sync, D1: core::marker::Sync
+impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Unpin, D1: core::marker::Unpin
+impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe, D1: core::panic::unwind_safe::RefUnwindSafe
+impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::UnwindSafe, D1: core::panic::unwind_safe::UnwindSafe
+pub mod hologram_types::weight_layout
+pub const hologram_types::weight_layout::OUTPUT_MAJOR: u8
+pub const hologram_types::weight_layout::ROW_MAJOR: u8
+pub enum hologram_types::DTypeKind
+pub hologram_types::DTypeKind::Bfloat
+pub hologram_types::DTypeKind::Bool
+pub hologram_types::DTypeKind::Float
+pub hologram_types::DTypeKind::SignedInt
+pub hologram_types::DTypeKind::UnsignedInt
+impl core::clone::Clone for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::clone(&self) -> hologram_types::dtype::DTypeKind
+impl core::cmp::Eq for hologram_types::dtype::DTypeKind
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::eq(&self, &hologram_types::dtype::DTypeKind) -> bool
+impl core::fmt::Debug for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeKind
+pub fn hologram_types::dtype::DTypeKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeKind
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeKind
+impl core::marker::Freeze for hologram_types::dtype::DTypeKind
+impl core::marker::Send for hologram_types::dtype::DTypeKind
+impl core::marker::Sync for hologram_types::dtype::DTypeKind
+impl core::marker::Unpin for hologram_types::dtype::DTypeKind
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeKind
+#[repr(u8)] pub enum hologram_types::MemoryTier
+pub hologram_types::MemoryTier::CpuL1 = 0
+pub hologram_types::MemoryTier::CpuL2 = 1
+pub hologram_types::MemoryTier::CpuMain = 2
+pub hologram_types::MemoryTier::Device = 3
+impl hologram_types::memory_tier::MemoryTier
+pub const fn hologram_types::memory_tier::MemoryTier::from_u8(u8) -> core::option::Option<Self>
+pub const fn hologram_types::memory_tier::MemoryTier::from_witt(u16, bool) -> Self
+pub const fn hologram_types::memory_tier::MemoryTier::is_cpu(&self) -> bool
+impl core::clone::Clone for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::clone(&self) -> hologram_types::memory_tier::MemoryTier
+impl core::cmp::Eq for hologram_types::memory_tier::MemoryTier
+impl core::cmp::Ord for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::eq(&self, &hologram_types::memory_tier::MemoryTier) -> bool
+impl core::cmp::PartialOrd for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::partial_cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::memory_tier::MemoryTier
+pub fn hologram_types::memory_tier::MemoryTier::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::memory_tier::MemoryTier
+impl core::marker::StructuralPartialEq for hologram_types::memory_tier::MemoryTier
+impl core::marker::Freeze for hologram_types::memory_tier::MemoryTier
+impl core::marker::Send for hologram_types::memory_tier::MemoryTier
+impl core::marker::Sync for hologram_types::memory_tier::MemoryTier
+impl core::marker::Unpin for hologram_types::memory_tier::MemoryTier
+impl core::marker::UnsafeUnpin for hologram_types::memory_tier::MemoryTier
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::memory_tier::MemoryTier
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::memory_tier::MemoryTier
+pub struct hologram_types::DTypeBf16
+impl core::clone::Clone for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::clone(&self) -> hologram_types::dtype::DTypeBf16
+impl core::cmp::Eq for hologram_types::dtype::DTypeBf16
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::eq(&self, &hologram_types::dtype::DTypeBf16) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::default() -> hologram_types::dtype::DTypeBf16
+impl core::fmt::Debug for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeBf16
+pub fn hologram_types::dtype::DTypeBf16::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeBf16
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBf16
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBf16::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeBf16::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeBf16::IRI: &'static str
+pub const hologram_types::dtype::DTypeBf16::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeBf16
+impl core::marker::Send for hologram_types::dtype::DTypeBf16
+impl core::marker::Sync for hologram_types::dtype::DTypeBf16
+impl core::marker::Unpin for hologram_types::dtype::DTypeBf16
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBf16
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBf16
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBf16
+pub struct hologram_types::DTypeBool
+impl core::clone::Clone for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::clone(&self) -> hologram_types::dtype::DTypeBool
+impl core::cmp::Eq for hologram_types::dtype::DTypeBool
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::eq(&self, &hologram_types::dtype::DTypeBool) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::default() -> hologram_types::dtype::DTypeBool
+impl core::fmt::Debug for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeBool
+pub fn hologram_types::dtype::DTypeBool::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeBool
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBool
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBool::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeBool::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeBool::IRI: &'static str
+pub const hologram_types::dtype::DTypeBool::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeBool
+impl core::marker::Send for hologram_types::dtype::DTypeBool
+impl core::marker::Sync for hologram_types::dtype::DTypeBool
+impl core::marker::Unpin for hologram_types::dtype::DTypeBool
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBool
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBool
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBool
+pub struct hologram_types::DTypeF16
+impl core::clone::Clone for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::clone(&self) -> hologram_types::dtype::DTypeF16
+impl core::cmp::Eq for hologram_types::dtype::DTypeF16
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::eq(&self, &hologram_types::dtype::DTypeF16) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::default() -> hologram_types::dtype::DTypeF16
+impl core::fmt::Debug for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF16
+pub fn hologram_types::dtype::DTypeF16::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF16
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF16
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF16::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF16::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF16::IRI: &'static str
+pub const hologram_types::dtype::DTypeF16::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF16
+impl core::marker::Send for hologram_types::dtype::DTypeF16
+impl core::marker::Sync for hologram_types::dtype::DTypeF16
+impl core::marker::Unpin for hologram_types::dtype::DTypeF16
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF16
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF16
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF16
+pub struct hologram_types::DTypeF32
+impl core::clone::Clone for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::clone(&self) -> hologram_types::dtype::DTypeF32
+impl core::cmp::Eq for hologram_types::dtype::DTypeF32
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::eq(&self, &hologram_types::dtype::DTypeF32) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::default() -> hologram_types::dtype::DTypeF32
+impl core::fmt::Debug for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF32
+pub fn hologram_types::dtype::DTypeF32::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF32
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF32
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF32::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF32::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF32::IRI: &'static str
+pub const hologram_types::dtype::DTypeF32::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF32
+impl core::marker::Send for hologram_types::dtype::DTypeF32
+impl core::marker::Sync for hologram_types::dtype::DTypeF32
+impl core::marker::Unpin for hologram_types::dtype::DTypeF32
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF32
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF32
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF32
+pub struct hologram_types::DTypeF64
+impl core::clone::Clone for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::clone(&self) -> hologram_types::dtype::DTypeF64
+impl core::cmp::Eq for hologram_types::dtype::DTypeF64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::eq(&self, &hologram_types::dtype::DTypeF64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::default() -> hologram_types::dtype::DTypeF64
+impl core::fmt::Debug for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeF64
+pub fn hologram_types::dtype::DTypeF64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeF64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeF64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeF64::IRI: &'static str
+pub const hologram_types::dtype::DTypeF64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeF64
+impl core::marker::Send for hologram_types::dtype::DTypeF64
+impl core::marker::Sync for hologram_types::dtype::DTypeF64
+impl core::marker::Unpin for hologram_types::dtype::DTypeF64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF64
+pub struct hologram_types::DTypeI32
+impl core::clone::Clone for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::clone(&self) -> hologram_types::dtype::DTypeI32
+impl core::cmp::Eq for hologram_types::dtype::DTypeI32
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::eq(&self, &hologram_types::dtype::DTypeI32) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::default() -> hologram_types::dtype::DTypeI32
+impl core::fmt::Debug for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI32
+pub fn hologram_types::dtype::DTypeI32::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI32
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI32
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI32::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI32::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI32::IRI: &'static str
+pub const hologram_types::dtype::DTypeI32::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI32
+impl core::marker::Send for hologram_types::dtype::DTypeI32
+impl core::marker::Sync for hologram_types::dtype::DTypeI32
+impl core::marker::Unpin for hologram_types::dtype::DTypeI32
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI32
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI32
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI32
+pub struct hologram_types::DTypeI4
+impl core::clone::Clone for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::clone(&self) -> hologram_types::dtype::DTypeI4
+impl core::cmp::Eq for hologram_types::dtype::DTypeI4
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::eq(&self, &hologram_types::dtype::DTypeI4) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::default() -> hologram_types::dtype::DTypeI4
+impl core::fmt::Debug for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI4
+pub fn hologram_types::dtype::DTypeI4::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI4
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI4
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI4::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI4::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI4::IRI: &'static str
+pub const hologram_types::dtype::DTypeI4::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI4
+impl core::marker::Send for hologram_types::dtype::DTypeI4
+impl core::marker::Sync for hologram_types::dtype::DTypeI4
+impl core::marker::Unpin for hologram_types::dtype::DTypeI4
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI4
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI4
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI4
+pub struct hologram_types::DTypeI64
+impl core::clone::Clone for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::clone(&self) -> hologram_types::dtype::DTypeI64
+impl core::cmp::Eq for hologram_types::dtype::DTypeI64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::eq(&self, &hologram_types::dtype::DTypeI64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::default() -> hologram_types::dtype::DTypeI64
+impl core::fmt::Debug for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI64
+pub fn hologram_types::dtype::DTypeI64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI64::IRI: &'static str
+pub const hologram_types::dtype::DTypeI64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI64
+impl core::marker::Send for hologram_types::dtype::DTypeI64
+impl core::marker::Sync for hologram_types::dtype::DTypeI64
+impl core::marker::Unpin for hologram_types::dtype::DTypeI64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI64
+pub struct hologram_types::DTypeI8
+impl core::clone::Clone for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::clone(&self) -> hologram_types::dtype::DTypeI8
+impl core::cmp::Eq for hologram_types::dtype::DTypeI8
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::eq(&self, &hologram_types::dtype::DTypeI8) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::default() -> hologram_types::dtype::DTypeI8
+impl core::fmt::Debug for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeI8
+pub fn hologram_types::dtype::DTypeI8::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeI8
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI8
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI8::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeI8::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeI8::IRI: &'static str
+pub const hologram_types::dtype::DTypeI8::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeI8
+impl core::marker::Send for hologram_types::dtype::DTypeI8
+impl core::marker::Sync for hologram_types::dtype::DTypeI8
+impl core::marker::Unpin for hologram_types::dtype::DTypeI8
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI8
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI8
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI8
+#[repr(transparent)] pub struct hologram_types::DTypeId(pub u8)
+impl hologram_types::dtype_id::DTypeId
+pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]
+pub const hologram_types::dtype_id::DTypeId::BF16: Self
+pub const hologram_types::dtype_id::DTypeId::BOOL: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB: Self
+pub const hologram_types::dtype_id::DTypeId::E8CB_GROUP_DIM: u32
+pub const hologram_types::dtype_id::DTypeId::E8CB_MAX_ENTRIES: usize
+pub const hologram_types::dtype_id::DTypeId::F16: Self
+pub const hologram_types::dtype_id::DTypeId::F32: Self
+pub const hologram_types::dtype_id::DTypeId::F64: Self
+pub const hologram_types::dtype_id::DTypeId::I32: Self
+pub const hologram_types::dtype_id::DTypeId::I4: Self
+pub const hologram_types::dtype_id::DTypeId::I64: Self
+pub const hologram_types::dtype_id::DTypeId::I8: Self
+pub const hologram_types::dtype_id::DTypeId::U64: Self
+pub const hologram_types::dtype_id::DTypeId::U8: Self
+pub const fn hologram_types::dtype_id::DTypeId::bytes_per_element(self) -> core::option::Option<usize>
+pub const fn hologram_types::dtype_id::DTypeId::is_float(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_quantized_weight(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::is_sub_byte(self) -> bool
+pub const fn hologram_types::dtype_id::DTypeId::known(self) -> core::option::Option<Self>
+pub const fn hologram_types::dtype_id::DTypeId::name(self) -> &'static str
+pub const fn hologram_types::dtype_id::DTypeId::raw(self) -> u8
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes(self, u32) -> core::option::Option<u32>
+pub const fn hologram_types::dtype_id::DTypeId::storage_bytes_u64(self, u64) -> core::option::Option<u64>
+impl core::clone::Clone for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::clone(&self) -> hologram_types::dtype_id::DTypeId
+impl core::cmp::Eq for hologram_types::dtype_id::DTypeId
+impl core::cmp::Ord for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::cmp::Ordering
+impl core::cmp::PartialEq for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::eq(&self, &hologram_types::dtype_id::DTypeId) -> bool
+impl core::cmp::PartialOrd for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::partial_cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype_id::DTypeId
+pub fn hologram_types::dtype_id::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype_id::DTypeId
+impl core::marker::StructuralPartialEq for hologram_types::dtype_id::DTypeId
+impl core::marker::Freeze for hologram_types::dtype_id::DTypeId
+impl core::marker::Send for hologram_types::dtype_id::DTypeId
+impl core::marker::Sync for hologram_types::dtype_id::DTypeId
+impl core::marker::Unpin for hologram_types::dtype_id::DTypeId
+impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId
+pub struct hologram_types::DTypeU64
+impl core::clone::Clone for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::clone(&self) -> hologram_types::dtype::DTypeU64
+impl core::cmp::Eq for hologram_types::dtype::DTypeU64
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::eq(&self, &hologram_types::dtype::DTypeU64) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::default() -> hologram_types::dtype::DTypeU64
+impl core::fmt::Debug for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeU64
+pub fn hologram_types::dtype::DTypeU64::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeU64
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU64
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeU64::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeU64::IRI: &'static str
+pub const hologram_types::dtype::DTypeU64::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeU64
+impl core::marker::Send for hologram_types::dtype::DTypeU64
+impl core::marker::Sync for hologram_types::dtype::DTypeU64
+impl core::marker::Unpin for hologram_types::dtype::DTypeU64
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU64
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU64
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU64
+pub struct hologram_types::DTypeU8
+impl core::clone::Clone for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::clone(&self) -> hologram_types::dtype::DTypeU8
+impl core::cmp::Eq for hologram_types::dtype::DTypeU8
+impl core::cmp::PartialEq for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::eq(&self, &hologram_types::dtype::DTypeU8) -> bool
+impl core::default::Default for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::default() -> hologram_types::dtype::DTypeU8
+impl core::fmt::Debug for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::dtype::DTypeU8
+pub fn hologram_types::dtype::DTypeU8::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::dtype::DTypeU8
+impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU8
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::dtype::DTypeU8::CYCLE_SIZE: u64
+pub const hologram_types::dtype::DTypeU8::IRI: &'static str
+pub const hologram_types::dtype::DTypeU8::SITE_COUNT: usize
+impl core::marker::Freeze for hologram_types::dtype::DTypeU8
+impl core::marker::Send for hologram_types::dtype::DTypeU8
+impl core::marker::Sync for hologram_types::dtype::DTypeU8
+impl core::marker::Unpin for hologram_types::dtype::DTypeU8
+impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU8
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU8
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU8
+pub struct hologram_types::Dim<const N: u64>
+impl<const N: u64> core::clone::Clone for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::clone(&self) -> hologram_types::shape::Dim<N>
+impl<const N: u64> core::cmp::Eq for hologram_types::shape::Dim<N>
+impl<const N: u64> core::cmp::PartialEq for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::eq(&self, &hologram_types::shape::Dim<N>) -> bool
+impl<const N: u64> core::default::Default for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::default() -> hologram_types::shape::Dim<N>
+impl<const N: u64> core::fmt::Debug for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<const N: u64> core::hash::Hash for hologram_types::shape::Dim<N>
+pub fn hologram_types::shape::Dim<N>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<const N: u64> core::marker::Copy for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::StructuralPartialEq for hologram_types::shape::Dim<N>
+impl<const N: u64> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Dim<N>
+pub const hologram_types::shape::Dim<N>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Dim<N>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Dim<N>::IRI: &'static str
+pub const hologram_types::shape::Dim<N>::SITE_COUNT: usize
+impl<const N: u64> core::marker::Freeze for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Send for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Sync for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::Unpin for hologram_types::shape::Dim<N>
+impl<const N: u64> core::marker::UnsafeUnpin for hologram_types::shape::Dim<N>
+impl<const N: u64> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Dim<N>
+impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Dim<N>
+pub struct hologram_types::HologramHostBoundsAvx2
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::clone(&self) -> hologram_types::HologramHostBoundsAvx2
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx2
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::eq(&self, &hologram_types::HologramHostBoundsAvx2) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::default() -> hologram_types::HologramHostBoundsAvx2
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx2
+pub fn hologram_types::HologramHostBoundsAvx2::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx2
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx2
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx2
+pub const hologram_types::HologramHostBoundsAvx2::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx2::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx2::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx2::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx2::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx2
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx2
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx2
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx2
+pub struct hologram_types::HologramHostBoundsAvx512
+impl core::clone::Clone for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::clone(&self) -> hologram_types::HologramHostBoundsAvx512
+impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx512
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::eq(&self, &hologram_types::HologramHostBoundsAvx512) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::default() -> hologram_types::HologramHostBoundsAvx512
+impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsAvx512
+pub fn hologram_types::HologramHostBoundsAvx512::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsAvx512
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx512
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx512
+pub const hologram_types::HologramHostBoundsAvx512::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsAvx512::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsAvx512::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsAvx512::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsAvx512::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Send for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Sync for hologram_types::HologramHostBoundsAvx512
+impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx512
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx512
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx512
+pub struct hologram_types::HologramHostBoundsCpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::clone(&self) -> hologram_types::HologramHostBoundsCpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsCpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::eq(&self, &hologram_types::HologramHostBoundsCpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::default() -> hologram_types::HologramHostBoundsCpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsCpu
+pub fn hologram_types::HologramHostBoundsCpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsCpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsCpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsCpu
+pub const hologram_types::HologramHostBoundsCpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsCpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsCpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsCpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsCpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsCpu
+impl core::marker::Send for hologram_types::HologramHostBoundsCpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsCpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsCpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsCpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsCpu
+pub struct hologram_types::HologramHostBoundsMetal
+impl core::clone::Clone for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::clone(&self) -> hologram_types::HologramHostBoundsMetal
+impl core::cmp::Eq for hologram_types::HologramHostBoundsMetal
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::eq(&self, &hologram_types::HologramHostBoundsMetal) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::default() -> hologram_types::HologramHostBoundsMetal
+impl core::fmt::Debug for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsMetal
+pub fn hologram_types::HologramHostBoundsMetal::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsMetal
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsMetal
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsMetal
+pub const hologram_types::HologramHostBoundsMetal::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsMetal::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsMetal::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsMetal::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsMetal::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsMetal
+impl core::marker::Send for hologram_types::HologramHostBoundsMetal
+impl core::marker::Sync for hologram_types::HologramHostBoundsMetal
+impl core::marker::Unpin for hologram_types::HologramHostBoundsMetal
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsMetal
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsMetal
+pub struct hologram_types::HologramHostBoundsNeon
+impl core::clone::Clone for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::clone(&self) -> hologram_types::HologramHostBoundsNeon
+impl core::cmp::Eq for hologram_types::HologramHostBoundsNeon
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::eq(&self, &hologram_types::HologramHostBoundsNeon) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::default() -> hologram_types::HologramHostBoundsNeon
+impl core::fmt::Debug for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsNeon
+pub fn hologram_types::HologramHostBoundsNeon::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsNeon
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsNeon
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsNeon
+pub const hologram_types::HologramHostBoundsNeon::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsNeon::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsNeon::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsNeon::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsNeon::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsNeon
+impl core::marker::Send for hologram_types::HologramHostBoundsNeon
+impl core::marker::Sync for hologram_types::HologramHostBoundsNeon
+impl core::marker::Unpin for hologram_types::HologramHostBoundsNeon
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsNeon
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsNeon
+pub struct hologram_types::HologramHostBoundsWgpu
+impl core::clone::Clone for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::clone(&self) -> hologram_types::HologramHostBoundsWgpu
+impl core::cmp::Eq for hologram_types::HologramHostBoundsWgpu
+impl core::cmp::PartialEq for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::eq(&self, &hologram_types::HologramHostBoundsWgpu) -> bool
+impl core::default::Default for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::default() -> hologram_types::HologramHostBoundsWgpu
+impl core::fmt::Debug for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_types::HologramHostBoundsWgpu
+pub fn hologram_types::HologramHostBoundsWgpu::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_types::HologramHostBoundsWgpu
+impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsWgpu
+impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsWgpu
+pub const hologram_types::HologramHostBoundsWgpu::AFFINE_COEFFS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::BETTI_DIMENSION_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::CONJUNCTION_TERMS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MAX_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MIN_BYTES: usize
+pub const hologram_types::HologramHostBoundsWgpu::FOLD_UNROLL_THRESHOLD: usize
+pub const hologram_types::HologramHostBoundsWgpu::JACOBIAN_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_CONSTRAINTS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::NERVE_SITES_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::OP_CHAIN_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::RECURSION_TRACE_DEPTH_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::TRACE_MAX_EVENTS: usize
+pub const hologram_types::HologramHostBoundsWgpu::UNFOLD_ITERATIONS_MAX: usize
+pub const hologram_types::HologramHostBoundsWgpu::WITT_LEVEL_MAX_BITS: u32
+impl core::marker::Freeze for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Send for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Sync for hologram_types::HologramHostBoundsWgpu
+impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu
+impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu
+impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu
+pub struct hologram_types::Shape1<D0, const SITES: usize>(_)
+impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self
+impl<D0, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape1<D0, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::shape::Shape1<D0, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Shape1<D0, SITES>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Shape1<D0, SITES>::IRI: &'static str
+pub const hologram_types::shape::Shape1<D0, SITES>::SITE_COUNT: usize
+impl<D0: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::clone(&self) -> hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::eq(&self, &hologram_types::shape::Shape1<D0, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>
+impl<D0: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<D0: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape1<D0, SITES>
+pub fn hologram_types::shape::Shape1<D0, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<D0: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::marker::Send for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Send
+impl<D0, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Sync
+impl<D0, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Unpin
+impl<D0, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape1<D0, SITES>
+impl<D0, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe
+impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::UnwindSafe
+pub struct hologram_types::Shape2<D0, D1, const SITES: usize>(_)
+impl<D0, D1, const SITES: usize> core::default::Default for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::default() -> Self
+impl<D0, D1, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape2<D0, D1, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape, D1: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::CYCLE_SIZE: u64
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::IRI: &'static str
+pub const hologram_types::shape::Shape2<D0, D1, SITES>::SITE_COUNT: usize
+impl<D0: core::clone::Clone, D1: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::clone(&self) -> hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::cmp::Eq, D1: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::eq(&self, &hologram_types::shape::Shape2<D0, D1, SITES>) -> bool
+impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0: core::fmt::Debug, D1: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<D0: core::hash::Hash, D1: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape2<D0, D1, SITES>
+pub fn hologram_types::shape::Shape2<D0, D1, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<D0: core::marker::Copy, D1: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::marker::Send for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Send, D1: core::marker::Send
+impl<D0, D1, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Sync, D1: core::marker::Sync
+impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Unpin, D1: core::marker::Unpin
+impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES>
+impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe, D1: core::panic::unwind_safe::RefUnwindSafe
+impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::UnwindSafe, D1: core::panic::unwind_safe::UnwindSafe
+pub const hologram_types::IRI_PREFIX: &str
+pub trait hologram_types::DType: uor_foundation::pipeline::ConstrainedTypeShape
+pub const hologram_types::DType::BIT_WIDTH: u32
+pub const hologram_types::DType::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBf16
+pub const hologram_types::dtype::DTypeBf16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBf16::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBool
+pub const hologram_types::dtype::DTypeBool::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeBool::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF16
+pub const hologram_types::dtype::DTypeF16::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF16::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF32
+pub const hologram_types::dtype::DTypeF32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF32::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF64
+pub const hologram_types::dtype::DTypeF64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeF64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI32
+pub const hologram_types::dtype::DTypeI32::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI32::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI4
+pub const hologram_types::dtype::DTypeI4::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI4::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI64
+pub const hologram_types::dtype::DTypeI64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI8
+pub const hologram_types::dtype::DTypeI8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeI8::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU64
+pub const hologram_types::dtype::DTypeU64::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKind
+impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8
+pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32
+pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind
+pub type hologram_types::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu
+pub type hologram_types::HologramHasher = prism_crypto::hash::Blake3Hasher
+pub type hologram_types::HologramHostTypes = uor_foundation::DefaultHostTypes

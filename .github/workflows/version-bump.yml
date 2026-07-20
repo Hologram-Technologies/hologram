@@ -35,9 +35,21 @@ jobs:
     name: Bump Version
     runs-on: ubuntu-latest
     steps:
+      # A tag pushed with the default GITHUB_TOKEN does NOT trigger `on: push: tags` workflows
+      # (GitHub's anti-recursion rule) — so publish.yml + release.yml would never fire on the tag
+      # this job creates. Mint a GitHub App token (APP_ID/APP_PRIVATE_KEY) and push with it instead;
+      # App-token pushes DO trigger workflows. This is what makes the release actually chain.
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # App token (not GITHUB_TOKEN) so the tag push near the end triggers publish + release CI.
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
       - name: Setup Rust
@@ -143,8 +155,12 @@ jobs:
           VERSION=${{ steps.bump.outputs.new_version }}
 
           # Add all Cargo.toml files, the changelogs, and the API snapshots +
-          # history archived by the API-snapshot step.
-          git add Cargo.toml Cargo.lock crates/*/Cargo.toml CHANGELOG.md api/ \
+          # history archived by the API-snapshot step. NOTE: `crates/*/Cargo.toml` catches the
+          # excluded `hologram-efi`, but the workspace-excluded `spaces/holospaces-browser` lives
+          # under spaces/, so it must be listed explicitly — otherwise the sync bumps it in the
+          # working tree but this step never stages it and it drifts a version behind.
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml spaces/holospaces-browser/Cargo.toml \
+                  CHANGELOG.md api/ \
                   sdk/typescript/package.json sdk/typescript/native/package.json \
                   sdk/typescript/wasm/package.json sdk/typescript/native/native/Cargo.toml \
                   sdk/typescript/wasm/driver/Cargo.toml sdk/python/pyproject.toml \

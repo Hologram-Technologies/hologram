@@ -1,0 +1,60 @@
+name: Publish · PyPI
+
+# Publishes the Python SDK (dist name `uor-hologram`, import `hologram`) to PyPI on a release tag,
+# via PyPI TRUSTED PUBLISHING (OpenID Connect) — no API token or secret. Register this exact
+# workflow as the trusted publisher on PyPI:
+#   PyPI project : uor-hologram
+#   Owner        : Hologram-Technologies
+#   Repository   : hologram
+#   Workflow     : publish-pypi.yml         <-- this file's name
+#   Environment  : pypi
+run-name: "Publish PyPI · ${{ github.ref_name }}"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build (pure-python — one universal wheel + sdist)
+        run: |
+          python -m pip install --upgrade build
+          python -m build sdk/python --outdir dist
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pypi-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI (trusted publishing)
+    needs: build
+    runs-on: ubuntu-latest
+    # The GitHub Environment named in the trusted-publisher config. Create it in
+    # Settings → Environments; only runs in this environment can mint the OIDC token to publish.
+    environment: pypi
+    permissions:
+      id-token: write   # REQUIRED — the OIDC token PyPI trusted publishing verifies (no password/token)
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: pypi-dist
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No `with: password` — OIDC handles auth. (For a dry run against TestPyPI, add
+        # `repository-url: https://test.pypi.org/legacy/` and register a publisher there too.)

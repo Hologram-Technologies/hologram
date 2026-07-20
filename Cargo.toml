@@ -38,8 +38,11 @@ members = [
     "spaces/holospaces-node",
 ]
 
-# Adding the root facade makes this a non-virtual workspace; keep root-level
-# cargo commands operating on the same package set as the previous virtual root.
+# Adding the root facade makes this a non-virtual workspace; root-level cargo commands operate on
+# this set. `spaces/holospaces-node` is intentionally EXCLUDED here (it stays in `members`, so
+# `--workspace` still builds/tests it) — that leaves `hologram` (from `hologram-cli`) as the ONLY
+# binary in the default set, so a bare `cargo run` at the root unambiguously runs the `hologram`
+# CLI without needing `--bin hologram`. (`holospaces-node` is still runnable via `-p holospaces-node`.)
 default-members = [
     ".",
     "crates/hologram-types",
@@ -59,7 +62,6 @@ default-members = [
     "crates/hologram-runtime",
     "crates/hologram-emulator",
     "spaces/holospaces",
-    "spaces/holospaces-node",
 ]
 
 # hologram-efi (UEFI boot binary) is target-specific — excluded from the host workspace; built
@@ -78,7 +80,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.11.0"
+version = "0.12.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
