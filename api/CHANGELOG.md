@@ -1,5 +1,10 @@
 # Public API changelog
 
+## v0.12.1
+
+_No public-API changes._
+
+
 ## v0.12.0
 
 ### Added

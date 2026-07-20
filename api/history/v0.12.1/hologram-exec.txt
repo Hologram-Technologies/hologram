@@ -1,0 +1,987 @@
+pub mod hologram_exec
+pub mod hologram_exec::buffer
+pub struct hologram_exec::buffer::BufferArena
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::allocated_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_view(&mut self, usize, usize, usize, usize)
+pub fn hologram_exec::buffer::BufferArena::capacity(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::new() -> Self
+pub fn hologram_exec::buffer::BufferArena::read_slot(&self, usize) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::slot_count(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::with_capacity(usize, alloc::vec::Vec<hologram_exec::buffer::SlotSpan>) -> Self
+pub fn hologram_exec::buffer::BufferArena::write_slot(&mut self, usize) -> core::option::Option<&mut [u8]>
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::lease(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::leased_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::leased_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
+pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::release(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
+impl core::default::Default for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
+impl core::fmt::Debug for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl hologram_compute::workspace::Workspace for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]
+pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]
+impl core::marker::Freeze for hologram_exec::buffer::BufferArena
+impl core::marker::Send for hologram_exec::buffer::BufferArena
+impl core::marker::Sync for hologram_exec::buffer::BufferArena
+impl core::marker::Unpin for hologram_exec::buffer::BufferArena
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::BufferArena
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::BufferArena
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::BufferArena
+pub struct hologram_exec::buffer::InputBuffer<'a>
+pub hologram_exec::buffer::InputBuffer::bytes: &'a [u8]
+impl<'a> core::marker::Freeze for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Send for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Sync for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Unpin for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::InputBuffer<'a>
+pub struct hologram_exec::buffer::OutputBuffer
+pub hologram_exec::buffer::OutputBuffer::bytes: alloc::vec::Vec<u8>
+impl core::marker::Freeze for hologram_exec::buffer::OutputBuffer
+impl core::marker::Send for hologram_exec::buffer::OutputBuffer
+impl core::marker::Sync for hologram_exec::buffer::OutputBuffer
+impl core::marker::Unpin for hologram_exec::buffer::OutputBuffer
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::OutputBuffer
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::OutputBuffer
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::OutputBuffer
+pub struct hologram_exec::buffer::SlotSpan
+pub hologram_exec::buffer::SlotSpan::length: u64
+pub hologram_exec::buffer::SlotSpan::offset: u64
+impl core::clone::Clone for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::clone(&self) -> hologram_exec::buffer::SlotSpan
+impl core::default::Default for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::default() -> hologram_exec::buffer::SlotSpan
+impl core::fmt::Debug for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::buffer::SlotSpan
+impl core::marker::Freeze for hologram_exec::buffer::SlotSpan
+impl core::marker::Send for hologram_exec::buffer::SlotSpan
+impl core::marker::Sync for hologram_exec::buffer::SlotSpan
+impl core::marker::Unpin for hologram_exec::buffer::SlotSpan
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::SlotSpan
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::SlotSpan
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::SlotSpan
+pub mod hologram_exec::error
+pub enum hologram_exec::error::ExecError
+pub hologram_exec::error::ExecError::Archive(hologram_archive::error::ArchiveError)
+pub hologram_exec::error::ExecError::Backend
+pub hologram_exec::error::ExecError::InputMismatch
+pub hologram_exec::error::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)
+pub hologram_exec::error::ExecError::WorkspaceExhausted
+impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::from(hologram_archive::error::ArchiveError) -> Self
+impl core::convert::From<hologram_exec::error::ExecError> for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::from(hologram_exec::error::ExecError) -> Self
+impl core::error::Error for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::error::ExecError
+impl core::marker::Send for hologram_exec::error::ExecError
+impl core::marker::Sync for hologram_exec::error::ExecError
+impl core::marker::Unpin for hologram_exec::error::ExecError
+impl core::marker::UnsafeUnpin for hologram_exec::error::ExecError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::error::ExecError
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::error::ExecError
+pub mod hologram_exec::prism_route
+pub struct hologram_exec::prism_route::AttestedExecution
+pub hologram_exec::prism_route::AttestedExecution::archive_fingerprint: [u8; 32]
+pub hologram_exec::prism_route::AttestedExecution::outputs: alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>
+pub hologram_exec::prism_route::AttestedExecution::prism_attestation: uor_foundation::enforcement::Grounded<'static, prism_crypto::shapes::Digest<32>, HOLOGRAM_INLINE_BYTES, FP_MAX>
+impl core::marker::Freeze for hologram_exec::prism_route::AttestedExecution
+impl !core::marker::Send for hologram_exec::prism_route::AttestedExecution
+impl !core::marker::Sync for hologram_exec::prism_route::AttestedExecution
+impl core::marker::Unpin for hologram_exec::prism_route::AttestedExecution
+impl core::marker::UnsafeUnpin for hologram_exec::prism_route::AttestedExecution
+impl !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::prism_route::AttestedExecution
+impl !core::panic::unwind_safe::UnwindSafe for hologram_exec::prism_route::AttestedExecution
+pub mod hologram_exec::refinement
+pub enum hologram_exec::refinement::ConvergenceKind
+pub hologram_exec::refinement::ConvergenceKind::ByteStable
+pub hologram_exec::refinement::ConvergenceKind::LabelStable
+pub hologram_exec::refinement::ConvergenceKind::ValidatorAccepted
+impl core::clone::Clone for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::clone(&self) -> hologram_exec::refinement::ConvergenceKind
+impl core::cmp::Eq for hologram_exec::refinement::ConvergenceKind
+impl core::cmp::PartialEq for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::eq(&self, &hologram_exec::refinement::ConvergenceKind) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ConvergenceKind
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Freeze for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Send for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Sync for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Unpin for hologram_exec::refinement::ConvergenceKind
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ConvergenceKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ConvergenceKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ConvergenceKind
+pub enum hologram_exec::refinement::RefinementError
+pub hologram_exec::refinement::RefinementError::Execute(hologram_exec::error::ExecError)
+pub hologram_exec::refinement::RefinementError::MissingStateBytes
+pub hologram_exec::refinement::RefinementError::MissingValidator
+pub hologram_exec::refinement::RefinementError::StateArityMismatch
+pub hologram_exec::refinement::RefinementError::StateContractMismatch
+pub hologram_exec::refinement::RefinementError::TooManyValidators
+pub hologram_exec::refinement::RefinementError::ZeroPassBudget
+impl core::convert::From<hologram_exec::error::ExecError> for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::from(hologram_exec::error::ExecError) -> Self
+impl core::error::Error for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementError
+impl core::marker::Send for hologram_exec::refinement::RefinementError
+impl core::marker::Sync for hologram_exec::refinement::RefinementError
+impl core::marker::Unpin for hologram_exec::refinement::RefinementError
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementError
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementError
+pub enum hologram_exec::refinement::RefinementStatus
+pub hologram_exec::refinement::RefinementStatus::Converged(hologram_exec::refinement::ConvergenceKind)
+pub hologram_exec::refinement::RefinementStatus::PassBoundReached
+pub hologram_exec::refinement::RefinementStatus::RepairBoundReached
+pub hologram_exec::refinement::RefinementStatus::Repaired(hologram_exec::refinement::ConvergenceKind)
+impl core::clone::Clone for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::clone(&self) -> hologram_exec::refinement::RefinementStatus
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStatus
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::eq(&self, &hologram_exec::refinement::RefinementStatus) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::RefinementStatus
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatus
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStatus
+impl core::marker::Send for hologram_exec::refinement::RefinementStatus
+impl core::marker::Sync for hologram_exec::refinement::RefinementStatus
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStatus
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatus
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatus
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatus
+pub enum hologram_exec::refinement::RepairPolicy
+pub hologram_exec::refinement::RepairPolicy::None
+pub hologram_exec::refinement::RepairPolicy::RetryPass
+pub hologram_exec::refinement::RepairPolicy::RetryPass::extra_passes: u8
+impl core::clone::Clone for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::clone(&self) -> hologram_exec::refinement::RepairPolicy
+impl core::cmp::Eq for hologram_exec::refinement::RepairPolicy
+impl core::cmp::PartialEq for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::eq(&self, &hologram_exec::refinement::RepairPolicy) -> bool
+impl core::default::Default for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::default() -> hologram_exec::refinement::RepairPolicy
+impl core::fmt::Debug for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::RepairPolicy
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RepairPolicy
+impl core::marker::Freeze for hologram_exec::refinement::RepairPolicy
+impl core::marker::Send for hologram_exec::refinement::RepairPolicy
+impl core::marker::Sync for hologram_exec::refinement::RepairPolicy
+impl core::marker::Unpin for hologram_exec::refinement::RepairPolicy
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RepairPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RepairPolicy
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RepairPolicy
+pub enum hologram_exec::refinement::ValidatorCost
+pub hologram_exec::refinement::ValidatorCost::CompiledPlan
+pub hologram_exec::refinement::ValidatorCost::Constant
+pub hologram_exec::refinement::ValidatorCost::StateBytes
+pub hologram_exec::refinement::ValidatorCost::StatePorts
+impl core::clone::Clone for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::clone(&self) -> hologram_exec::refinement::ValidatorCost
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorCost
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::eq(&self, &hologram_exec::refinement::ValidatorCost) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorCost
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorCost
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorCost
+impl core::marker::Send for hologram_exec::refinement::ValidatorCost
+impl core::marker::Sync for hologram_exec::refinement::ValidatorCost
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorCost
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorCost
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorCost
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorCost
+pub enum hologram_exec::refinement::ValidatorKind
+pub hologram_exec::refinement::ValidatorKind::StableBytes
+pub hologram_exec::refinement::ValidatorKind::StableLabels
+impl hologram_exec::refinement::ValidatorKind
+pub const fn hologram_exec::refinement::ValidatorKind::cost(self) -> hologram_exec::refinement::ValidatorCost
+impl core::clone::Clone for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::clone(&self) -> hologram_exec::refinement::ValidatorKind
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorKind
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::eq(&self, &hologram_exec::refinement::ValidatorKind) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorKind
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorKind
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorKind
+impl core::marker::Send for hologram_exec::refinement::ValidatorKind
+impl core::marker::Sync for hologram_exec::refinement::ValidatorKind
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorKind
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorKind
+pub struct hologram_exec::refinement::CompiledRefinement<B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::CompiledRefinement<B>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::into_session(self) -> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::new(hologram_exec::session::InferenceSession<B>, hologram_exec::refinement::RefinementPlan) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub const fn hologram_exec::refinement::CompiledRefinement<B>::plan(&self) -> &hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::CompiledRefinement<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub const fn hologram_exec::refinement::CompiledRefinement<B>::session(&self) -> &hologram_exec::session::InferenceSession<B>
+impl<B> core::marker::Freeze for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Freeze
+impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Send
+impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync
+impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin
+impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+pub struct hologram_exec::refinement::RefinementPlan
+impl hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::bind<'a, B: hologram_exec::session::SessionBackend>(&'a self, &'a mut hologram_exec::session::InferenceSession<B>) -> core::result::Result<hologram_exec::refinement::RefinementRunner<'a, B>, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlan::builder(u8) -> hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlan::execute<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlan::execute_addressed<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub const fn hologram_exec::refinement::RefinementPlan::max_passes(&self) -> u8
+pub const fn hologram_exec::refinement::RefinementPlan::repair_policy(&self) -> hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RefinementPlan::state_contract(&self) -> core::option::Option<&hologram_exec::refinement::RefinementStateContract>
+pub fn hologram_exec::refinement::RefinementPlan::validators(&self) -> &[hologram_exec::refinement::ValidatorKind]
+impl core::clone::Clone for hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::clone(&self) -> hologram_exec::refinement::RefinementPlan
+impl core::fmt::Debug for hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementPlan
+impl core::marker::Send for hologram_exec::refinement::RefinementPlan
+impl core::marker::Sync for hologram_exec::refinement::RefinementPlan
+impl core::marker::Unpin for hologram_exec::refinement::RefinementPlan
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlan
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlan
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlan
+pub struct hologram_exec::refinement::RefinementPlanBuilder
+impl hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::build(self) -> core::result::Result<hologram_exec::refinement::RefinementPlan, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlanBuilder::new(u8) -> Self
+pub const fn hologram_exec::refinement::RefinementPlanBuilder::repair_policy(self, hologram_exec::refinement::RepairPolicy) -> Self
+pub fn hologram_exec::refinement::RefinementPlanBuilder::state_contract(self, hologram_exec::refinement::RefinementStateContract) -> Self
+pub fn hologram_exec::refinement::RefinementPlanBuilder::validator(self, hologram_exec::refinement::ValidatorKind) -> Self
+impl core::clone::Clone for hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::clone(&self) -> hologram_exec::refinement::RefinementPlanBuilder
+impl core::fmt::Debug for hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Send for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Sync for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Unpin for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlanBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlanBuilder
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlanBuilder
+pub struct hologram_exec::refinement::RefinementReport
+pub hologram_exec::refinement::RefinementReport::dispatched: usize
+pub hologram_exec::refinement::RefinementReport::final_labels: alloc::vec::Vec<hologram_archive::address::ContentLabel>
+pub hologram_exec::refinement::RefinementReport::passes: u8
+pub hologram_exec::refinement::RefinementReport::repairs: u8
+pub hologram_exec::refinement::RefinementReport::resident_bytes: usize
+pub hologram_exec::refinement::RefinementReport::resident_values: usize
+pub hologram_exec::refinement::RefinementReport::skipped: usize
+pub hologram_exec::refinement::RefinementReport::status: hologram_exec::refinement::RefinementStatus
+pub hologram_exec::refinement::RefinementReport::validator_outcomes: smallvec::SmallVec<[hologram_exec::refinement::ValidatorOutcome; 4]>
+impl core::clone::Clone for hologram_exec::refinement::RefinementReport
+pub fn hologram_exec::refinement::RefinementReport::clone(&self) -> hologram_exec::refinement::RefinementReport
+impl core::fmt::Debug for hologram_exec::refinement::RefinementReport
+pub fn hologram_exec::refinement::RefinementReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementReport
+impl core::marker::Send for hologram_exec::refinement::RefinementReport
+impl core::marker::Sync for hologram_exec::refinement::RefinementReport
+impl core::marker::Unpin for hologram_exec::refinement::RefinementReport
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementReport
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementReport
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementReport
+pub struct hologram_exec::refinement::RefinementRunner<'a, B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::RefinementRunner<'_, B>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::session(&self) -> &hologram_exec::session::InferenceSession<B>
+impl<'a, B> core::marker::Freeze for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Send
+impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync
+impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
+pub struct hologram_exec::refinement::RefinementStateContract
+impl hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::from_session<B: hologram_exec::session::SessionBackend>(&hologram_exec::session::InferenceSession<B>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementStateContract::new(alloc::vec::Vec<hologram_exec::refinement::RefinementStatePort>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementStateContract::port_count(&self) -> usize
+pub fn hologram_exec::refinement::RefinementStateContract::ports(&self) -> &[hologram_exec::refinement::RefinementStatePort]
+impl core::clone::Clone for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::clone(&self) -> hologram_exec::refinement::RefinementStateContract
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStateContract
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::eq(&self, &hologram_exec::refinement::RefinementStateContract) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Send for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Sync for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStateContract
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStateContract
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStateContract
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStateContract
+pub struct hologram_exec::refinement::RefinementStatePort
+pub hologram_exec::refinement::RefinementStatePort::byte_len: usize
+pub hologram_exec::refinement::RefinementStatePort::dtype: u8
+pub hologram_exec::refinement::RefinementStatePort::element_count: u64
+pub hologram_exec::refinement::RefinementStatePort::shape: alloc::vec::Vec<u64>
+impl core::clone::Clone for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::clone(&self) -> hologram_exec::refinement::RefinementStatePort
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStatePort
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::eq(&self, &hologram_exec::refinement::RefinementStatePort) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Send for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Sync for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStatePort
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatePort
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatePort
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatePort
+pub struct hologram_exec::refinement::ValidatorOutcome
+pub hologram_exec::refinement::ValidatorOutcome::accepted: bool
+pub hologram_exec::refinement::ValidatorOutcome::cost: hologram_exec::refinement::ValidatorCost
+pub hologram_exec::refinement::ValidatorOutcome::validator: hologram_exec::refinement::ValidatorKind
+impl core::clone::Clone for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::clone(&self) -> hologram_exec::refinement::ValidatorOutcome
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorOutcome
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::eq(&self, &hologram_exec::refinement::ValidatorOutcome) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Send for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Sync for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorOutcome
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorOutcome
+pub mod hologram_exec::session
+pub struct hologram_exec::session::InferenceSession<B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::add_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::archive_fingerprint(&self) -> [u8; 32]
+pub fn hologram_exec::session::InferenceSession<B>::broadcast_binary_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::content_store_len(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_epilogue_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<alloc::vec::Vec<hologram_archive::address::ContentLabel>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::extension(&self, &str) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::extension_keys(&self) -> impl core::iter::traits::iterator::Iterator<Item = &str>
+pub fn hologram_exec::session::InferenceSession<B>::fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_byte_len(&self, usize) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
+pub fn hologram_exec::session::InferenceSession<B>::input_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::intern_input(&mut self, &[u8]) -> hologram_archive::address::ContentLabel
+pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::leased_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::output_byte_len(&self, usize) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::output_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
+pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::pool_allocated_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::release_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::residual_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::retain_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::session::InferenceSession<B>::schedule_levels(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::warm_from_store(&mut self, &dyn hologram_exec::warm::WarmStore) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::warm_lattice(&self) -> alloc::vec::Vec<(u32, hologram_archive::address::ContentLabel)>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::execute_attested(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::prism_route::AttestedExecution, hologram_exec::error::ExecError>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::workspace(&self) -> &hologram_exec::buffer::BufferArena
+pub fn hologram_exec::session::InferenceSession<B>::workspace_mut(&mut self) -> &mut hologram_exec::buffer::BufferArena
+impl<B> core::marker::Freeze for hologram_exec::session::InferenceSession<B> where B: core::marker::Freeze
+impl<B> core::marker::Send for hologram_exec::session::InferenceSession<B> where B: core::marker::Send
+impl<B> core::marker::Sync for hologram_exec::session::InferenceSession<B> where B: core::marker::Sync
+impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> where B: core::marker::Unpin
+impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>
+pub trait hologram_exec::session::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>
+impl<B: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
+pub mod hologram_exec::warm
+pub struct hologram_exec::warm::FileWarmStore
+impl hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl core::marker::Freeze for hologram_exec::warm::FileWarmStore
+impl core::marker::Send for hologram_exec::warm::FileWarmStore
+impl core::marker::Sync for hologram_exec::warm::FileWarmStore
+impl core::marker::Unpin for hologram_exec::warm::FileWarmStore
+impl core::marker::UnsafeUnpin for hologram_exec::warm::FileWarmStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::FileWarmStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::FileWarmStore
+pub struct hologram_exec::warm::MemWarmStore
+impl hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::is_empty(&self) -> bool
+pub fn hologram_exec::warm::MemWarmStore::len(&self) -> usize
+pub fn hologram_exec::warm::MemWarmStore::new() -> Self
+impl core::default::Default for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::default() -> hologram_exec::warm::MemWarmStore
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::MemWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl core::marker::Freeze for hologram_exec::warm::MemWarmStore
+impl core::marker::Send for hologram_exec::warm::MemWarmStore
+impl core::marker::Sync for hologram_exec::warm::MemWarmStore
+impl core::marker::Unpin for hologram_exec::warm::MemWarmStore
+impl core::marker::UnsafeUnpin for hologram_exec::warm::MemWarmStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::MemWarmStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::MemWarmStore
+pub trait hologram_exec::warm::WarmStore
+pub fn hologram_exec::warm::WarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::WarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::MemWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::warm::fold_archive<B: hologram_exec::session::SessionBackend>(&[u8], B) -> core::result::Result<alloc::vec::Vec<u8>, hologram_exec::error::ExecError>
+pub enum hologram_exec::ConvergenceKind
+pub hologram_exec::ConvergenceKind::ByteStable
+pub hologram_exec::ConvergenceKind::LabelStable
+pub hologram_exec::ConvergenceKind::ValidatorAccepted
+impl core::clone::Clone for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::clone(&self) -> hologram_exec::refinement::ConvergenceKind
+impl core::cmp::Eq for hologram_exec::refinement::ConvergenceKind
+impl core::cmp::PartialEq for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::eq(&self, &hologram_exec::refinement::ConvergenceKind) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ConvergenceKind
+pub fn hologram_exec::refinement::ConvergenceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ConvergenceKind
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Freeze for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Send for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Sync for hologram_exec::refinement::ConvergenceKind
+impl core::marker::Unpin for hologram_exec::refinement::ConvergenceKind
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ConvergenceKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ConvergenceKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ConvergenceKind
+pub enum hologram_exec::ExecError
+pub hologram_exec::ExecError::Archive(hologram_archive::error::ArchiveError)
+pub hologram_exec::ExecError::Backend
+pub hologram_exec::ExecError::InputMismatch
+pub hologram_exec::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)
+pub hologram_exec::ExecError::WorkspaceExhausted
+impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::from(hologram_archive::error::ArchiveError) -> Self
+impl core::convert::From<hologram_exec::error::ExecError> for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::from(hologram_exec::error::ExecError) -> Self
+impl core::error::Error for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_exec::error::ExecError
+pub fn hologram_exec::error::ExecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::error::ExecError
+impl core::marker::Send for hologram_exec::error::ExecError
+impl core::marker::Sync for hologram_exec::error::ExecError
+impl core::marker::Unpin for hologram_exec::error::ExecError
+impl core::marker::UnsafeUnpin for hologram_exec::error::ExecError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::error::ExecError
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::error::ExecError
+pub enum hologram_exec::RefinementError
+pub hologram_exec::RefinementError::Execute(hologram_exec::error::ExecError)
+pub hologram_exec::RefinementError::MissingStateBytes
+pub hologram_exec::RefinementError::MissingValidator
+pub hologram_exec::RefinementError::StateArityMismatch
+pub hologram_exec::RefinementError::StateContractMismatch
+pub hologram_exec::RefinementError::TooManyValidators
+pub hologram_exec::RefinementError::ZeroPassBudget
+impl core::convert::From<hologram_exec::error::ExecError> for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::from(hologram_exec::error::ExecError) -> Self
+impl core::error::Error for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_exec::refinement::RefinementError
+pub fn hologram_exec::refinement::RefinementError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementError
+impl core::marker::Send for hologram_exec::refinement::RefinementError
+impl core::marker::Sync for hologram_exec::refinement::RefinementError
+impl core::marker::Unpin for hologram_exec::refinement::RefinementError
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementError
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementError
+pub enum hologram_exec::RefinementStatus
+pub hologram_exec::RefinementStatus::Converged(hologram_exec::refinement::ConvergenceKind)
+pub hologram_exec::RefinementStatus::PassBoundReached
+pub hologram_exec::RefinementStatus::RepairBoundReached
+pub hologram_exec::RefinementStatus::Repaired(hologram_exec::refinement::ConvergenceKind)
+impl core::clone::Clone for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::clone(&self) -> hologram_exec::refinement::RefinementStatus
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStatus
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::eq(&self, &hologram_exec::refinement::RefinementStatus) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStatus
+pub fn hologram_exec::refinement::RefinementStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::RefinementStatus
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatus
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStatus
+impl core::marker::Send for hologram_exec::refinement::RefinementStatus
+impl core::marker::Sync for hologram_exec::refinement::RefinementStatus
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStatus
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatus
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatus
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatus
+pub enum hologram_exec::RepairPolicy
+pub hologram_exec::RepairPolicy::None
+pub hologram_exec::RepairPolicy::RetryPass
+pub hologram_exec::RepairPolicy::RetryPass::extra_passes: u8
+impl core::clone::Clone for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::clone(&self) -> hologram_exec::refinement::RepairPolicy
+impl core::cmp::Eq for hologram_exec::refinement::RepairPolicy
+impl core::cmp::PartialEq for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::eq(&self, &hologram_exec::refinement::RepairPolicy) -> bool
+impl core::default::Default for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::default() -> hologram_exec::refinement::RepairPolicy
+impl core::fmt::Debug for hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RepairPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::RepairPolicy
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RepairPolicy
+impl core::marker::Freeze for hologram_exec::refinement::RepairPolicy
+impl core::marker::Send for hologram_exec::refinement::RepairPolicy
+impl core::marker::Sync for hologram_exec::refinement::RepairPolicy
+impl core::marker::Unpin for hologram_exec::refinement::RepairPolicy
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RepairPolicy
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RepairPolicy
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RepairPolicy
+pub enum hologram_exec::ValidatorCost
+pub hologram_exec::ValidatorCost::CompiledPlan
+pub hologram_exec::ValidatorCost::Constant
+pub hologram_exec::ValidatorCost::StateBytes
+pub hologram_exec::ValidatorCost::StatePorts
+impl core::clone::Clone for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::clone(&self) -> hologram_exec::refinement::ValidatorCost
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorCost
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::eq(&self, &hologram_exec::refinement::ValidatorCost) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorCost
+pub fn hologram_exec::refinement::ValidatorCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorCost
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorCost
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorCost
+impl core::marker::Send for hologram_exec::refinement::ValidatorCost
+impl core::marker::Sync for hologram_exec::refinement::ValidatorCost
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorCost
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorCost
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorCost
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorCost
+pub enum hologram_exec::ValidatorKind
+pub hologram_exec::ValidatorKind::StableBytes
+pub hologram_exec::ValidatorKind::StableLabels
+impl hologram_exec::refinement::ValidatorKind
+pub const fn hologram_exec::refinement::ValidatorKind::cost(self) -> hologram_exec::refinement::ValidatorCost
+impl core::clone::Clone for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::clone(&self) -> hologram_exec::refinement::ValidatorKind
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorKind
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::eq(&self, &hologram_exec::refinement::ValidatorKind) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorKind
+pub fn hologram_exec::refinement::ValidatorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorKind
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorKind
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorKind
+impl core::marker::Send for hologram_exec::refinement::ValidatorKind
+impl core::marker::Sync for hologram_exec::refinement::ValidatorKind
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorKind
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorKind
+pub struct hologram_exec::AttestedExecution
+pub hologram_exec::AttestedExecution::archive_fingerprint: [u8; 32]
+pub hologram_exec::AttestedExecution::outputs: alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>
+pub hologram_exec::AttestedExecution::prism_attestation: uor_foundation::enforcement::Grounded<'static, prism_crypto::shapes::Digest<32>, HOLOGRAM_INLINE_BYTES, FP_MAX>
+impl core::marker::Freeze for hologram_exec::prism_route::AttestedExecution
+impl !core::marker::Send for hologram_exec::prism_route::AttestedExecution
+impl !core::marker::Sync for hologram_exec::prism_route::AttestedExecution
+impl core::marker::Unpin for hologram_exec::prism_route::AttestedExecution
+impl core::marker::UnsafeUnpin for hologram_exec::prism_route::AttestedExecution
+impl !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::prism_route::AttestedExecution
+impl !core::panic::unwind_safe::UnwindSafe for hologram_exec::prism_route::AttestedExecution
+pub struct hologram_exec::BufferArena
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::allocated_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_view(&mut self, usize, usize, usize, usize)
+pub fn hologram_exec::buffer::BufferArena::capacity(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::new() -> Self
+pub fn hologram_exec::buffer::BufferArena::read_slot(&self, usize) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::slot_count(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::with_capacity(usize, alloc::vec::Vec<hologram_exec::buffer::SlotSpan>) -> Self
+pub fn hologram_exec::buffer::BufferArena::write_slot(&mut self, usize) -> core::option::Option<&mut [u8]>
+impl hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize
+pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::lease(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::leased_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::leased_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool
+pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)
+pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::release(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize
+pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)
+pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)
+pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize
+impl core::default::Default for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena
+impl core::fmt::Debug for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl hologram_compute::workspace::Workspace for hologram_exec::buffer::BufferArena
+pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]
+pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>
+pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]
+impl core::marker::Freeze for hologram_exec::buffer::BufferArena
+impl core::marker::Send for hologram_exec::buffer::BufferArena
+impl core::marker::Sync for hologram_exec::buffer::BufferArena
+impl core::marker::Unpin for hologram_exec::buffer::BufferArena
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::BufferArena
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::BufferArena
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::BufferArena
+pub struct hologram_exec::CompiledRefinement<B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::CompiledRefinement<B>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::into_session(self) -> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::refinement::CompiledRefinement<B>::new(hologram_exec::session::InferenceSession<B>, hologram_exec::refinement::RefinementPlan) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub const fn hologram_exec::refinement::CompiledRefinement<B>::plan(&self) -> &hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::CompiledRefinement<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub const fn hologram_exec::refinement::CompiledRefinement<B>::session(&self) -> &hologram_exec::session::InferenceSession<B>
+impl<B> core::marker::Freeze for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Freeze
+impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Send
+impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync
+impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin
+impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B>
+pub struct hologram_exec::FileWarmStore
+impl hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl core::marker::Freeze for hologram_exec::warm::FileWarmStore
+impl core::marker::Send for hologram_exec::warm::FileWarmStore
+impl core::marker::Sync for hologram_exec::warm::FileWarmStore
+impl core::marker::Unpin for hologram_exec::warm::FileWarmStore
+impl core::marker::UnsafeUnpin for hologram_exec::warm::FileWarmStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::FileWarmStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::FileWarmStore
+pub struct hologram_exec::InferenceSession<B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::add_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::archive_fingerprint(&self) -> [u8; 32]
+pub fn hologram_exec::session::InferenceSession<B>::broadcast_binary_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::content_store_len(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_activation_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_epilogue_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::dequant_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<alloc::vec::Vec<hologram_archive::address::ContentLabel>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::extension(&self, &str) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::extension_keys(&self) -> impl core::iter::traits::iterator::Iterator<Item = &str>
+pub fn hologram_exec::session::InferenceSession<B>::fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_byte_len(&self, usize) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::input_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
+pub fn hologram_exec::session::InferenceSession<B>::input_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::intern_input(&mut self, &[u8]) -> hologram_archive::address::ContentLabel
+pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::leased_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::output_byte_len(&self, usize) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::output_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>
+pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]
+pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>
+pub fn hologram_exec::session::InferenceSession<B>::pool_allocated_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::release_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::residual_fused_count(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::session::InferenceSession<B>::retain_label(&mut self, &hologram_archive::address::ContentLabel) -> bool
+pub fn hologram_exec::session::InferenceSession<B>::schedule_levels(&self) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::warm_from_store(&mut self, &dyn hologram_exec::warm::WarmStore) -> usize
+pub fn hologram_exec::session::InferenceSession<B>::warm_lattice(&self) -> alloc::vec::Vec<(u32, hologram_archive::address::ContentLabel)>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::execute_attested(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::prism_route::AttestedExecution, hologram_exec::error::ExecError>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>
+pub fn hologram_exec::session::InferenceSession<B>::workspace(&self) -> &hologram_exec::buffer::BufferArena
+pub fn hologram_exec::session::InferenceSession<B>::workspace_mut(&mut self) -> &mut hologram_exec::buffer::BufferArena
+impl<B> core::marker::Freeze for hologram_exec::session::InferenceSession<B> where B: core::marker::Freeze
+impl<B> core::marker::Send for hologram_exec::session::InferenceSession<B> where B: core::marker::Send
+impl<B> core::marker::Sync for hologram_exec::session::InferenceSession<B> where B: core::marker::Sync
+impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> where B: core::marker::Unpin
+impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin
+impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>
+impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>
+pub struct hologram_exec::InputBuffer<'a>
+pub hologram_exec::InputBuffer::bytes: &'a [u8]
+impl<'a> core::marker::Freeze for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Send for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Sync for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::Unpin for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::InputBuffer<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::InputBuffer<'a>
+pub struct hologram_exec::MemWarmStore
+impl hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::is_empty(&self) -> bool
+pub fn hologram_exec::warm::MemWarmStore::len(&self) -> usize
+pub fn hologram_exec::warm::MemWarmStore::new() -> Self
+impl core::default::Default for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::default() -> hologram_exec::warm::MemWarmStore
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::MemWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl core::marker::Freeze for hologram_exec::warm::MemWarmStore
+impl core::marker::Send for hologram_exec::warm::MemWarmStore
+impl core::marker::Sync for hologram_exec::warm::MemWarmStore
+impl core::marker::Unpin for hologram_exec::warm::MemWarmStore
+impl core::marker::UnsafeUnpin for hologram_exec::warm::MemWarmStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::MemWarmStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::MemWarmStore
+pub struct hologram_exec::OutputBuffer
+pub hologram_exec::OutputBuffer::bytes: alloc::vec::Vec<u8>
+impl core::marker::Freeze for hologram_exec::buffer::OutputBuffer
+impl core::marker::Send for hologram_exec::buffer::OutputBuffer
+impl core::marker::Sync for hologram_exec::buffer::OutputBuffer
+impl core::marker::Unpin for hologram_exec::buffer::OutputBuffer
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::OutputBuffer
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::OutputBuffer
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::OutputBuffer
+pub struct hologram_exec::RefinementPlan
+impl hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::bind<'a, B: hologram_exec::session::SessionBackend>(&'a self, &'a mut hologram_exec::session::InferenceSession<B>) -> core::result::Result<hologram_exec::refinement::RefinementRunner<'a, B>, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlan::builder(u8) -> hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlan::execute<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlan::execute_addressed<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub const fn hologram_exec::refinement::RefinementPlan::max_passes(&self) -> u8
+pub const fn hologram_exec::refinement::RefinementPlan::repair_policy(&self) -> hologram_exec::refinement::RepairPolicy
+pub fn hologram_exec::refinement::RefinementPlan::state_contract(&self) -> core::option::Option<&hologram_exec::refinement::RefinementStateContract>
+pub fn hologram_exec::refinement::RefinementPlan::validators(&self) -> &[hologram_exec::refinement::ValidatorKind]
+impl core::clone::Clone for hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::clone(&self) -> hologram_exec::refinement::RefinementPlan
+impl core::fmt::Debug for hologram_exec::refinement::RefinementPlan
+pub fn hologram_exec::refinement::RefinementPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementPlan
+impl core::marker::Send for hologram_exec::refinement::RefinementPlan
+impl core::marker::Sync for hologram_exec::refinement::RefinementPlan
+impl core::marker::Unpin for hologram_exec::refinement::RefinementPlan
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlan
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlan
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlan
+pub struct hologram_exec::RefinementPlanBuilder
+impl hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::build(self) -> core::result::Result<hologram_exec::refinement::RefinementPlan, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementPlanBuilder::new(u8) -> Self
+pub const fn hologram_exec::refinement::RefinementPlanBuilder::repair_policy(self, hologram_exec::refinement::RepairPolicy) -> Self
+pub fn hologram_exec::refinement::RefinementPlanBuilder::state_contract(self, hologram_exec::refinement::RefinementStateContract) -> Self
+pub fn hologram_exec::refinement::RefinementPlanBuilder::validator(self, hologram_exec::refinement::ValidatorKind) -> Self
+impl core::clone::Clone for hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::clone(&self) -> hologram_exec::refinement::RefinementPlanBuilder
+impl core::fmt::Debug for hologram_exec::refinement::RefinementPlanBuilder
+pub fn hologram_exec::refinement::RefinementPlanBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Send for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Sync for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::Unpin for hologram_exec::refinement::RefinementPlanBuilder
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlanBuilder
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlanBuilder
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlanBuilder
+pub struct hologram_exec::RefinementReport
+pub hologram_exec::RefinementReport::dispatched: usize
+pub hologram_exec::RefinementReport::final_labels: alloc::vec::Vec<hologram_archive::address::ContentLabel>
+pub hologram_exec::RefinementReport::passes: u8
+pub hologram_exec::RefinementReport::repairs: u8
+pub hologram_exec::RefinementReport::resident_bytes: usize
+pub hologram_exec::RefinementReport::resident_values: usize
+pub hologram_exec::RefinementReport::skipped: usize
+pub hologram_exec::RefinementReport::status: hologram_exec::refinement::RefinementStatus
+pub hologram_exec::RefinementReport::validator_outcomes: smallvec::SmallVec<[hologram_exec::refinement::ValidatorOutcome; 4]>
+impl core::clone::Clone for hologram_exec::refinement::RefinementReport
+pub fn hologram_exec::refinement::RefinementReport::clone(&self) -> hologram_exec::refinement::RefinementReport
+impl core::fmt::Debug for hologram_exec::refinement::RefinementReport
+pub fn hologram_exec::refinement::RefinementReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_exec::refinement::RefinementReport
+impl core::marker::Send for hologram_exec::refinement::RefinementReport
+impl core::marker::Sync for hologram_exec::refinement::RefinementReport
+impl core::marker::Unpin for hologram_exec::refinement::RefinementReport
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementReport
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementReport
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementReport
+pub struct hologram_exec::RefinementRunner<'a, B: hologram_exec::session::SessionBackend>
+impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::RefinementRunner<'_, B>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>
+pub fn hologram_exec::refinement::RefinementRunner<'_, B>::session(&self) -> &hologram_exec::session::InferenceSession<B>
+impl<'a, B> core::marker::Freeze for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Send
+impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync
+impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
+impl<'a, B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>
+pub struct hologram_exec::RefinementStateContract
+impl hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::from_session<B: hologram_exec::session::SessionBackend>(&hologram_exec::session::InferenceSession<B>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementStateContract::new(alloc::vec::Vec<hologram_exec::refinement::RefinementStatePort>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>
+pub fn hologram_exec::refinement::RefinementStateContract::port_count(&self) -> usize
+pub fn hologram_exec::refinement::RefinementStateContract::ports(&self) -> &[hologram_exec::refinement::RefinementStatePort]
+impl core::clone::Clone for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::clone(&self) -> hologram_exec::refinement::RefinementStateContract
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStateContract
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::eq(&self, &hologram_exec::refinement::RefinementStateContract) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStateContract
+pub fn hologram_exec::refinement::RefinementStateContract::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Send for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Sync for hologram_exec::refinement::RefinementStateContract
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStateContract
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStateContract
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStateContract
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStateContract
+pub struct hologram_exec::RefinementStatePort
+pub hologram_exec::RefinementStatePort::byte_len: usize
+pub hologram_exec::RefinementStatePort::dtype: u8
+pub hologram_exec::RefinementStatePort::element_count: u64
+pub hologram_exec::RefinementStatePort::shape: alloc::vec::Vec<u64>
+impl core::clone::Clone for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::clone(&self) -> hologram_exec::refinement::RefinementStatePort
+impl core::cmp::Eq for hologram_exec::refinement::RefinementStatePort
+impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::eq(&self, &hologram_exec::refinement::RefinementStatePort) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::RefinementStatePort
+pub fn hologram_exec::refinement::RefinementStatePort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Freeze for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Send for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Sync for hologram_exec::refinement::RefinementStatePort
+impl core::marker::Unpin for hologram_exec::refinement::RefinementStatePort
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatePort
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatePort
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatePort
+pub struct hologram_exec::SlotSpan
+pub hologram_exec::SlotSpan::length: u64
+pub hologram_exec::SlotSpan::offset: u64
+impl core::clone::Clone for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::clone(&self) -> hologram_exec::buffer::SlotSpan
+impl core::default::Default for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::default() -> hologram_exec::buffer::SlotSpan
+impl core::fmt::Debug for hologram_exec::buffer::SlotSpan
+pub fn hologram_exec::buffer::SlotSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::buffer::SlotSpan
+impl core::marker::Freeze for hologram_exec::buffer::SlotSpan
+impl core::marker::Send for hologram_exec::buffer::SlotSpan
+impl core::marker::Sync for hologram_exec::buffer::SlotSpan
+impl core::marker::Unpin for hologram_exec::buffer::SlotSpan
+impl core::marker::UnsafeUnpin for hologram_exec::buffer::SlotSpan
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::SlotSpan
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::SlotSpan
+pub struct hologram_exec::ValidatorOutcome
+pub hologram_exec::ValidatorOutcome::accepted: bool
+pub hologram_exec::ValidatorOutcome::cost: hologram_exec::refinement::ValidatorCost
+pub hologram_exec::ValidatorOutcome::validator: hologram_exec::refinement::ValidatorKind
+impl core::clone::Clone for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::clone(&self) -> hologram_exec::refinement::ValidatorOutcome
+impl core::cmp::Eq for hologram_exec::refinement::ValidatorOutcome
+impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::eq(&self, &hologram_exec::refinement::ValidatorOutcome) -> bool
+impl core::fmt::Debug for hologram_exec::refinement::ValidatorOutcome
+pub fn hologram_exec::refinement::ValidatorOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Freeze for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Send for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Sync for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::Unpin for hologram_exec::refinement::ValidatorOutcome
+impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorOutcome
+impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorOutcome
+pub trait hologram_exec::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>
+impl<B: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B
+pub trait hologram_exec::WarmStore
+pub fn hologram_exec::WarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::WarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore
+pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+impl hologram_exec::warm::WarmStore for hologram_exec::warm::MemWarmStore
+pub fn hologram_exec::warm::MemWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>
+pub fn hologram_exec::warm::MemWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])
+pub fn hologram_exec::fold_archive<B: hologram_exec::session::SessionBackend>(&[u8], B) -> core::result::Result<alloc::vec::Vec<u8>, hologram_exec::error::ExecError>
