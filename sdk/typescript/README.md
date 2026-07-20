@@ -1,11 +1,11 @@
 # Hologram TypeScript SDK
 
-`@hologram/sdk` is the browser-safe graph builder package. It does not import
+`@uor-foundation/sdk` is the browser-safe graph builder package. It does not import
 Node native modules directly; callers pass a native or WASM binding object into
 `Graph.compile(...)`.
 
 ```ts
-import * as hg from "@hologram/sdk";
+import * as hg from "@uor-foundation/sdk";
 
 const g = new hg.Graph("encoder");
 const x = g.input("x", { dtype: hg.f32, shape: [2, 3] });
@@ -49,7 +49,7 @@ try {
 }
 ```
 
-`@hologram/sdk` exports `ParseError`, `GraphError`, `UnsupportedOpError`,
+`@uor-foundation/sdk` exports `ParseError`, `GraphError`, `UnsupportedOpError`,
 `UnknownOpError`, `BadAttrError`, `ShapeError`, `ExternalTensorError`,
 `ArchiveLoadError`, `ExecutionError`, `AbiMismatchError`,
 `InvalidArgumentError`, `UnsupportedDTypeError`, `CompileError`,
@@ -71,6 +71,6 @@ npm run --prefix sdk/typescript test:types
 npm run --prefix sdk/typescript pack:check
 ```
 
-`@hologram/native` and `@hologram/wasm` implement the `NativeBinding` protocol
+`@uor-foundation/native` and `@uor-foundation/wasm` implement the `NativeBinding` protocol
 exported by this package. The native package carries the Node N-API driver; the
 WASM package carries a browser-safe adapter and the wasm driver crate.

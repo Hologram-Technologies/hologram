@@ -1,5 +1,5 @@
 {
-  "name": "@hologram/wasm",
+  "name": "@uor-foundation/wasm",
   "version": "0.12.1",
   "description": "WASM binding adapter for the Hologram TypeScript SDK",
   "license": "MIT OR Apache-2.0",
@@ -32,7 +32,7 @@
     "pack:check": "npm pack --dry-run"
   },
   "peerDependencies": {
-    "@hologram/sdk": "0.12.1"
+    "@uor-foundation/sdk": "0.12.1"
   },
   "devDependencies": {
     "typescript": ">=5.4"

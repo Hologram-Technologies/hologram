@@ -32,7 +32,7 @@ FILES=(
   "spaces/holospaces-browser/Cargo.toml"
 )
 
-# The two leaf packages (native N-API, wasm driver) declare a `peerDependencies` on the `@hologram/sdk`
+# The two leaf packages (native N-API, wasm driver) declare a `peerDependencies` on the `@uor-foundation/sdk`
 # meta-package. Because all three ship lock-step at the SAME version, this pin must track the workspace
 # version too — otherwise packing the leaf against a bumped SDK trips npm's peer-dep resolver (ERESOLVE)
 # and the "Pack native artifacts" / wasm smoke jobs fail. Sync (and gate) it alongside the versions.
@@ -67,18 +67,18 @@ for f in "${FILES[@]}"; do
   fi
 done
 
-# Sync / gate the `@hologram/sdk` peer-dependency pin in the leaf packages.
+# Sync / gate the `@uor-foundation/sdk` peer-dependency pin in the leaf packages.
 for f in "${PEER_FILES[@]}"; do
   [ -f "$f" ] || continue
-  cur="$(grep -m1 '"@hologram/sdk"' "$f" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  cur="$(grep -m1 '"@uor-foundation/sdk"' "$f" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   [ -z "$cur" ] && continue          # no peer pin declared → nothing to sync
   [ "$cur" = "$WS" ] && continue
   if [ "$MODE" = "--check" ]; then
-    echo "::error::SDK peer-dep drift: $f pins @hologram/sdk $cur, workspace is $WS — run scripts/sync-sdk-versions.sh"
+    echo "::error::SDK peer-dep drift: $f pins @uor-foundation/sdk $cur, workspace is $WS — run scripts/sync-sdk-versions.sh"
     rc=1
   else
     perl -0pi -e "s/(\"\@hologram\/sdk\":\s*\")[0-9]+\.[0-9]+\.[0-9]+/\${1}${WS}/" "$f"
-    echo "  $f: peer @hologram/sdk $cur -> $WS"
+    echo "  $f: peer @uor-foundation/sdk $cur -> $WS"
   fi
 done
 

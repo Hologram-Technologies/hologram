@@ -1,5 +1,5 @@
 {
-  "name": "@hologram/sdk",
+  "name": "@uor-foundation/sdk",
   "version": "0.12.1",
   "description": "TypeScript SDK for building and compiling Hologram tensor graphs",
   "license": "MIT OR Apache-2.0",
