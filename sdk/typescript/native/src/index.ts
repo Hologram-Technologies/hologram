@@ -401,5 +401,27 @@ function positive(value: number): number | undefined {
 }
 
 function addonCandidates(): readonly string[] {
-  return ["./hologram.node", "../hologram.node", "@uor-foundation/native-bin"];
+  const tag = targetTag();
+  return [
+    `./hologram-${tag}.node`, // bundled multi-platform: the binary for THIS platform (see copy-native.mjs)
+    "./hologram.node", // legacy single-platform bundle
+    "../hologram.node",
+    "@uor-foundation/native-bin", // optional per-platform package fallback
+  ];
+}
+
+// Build a `<platform>-<arch>` tag matching copy-native.mjs's bundled filenames. On Linux, distinguish
+// musl from glibc (musl builds have no glibc runtime version) so the right `.node` is picked.
+function targetTag(): string {
+  const { platform, arch } = process;
+  if (platform === "linux") {
+    const report = (
+      process as unknown as {
+        report?: { getReport?: () => { header?: { glibcVersionRuntime?: string } } };
+      }
+    ).report;
+    const isMusl = !report?.getReport?.()?.header?.glibcVersionRuntime;
+    return isMusl ? `linux-${arch}-musl` : `linux-${arch}`;
+  }
+  return `${platform}-${arch}`;
 }
