@@ -562,12 +562,15 @@ let model = compose_model(&[a, b]).unwrap();
 
 ## Opening a holospace
 
-A **holospace** is a κ-addressed application you *provision into a store* and
-*boot on a runtime* — a `.holo` compute artifact, a Wasm userland, or a git
-devcontainer. There is **no CLI verb** for holospaces: you open them
-programmatically (Rust) or in the browser peer. The lifecycle lives in
-[`spaces/holospaces`](spaces/holospaces/); the authoritative end-to-end flows are
-in [`spaces/holospaces/tests/e2e.rs`](spaces/holospaces/tests/e2e.rs).
+A **holospace** is a κ-addressed application you *build*, *provision into a store*,
+and *boot on a runtime* — a `ContainerManifest` + a `CapabilitySet` over one of
+three sources. You build and open the holospace realization programmatically (Rust)
+or in the browser peer; the CLI's `hologram node` verbs build and run the
+*underlying container* directly (a holospace bundles the same manifest + caps into
+one κ). The lifecycle lives in [`spaces/holospaces`](spaces/holospaces/); the
+reference end-to-end flows are in
+[`spaces/holospaces/tests/e2e.rs`](spaces/holospaces/tests/e2e.rs) — run them with
+`cargo test --workspace --test e2e`.
 
 A `Source` is one of three provisioning forms:
 
@@ -577,7 +580,26 @@ A `Source` is one of three provisioning forms:
 | `Source::Userland { entry }` | a Wasm-recompiled userland — the execution surface (κ) |
 | `Source::Devcontainer { repo, reference, config, userland, arch, … }` | a git repo + `devcontainer.json` |
 
-### From Rust — the Platform Manager
+### Build a holospace
+
+Each `Source` is κ-addressed content you produce first, then provision:
+
+- **`.holo` artifact** — compile a graph (`hologram compile …`, or the
+  [tensor-engine](#using-the-tensor-engine) / [`Client`](#programmatic-control)
+  path), then provision it as `Source::HoloFile { artifact: <κ> }`.
+- **Wasm userland** — a `wasm32` module that exports the container ABI
+  (`hg_init` / `hg_event` / `hg_suspend` / `hg_resume` / `hg_callback`) and imports
+  nothing outside the `hologram` host surface. Validate it with
+  `holospaces::surface::validate_userland(&module)`, `put` it to get its κ, then
+  provision `Source::Userland { entry: <κ> }`. (The `e2e` tests build one from a
+  small `wat` module; a real userland is your program recompiled to `wasm32`.)
+- **Devcontainer** — build a bootable holospace from a git repo + `devcontainer.json`
+  and a selected userland with
+  `holospaces::boot::ingest_devcontainer(repo, reference, config_path, config_json, userland, arch, caps)`
+  (std only). The config is verified against its source *and* the userland it
+  selects, so the result is bootable — not just a config hash.
+
+### Run it from Rust — the Platform Manager
 
 Sign in with a self-sovereign key, provision a holospace from a `Source`, then
 **open** it into a session and drive its lifecycle. The suspend snapshot is a κ,
@@ -634,6 +656,28 @@ Depend on it as a workspace crate — `holospaces = { workspace = true }` (defau
 internet import boundary). Booting a holospace needs a `ContainerRuntime` —
 `hologram_runtime::Runtime` with an engine (`WasmtimeEngine` natively; the
 `wasmi`/bare-metal engines for browser and embedded).
+
+### Run it from the CLI
+
+There is no dedicated `holospace` verb, but `hologram node` builds and runs the
+*underlying container* (a holospace bundles the same manifest + caps into one κ).
+Each `node put` stores bytes and prints their κ-label:
+
+```bash
+# store the parts (each prints its κ) — the userland module built above,
+# plus the container's initial state and params bytes
+hologram node put userland.wasm     # → <code-κ>
+hologram node put state.bin         # → <state-κ>
+hologram node put params.bin        # → <params-κ>
+
+# mint a container manifest (code + state + params) and a capability set
+hologram node manifest <code-κ> <state-κ> <params-κ>   # → <container-κ>
+hologram node caps --mem 4194304 --cpu-ms 1000         # → <caps-κ>  (grants + budgets; empty by default)
+
+# boot the real Wasm container (Wasmtime), deliver one event, suspend →
+# prints the snapshot κ (itself content-addressed, so resume-elsewhere works)
+hologram node spawn <container-κ> <caps-κ> --event event.bin
+```
 
 ### In the browser — the tab *is* the substrate
 
