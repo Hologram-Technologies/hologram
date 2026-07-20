@@ -49,21 +49,31 @@ type.
 
 ## Quickstart
 
-**Prerequisites:** Rust (stable) and [`just`](https://github.com/casey/just).
+Install the `hologram` CLI — a prebuilt binary, no repository clone and no Rust
+toolchain required:
 
 ```bash
-# 1. Clone and build the workspace
-git clone https://github.com/Hologram-Technologies/hologram
-cd hologram
-just build                                   # or: cargo build --workspace
+curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh
+```
 
-# 2. Run the end-to-end example (parse → compile → execute → κ-address a graph)
-cargo run -p hologram-cli --example pipeline
+The script downloads the binary for your platform (macOS arm64/x86_64, Linux
+x86_64) into `~/.local/bin`. Alternatives:
 
-# 3. Install the single `hologram` binary (tensor engine + substrate node)
-cargo install --path crates/hologram-cli
+```bash
+# pin a version, or install elsewhere (see `install.sh --help`)
+curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh -s -- --version v0.12.1
 
-# 4. Compile native Hologram source to a content-addressed .holo, then run it
+# build from source (any platform; needs Rust — no clone required)
+cargo install --git https://github.com/Hologram-Technologies/hologram --locked hologram-cli
+```
+
+Windows: download `hologram-windows-amd64.exe.zip` from the
+[latest release](https://github.com/Hologram-Technologies/hologram/releases/latest).
+Building the workspace from a clone is covered under [Contributing](#contributing).
+
+Compile native Hologram source to a content-addressed `.holo` archive, then run it:
+
+```bash
 hologram compile --source graph.txt --output model.holo
 hologram execute --archive model.holo
 ```
@@ -1026,15 +1036,29 @@ for a detailed walkthrough of the execution model, quantum levels (Q0/Q1), the
 
 Contributions are welcome. Fork the repository, create a topic branch off `main`,
 make your change, and open a pull request. `main` is governed by a merge queue,
-and every PR must pass the aggregate `CI Success` check before it can land — so
-run the full quality gate locally first (CI runs the same one, and it must be
-green):
+and every PR must pass the aggregate `CI Success` check before it can land.
+
+### Building from source
+
+Requires Rust (stable) and [`just`](https://github.com/casey/just). Contributors
+build the workspace from a clone rather than installing the released binary:
+
+```bash
+git clone https://github.com/Hologram-Technologies/hologram
+cd hologram
+just build                                     # or: cargo build --workspace
+cargo run -p hologram-cli --example pipeline   # end-to-end: parse → compile → execute → κ-address
+cargo install --path crates/hologram-cli       # install your local build as `hologram`
+```
+
+Run the full quality gate before submitting — CI runs the same one, and it must
+be green:
 
 ```bash
 just ci   # fmt check + clippy (-D warnings) + test suite + supply-chain gate (cargo deny)
 ```
 
-House rules (enforced in review and CI):
+### House rules (enforced in review and CI)
 
 - Clippy is enforced with `-D warnings` — zero warnings required.
 - Functions ≤ 15 lines; max 3 arguments (use the builder pattern for more).
