@@ -8,7 +8,7 @@
 [package]
 name = "holospaces-browser"
 description = "The Hologram Platform Manager — holospaces' browser peer (wasm32), served from GitHub Pages"
-version = "0.0.0"
+version = "0.12.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Hologram-Technologies/holospaces"

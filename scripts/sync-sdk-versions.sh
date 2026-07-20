@@ -14,8 +14,13 @@ cd "$ROOT"
 WS="$(scripts/workspace-version.sh)"
 MODE="${1:-write}"
 
-# Every file that carries an SDK package version. JSON = the npm `"version"`; TOML = the `[package]`
-# / `[project]` `version`. The first version line in each of these manifests is the package version.
+# Every file that carries a workspace-EXCLUDED package version. JSON = the npm `"version"`; TOML =
+# the `[package]` / `[project]` `version` (the first version line in each manifest). These are the
+# packages that can't use `version.workspace = true` because they aren't workspace members:
+#   - the SDKs (wasm cdylib / N-API);
+#   - the target-specific crates `hologram-efi` (x86_64-unknown-uefi) and `holospaces-browser`
+#     (wasm32 browser peer) — `exclude`d from the workspace, so `cargo set-version --workspace`
+#     never touches them; without this sync they drift (efi was 0.5.0, browser 0.0.0).
 FILES=(
   "sdk/typescript/package.json"
   "sdk/typescript/native/package.json"
@@ -23,6 +28,8 @@ FILES=(
   "sdk/typescript/native/native/Cargo.toml"
   "sdk/typescript/wasm/driver/Cargo.toml"
   "sdk/python/pyproject.toml"
+  "crates/hologram-efi/Cargo.toml"
+  "spaces/holospaces-browser/Cargo.toml"
 )
 
 # The two leaf packages (native N-API, wasm driver) declare a `peerDependencies` on the `@hologram/sdk`
