@@ -23,7 +23,7 @@ import {
   type OpAttrs,
   type OpName,
   type Shape,
-} from "@uor-foundation/sdk";
+} from "@tryhologram/sdk";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -145,7 +145,7 @@ export function loadNativeAddon(): NativeAddon {
       continue;
     }
   }
-  throw new HologramNativeError(0, "unable to load @uor-foundation/native binary");
+  throw new HologramNativeError(0, "unable to load @tryhologram/native binary");
 }
 
 class NativeSourceBuilder implements LowLevelBuilder {
@@ -401,5 +401,26 @@ function positive(value: number): number | undefined {
 }
 
 function addonCandidates(): readonly string[] {
-  return ["./hologram.node", "../hologram.node", "@uor-foundation/native-bin"];
+  const tag = targetTag();
+  return [
+    `./hologram-${tag}.node`, // bundled multi-platform: the binary for THIS platform (see copy-native.mjs)
+    "./hologram.node", // legacy single-platform build
+    "../hologram.node", // legacy single-platform build (pre-dist layout)
+  ];
+}
+
+// Build a `<platform>-<arch>` tag matching copy-native.mjs's bundled filenames. On Linux, distinguish
+// musl from glibc (musl builds have no glibc runtime version) so the right `.node` is picked.
+function targetTag(): string {
+  const { platform, arch } = process;
+  if (platform === "linux") {
+    const report = (
+      process as unknown as {
+        report?: { getReport?: () => { header?: { glibcVersionRuntime?: string } } };
+      }
+    ).report;
+    const isMusl = !report?.getReport?.()?.header?.glibcVersionRuntime;
+    return isMusl ? `linux-${arch}-musl` : `linux-${arch}`;
+  }
+  return `${platform}-${arch}`;
 }

@@ -1,0 +1,183 @@
+# Publish the three TypeScript SDK packages to npm under the @tryhologram scope:
+#   - @tryhologram/sdk     (meta / pure-TS surface)
+#   - @tryhologram/native  (N-API addon — BUNDLED multi-platform: every target's hologram-*.node
+#                              ships in one package; src/index.ts `targetTag` picks the match at load)
+#   - @tryhologram/wasm    (wasm32 driver)
+#
+# Auth is npm TRUSTED PUBLISHING (OIDC) in the steady state — no long-lived token. Each package must
+# have a trusted publisher configured on npmjs.com pointing at THIS workflow (publish-npm.yml) in this
+# repo. There is no token `gate` job like publish-crates.yml / publish-pypi.yml: OIDC can't be probed
+# from a secret, so an unconfigured publisher just fails the publish step loudly.
+#
+# BOOTSTRAP: npm (unlike PyPI) will not let you configure a trusted publisher until the package already
+# exists. To create the packages the first time, set an `NPM_TOKEN` repo secret (a granular Automation
+# token with publish rights to @tryhologram) — the publish step uses it when present, else it falls
+# through to OIDC. Then configure the trusted publishers, set each package's 2FA to allow automation
+# tokens, and delete NPM_TOKEN. If a trusted publisher requires a GitHub Environment, add
+# `environment: <name>` to the `publish` job to match.
+name: publish-npm
+
+run-name: >-
+  publish-npm ${{ github.event_name == 'workflow_dispatch'
+    && (inputs.dry_run && '(dry-run)' || '(manual)')
+    || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + pack only (npm pack --dry-run); do NOT publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Build the N-API addon on every target OS. Each job emits exactly one
+  # sdk/typescript/native/dist/hologram-<platform>-<arch>.node (the tag is chosen by
+  # scripts/copy-native.mjs from process.platform/arch). These are the per-platform binaries the
+  # bundled @tryhologram/native package carries and selects between at load time.
+  native-addon:
+    name: native addon (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest = darwin-arm64, macos-15-intel = darwin-x64 (matches release.yml's matrix).
+        # linux musl (linux-x64-musl) is deferred — it needs a musl build container; the loader
+        # already probes for it, so it can be added as a 5th leg later without a code change.
+        os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: publish-npm-native-${{ matrix.os }}
+
+      # --ignore-scripts: don't run prepack (we build explicitly below).
+      # --legacy-peer-deps: the @tryhologram/sdk peer isn't on npm yet during a first release.
+      - name: Install SDK deps
+        working-directory: sdk/typescript
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: Install native package deps
+        working-directory: sdk/typescript/native
+        run: npm install --ignore-scripts --legacy-peer-deps
+
+      - name: Build native addon (dist/hologram-<platform>-<arch>.node)
+        working-directory: sdk/typescript/native
+        run: npm run build:native
+
+      - name: Upload per-platform addon
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-addon-${{ matrix.os }}
+          path: sdk/typescript/native/dist/*.node
+          if-no-files-found: error
+
+  publish:
+    name: build + publish (npm OIDC)
+    needs: native-addon
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing + provenance attestation
+    steps:
+      - uses: actions/checkout@v6
+
+      # No `registry-url:` — that would seed .npmrc with an empty `_authToken` line that can shadow
+      # OIDC. Auth is set explicitly in the publish step (OIDC by default; NPM_TOKEN when bootstrapping).
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10.x.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      # Only @tryhologram/wasm's check:driver touches cargo (cargo check --target wasm32).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install deps (all three packages)
+        run: |
+          npm install --ignore-scripts --legacy-peer-deps --prefix sdk/typescript
+          npm install --ignore-scripts --legacy-peer-deps --prefix sdk/typescript/native
+          npm install --ignore-scripts --legacy-peer-deps --prefix sdk/typescript/wasm
+
+      # --- @tryhologram/sdk (meta, pure TS) — prepack is `npm run build`. ---
+      - name: Build sdk
+        run: npm run build --prefix sdk/typescript
+
+      # --- @tryhologram/native — assemble the bundle: all per-platform .node + tsc output. ---
+      - name: Gather every platform's addon into native/dist
+        uses: actions/download-artifact@v7
+        with:
+          pattern: native-addon-*
+          merge-multiple: true
+          path: sdk/typescript/native/dist
+
+      - name: Build native TS (tsc leaves dist/*.node in place)
+        run: |
+          npm run build --prefix sdk/typescript/native
+          echo "bundled addons:"
+          find sdk/typescript/native/dist -maxdepth 1 -name '*.node' -print
+          n=$(find sdk/typescript/native/dist -maxdepth 1 -name '*.node' | wc -l | tr -d ' ')
+          # 4 mainstream targets today (linux-x64, darwin-x64, darwin-arm64, win32-x64).
+          if [ "$n" -lt 4 ]; then echo "::error::expected >=4 bundled addons, found $n"; exit 1; fi
+
+      # --- @tryhologram/wasm — prepack is `npm run build`; check:driver mirrors release.yml. ---
+      - name: Build + check wasm
+        run: |
+          npm run build --prefix sdk/typescript/wasm
+          npm run check:driver --prefix sdk/typescript/wasm
+
+      - name: Publish (or dry-run)
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+          # Steady state: unset → OIDC trusted publishing. Bootstrap: set to a granular Automation
+          # token to create the packages the first time (see the BOOTSTRAP note in the header).
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ -n "${NPM_TOKEN:-}" ]; then
+              echo "Publishing with NPM_TOKEN (bootstrap — OIDC trusted publisher not yet configured)."
+              echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> "$HOME/.npmrc"
+            else
+              echo "Publishing via OIDC trusted publishing (no token; provenance is automatic)."
+            fi
+          fi
+          ship() {
+            dir="$1"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::group::pack $dir (dry-run)"
+              npm pack --dry-run "./$dir"
+              echo "::endgroup::"
+            else
+              # --ignore-scripts: dist is already built above; skip prepack's cargo rebuild.
+              # No --provenance: it's automatic under OIDC, and unwanted for a token bootstrap.
+              npm publish "./$dir" --access public --ignore-scripts
+            fi
+          }
+          # sdk first: native + wasm declare it as an exact-version peer.
+          ship sdk/typescript
+          ship sdk/typescript/native
+          ship sdk/typescript/wasm

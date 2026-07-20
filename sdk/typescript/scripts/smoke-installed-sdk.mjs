@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const sdk = await import(installedEntry("@uor-foundation/sdk"));
+const sdk = await import(installedEntry("@tryhologram/sdk"));
 
 if (sdk.f32 !== 8) {
   throw new Error("unexpected f32 dtype id");

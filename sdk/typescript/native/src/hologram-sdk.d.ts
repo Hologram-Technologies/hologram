@@ -1,4 +1,4 @@
-declare module "@uor-foundation/sdk" {
+declare module "@tryhologram/sdk" {
   export const REQUIRED_FEATURES: readonly string[];
   export const f32: 8;
   export const ERROR_ABI_MISMATCH: 9;

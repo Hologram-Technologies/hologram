@@ -11,13 +11,13 @@ This directory contains package code that sits above the stable
   chainable SDK layers.
 - `python/pyproject.toml` packages the Python SDK as `hologram`.
 - `typescript/package.json` packages the browser-safe TypeScript SDK as
-  `@uor-foundation/sdk`.
+  `@tryhologram/sdk`.
 - `typescript/native/package.json` packages the Node native adapter as
-  `@uor-foundation/native`.
+  `@tryhologram/native`.
 - `typescript/wasm/package.json` packages the browser-safe WASM adapter as
-  `@uor-foundation/wasm`.
+  `@tryhologram/wasm`.
 - Native binary/WASM driver implementations remain separate from
-  `@uor-foundation/sdk`. The human SDKs accept a binding object that exposes the
+  `@tryhologram/sdk`. The human SDKs accept a binding object that exposes the
   source-builder ABI.
 
 Refresh generated files with:
@@ -37,15 +37,15 @@ The package split is intentional:
   `Graph.compile()` imports `hologram._hologram` only when no binding is passed
   explicitly. Wheels bundle the `hologram-ffi` cdylib and `_hologram.py`
   exposes it through the same source-builder and session ABIs.
-- TypeScript `@uor-foundation/sdk`: pure ESM graph builder plus generated op metadata.
+- TypeScript `@tryhologram/sdk`: pure ESM graph builder plus generated op metadata.
   It is browser-safe because it does not import `node:`, N-API, or filesystem
   modules.
-- `@uor-foundation/native`: Node adapter implementing the exported `NativeBinding`
+- `@tryhologram/native`: Node adapter implementing the exported `NativeBinding`
   protocol over a N-API addon for host source-building and session execution.
-- `@uor-foundation/wasm`: browser-safe adapter implementing the same protocol over a
+- `@tryhologram/wasm`: browser-safe adapter implementing the same protocol over a
   WASM driver.
-- Future `@uor-foundation/browser`: convenience package that composes
-  `@uor-foundation/sdk` with the WASM binding and browser-safe filesystem policy.
+- Future `@tryhologram/browser`: convenience package that composes
+  `@tryhologram/sdk` with the WASM binding and browser-safe filesystem policy.
 
 Native Hologram `.txt` source compilation is exposed through the same binding
 contract:
@@ -56,8 +56,8 @@ archive = hg.compile_source_file("graph.txt")
 ```
 
 ```ts
-import { compileSource } from "@uor-foundation/sdk";
-import { compileSourceFile, createNativeBinding } from "@uor-foundation/native";
+import { compileSource } from "@tryhologram/sdk";
+import { compileSourceFile, createNativeBinding } from "@tryhologram/native";
 
 const native = createNativeBinding();
 const archive = await compileSource("input x\nop relu x as=y\noutput y\n", native);
