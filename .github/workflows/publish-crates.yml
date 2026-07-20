@@ -1,0 +1,41 @@
+name: Publish · crates.io
+
+# Publishes every publishable workspace crate to crates.io on a release tag, in dependency order.
+# crates.io versions are PERMANENT, so this runs behind the `crates-io` GitHub Environment — create
+# it (Settings → Environments → crates-io) with yourself as a required reviewer, and the publish
+# then waits for your approval on each release. Needs the `CARGO_REGISTRY_TOKEN` secret (a crates.io
+# API token); without it the job runs but publishes nothing.
+run-name: "Publish crates.io · ${{ github.ref_name }}"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the computed publish order only (no publish)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: cargo publish (topological order)
+    runs-on: ubuntu-latest
+    environment: crates-io       # approval gate — permanent publishes
+    timeout-minutes: 120         # ~19 crates, each verified by cargo publish
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: cargo publish (dependency order; skips if no token)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: bash scripts/publish-crates.sh
