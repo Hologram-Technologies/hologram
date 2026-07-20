@@ -1,0 +1,680 @@
+pub mod hologram_archive
+pub use hologram_archive::AddressOutcome
+pub use hologram_archive::AddressWitness
+pub use hologram_archive::KappaLabel
+pub mod hologram_archive::address
+pub use hologram_archive::address::AddressFailure
+pub use hologram_archive::address::AddressOutcome
+pub use hologram_archive::address::AddressWitness
+pub use hologram_archive::address::CompositionFailure
+pub use hologram_archive::address::KappaLabel
+pub use hologram_archive::address::VerifyError
+pub use hologram_archive::address::compose_e6_filtration
+pub use hologram_archive::address::compose_e7_augmentation
+pub use hologram_archive::address::compose_e8_embedding
+pub use hologram_archive::address::compose_f4_quotient
+pub use hologram_archive::address::compose_g2_product
+pub use hologram_archive::address::composition
+pub use hologram_archive::address::ring
+pub fn hologram_archive::address::address_bytes(&[u8]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::address::address_ring(&[u8]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::ring::pipeline::AddressFailure>
+pub fn hologram_archive::address::compose_model(&[uor_addr::label::KappaLabel<71>]) -> core::result::Result<uor_addr::label::KappaLabel<71>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::address::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::address::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::address::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::address::label_from_fingerprint(&[u8; 32]) -> hologram_archive::address::ContentLabel
+pub type hologram_archive::address::ContentLabel = uor_addr::label::KappaLabel<71>
+pub mod hologram_archive::certificate_codec
+pub struct hologram_archive::certificate_codec::CertificateRecord
+pub hologram_archive::certificate_codec::CertificateRecord::fingerprint: [u8; 32]
+pub hologram_archive::certificate_codec::CertificateRecord::width_bytes: u8
+pub hologram_archive::certificate_codec::CertificateRecord::witt_bits: u16
+impl hologram_archive::certificate_codec::CertificateRecord
+pub fn hologram_archive::certificate_codec::CertificateRecord::from_validated(&uor_foundation::enforcement::Validated<uor_foundation::enforcement::LiftChainCertificate>) -> Self
+impl core::clone::Clone for hologram_archive::certificate_codec::CertificateRecord
+pub fn hologram_archive::certificate_codec::CertificateRecord::clone(&self) -> hologram_archive::certificate_codec::CertificateRecord
+impl core::cmp::Eq for hologram_archive::certificate_codec::CertificateRecord
+impl core::cmp::PartialEq for hologram_archive::certificate_codec::CertificateRecord
+pub fn hologram_archive::certificate_codec::CertificateRecord::eq(&self, &hologram_archive::certificate_codec::CertificateRecord) -> bool
+impl core::fmt::Debug for hologram_archive::certificate_codec::CertificateRecord
+pub fn hologram_archive::certificate_codec::CertificateRecord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::StructuralPartialEq for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::Freeze for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::Send for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::Sync for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::Unpin for hologram_archive::certificate_codec::CertificateRecord
+impl core::marker::UnsafeUnpin for hologram_archive::certificate_codec::CertificateRecord
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::certificate_codec::CertificateRecord
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::certificate_codec::CertificateRecord
+pub fn hologram_archive::certificate_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::certificate_codec::CertificateRecord>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::certificate_codec::encode(&[hologram_archive::certificate_codec::CertificateRecord]) -> alloc::vec::Vec<u8>
+pub mod hologram_archive::compose
+pub struct hologram_archive::compose::OrderedCarrier<'a>(_)
+impl<'a> hologram_archive::compose::OrderedCarrier<'a>
+pub fn hologram_archive::compose::OrderedCarrier<'a>::new(&'a [u8]) -> Self
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_archive::compose::OrderedCarrier<'_>
+pub const hologram_archive::compose::OrderedCarrier<'_>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_archive::compose::OrderedCarrier<'_>::CYCLE_SIZE: u64
+pub const hologram_archive::compose::OrderedCarrier<'_>::IRI: &'static str
+pub const hologram_archive::compose::OrderedCarrier<'_>::SITE_COUNT: usize
+impl uor_foundation::pipeline::PartitionProductFields for hologram_archive::compose::OrderedCarrier<'_>
+pub const hologram_archive::compose::OrderedCarrier<'_>::FIELDS: &'static [(u32, u32)]
+pub const hologram_archive::compose::OrderedCarrier<'_>::FIELD_NAMES: &'static [&'static str]
+impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedCarrier<'_>
+impl<'a> core::clone::Clone for hologram_archive::compose::OrderedCarrier<'a>
+pub fn hologram_archive::compose::OrderedCarrier<'a>::clone(&self) -> hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::fmt::Debug for hologram_archive::compose::OrderedCarrier<'a>
+pub fn hologram_archive::compose::OrderedCarrier<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> uor_foundation::pipeline::IntoBindingValue<'a> for hologram_archive::compose::OrderedCarrier<'a>
+pub fn hologram_archive::compose::OrderedCarrier<'a>::as_binding_value<const INLINE_BYTES: usize>(&self) -> uor_foundation::pipeline::TermValue<'a, INLINE_BYTES>
+impl<'a> core::marker::Freeze for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::marker::Send for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::marker::Sync for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::marker::Unpin for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedCarrier<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedCarrier<'a>
+pub struct hologram_archive::compose::OrderedLabel
+impl uor_foundation::enforcement::GroundedShape for hologram_archive::compose::OrderedLabel
+impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_archive::compose::OrderedLabel
+pub const hologram_archive::compose::OrderedLabel::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]
+pub const hologram_archive::compose::OrderedLabel::CYCLE_SIZE: u64
+pub const hologram_archive::compose::OrderedLabel::IRI: &'static str
+pub const hologram_archive::compose::OrderedLabel::SITE_COUNT: usize
+impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedLabel
+impl<'a> uor_foundation::pipeline::IntoBindingValue<'a> for hologram_archive::compose::OrderedLabel
+pub fn hologram_archive::compose::OrderedLabel::as_binding_value<const INLINE_BYTES: usize>(&self) -> uor_foundation::pipeline::TermValue<'a, INLINE_BYTES>
+impl core::marker::Freeze for hologram_archive::compose::OrderedLabel
+impl core::marker::Send for hologram_archive::compose::OrderedLabel
+impl core::marker::Sync for hologram_archive::compose::OrderedLabel
+impl core::marker::Unpin for hologram_archive::compose::OrderedLabel
+impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedLabel
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedLabel
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedLabel
+pub struct hologram_archive::compose::OrderedModel
+impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedModel
+impl<'a> uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, prism_model! {
+    pub struct OrderedModel;
+    pub struct OrderedRoute;
+    impl PrismModel<
+        DefaultHostTypes,
+        AddrBounds,
+        Blake3Hasher,
+        AddressResolverTuple<Blake3Hasher>,
+        EmptyCommitment
+    > for OrderedModel {
+        type Input = OrderedCarrier<'a>;
+        type Output = OrderedLabel;
+        type Route = OrderedRoute;
+        fn route(input: Self::Input) -> Self::Output {
+            compose_ordered_inference(input)
+        }
+    }
+}, prism_model! {
+    pub struct OrderedModel;
+    pub struct OrderedRoute;
+    impl PrismModel<
+        DefaultHostTypes,
+        AddrBounds,
+        Blake3Hasher,
+        AddressResolverTuple<Blake3Hasher>,
+        EmptyCommitment
+    > for OrderedModel {
+        type Input = OrderedCarrier<'a>;
+        type Output = OrderedLabel;
+        type Route = OrderedRoute;
+        fn route(input: Self::Input) -> Self::Output {
+            compose_ordered_inference(input)
+        }
+    }
+}, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>> for hologram_archive::compose::OrderedModel
+pub type hologram_archive::compose::OrderedModel::Input = hologram_archive::compose::OrderedCarrier<'a>
+pub type hologram_archive::compose::OrderedModel::Output = hologram_archive::compose::OrderedLabel
+pub type hologram_archive::compose::OrderedModel::Route = hologram_archive::compose::OrderedRoute
+pub fn hologram_archive::compose::OrderedModel::forward(<Self as uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>, uor_foundation::pipeline::EmptyCommitment>>::Input) -> core::result::Result<uor_foundation::enforcement::Grounded<'a, <Self as uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>, uor_foundation::pipeline::EmptyCommitment>>::Output, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }>, uor_foundation::enforcement::PipelineFailure>
+impl core::marker::Freeze for hologram_archive::compose::OrderedModel
+impl core::marker::Send for hologram_archive::compose::OrderedModel
+impl core::marker::Sync for hologram_archive::compose::OrderedModel
+impl core::marker::Unpin for hologram_archive::compose::OrderedModel
+impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedModel
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedModel
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedModel
+pub struct hologram_archive::compose::OrderedRoute
+impl uor_foundation::pipeline::FoundationClosed<prism_model! {
+    pub struct OrderedModel;
+    pub struct OrderedRoute;
+    impl PrismModel<
+        DefaultHostTypes,
+        AddrBounds,
+        Blake3Hasher,
+        AddressResolverTuple<Blake3Hasher>,
+        EmptyCommitment
+    > for OrderedModel {
+        type Input = OrderedCarrier<'a>;
+        type Output = OrderedLabel;
+        type Route = OrderedRoute;
+        fn route(input: Self::Input) -> Self::Output {
+            compose_ordered_inference(input)
+        }
+    }
+}> for hologram_archive::compose::OrderedRoute
+pub fn hologram_archive::compose::OrderedRoute::arena_slice() -> &'static [uor_foundation::enforcement::Term<'static, { _ }>]
+impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedRoute
+impl core::marker::Freeze for hologram_archive::compose::OrderedRoute
+impl core::marker::Send for hologram_archive::compose::OrderedRoute
+impl core::marker::Sync for hologram_archive::compose::OrderedRoute
+impl core::marker::Unpin for hologram_archive::compose::OrderedRoute
+impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedRoute
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedRoute
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedRoute
+pub const fn hologram_archive::compose::VERB_TERMS_COMPOSE_ORDERED_INFERENCE<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+pub fn hologram_archive::compose::compose_ordered_blake3(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::outcome::AddressOutcome<LABEL>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::compose::compose_ordered_blake3_address(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::label::KappaLabel<LABEL>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::compose::compose_ordered_inference(hologram_archive::compose::OrderedCarrier<'_>) -> hologram_archive::compose::OrderedLabel
+pub const fn hologram_archive::compose::compose_ordered_inference_term_arena<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]
+pub mod hologram_archive::constant_codec
+pub struct hologram_archive::constant_codec::ConstantEntry
+pub hologram_archive::constant_codec::ConstantEntry::by_reference: bool
+pub hologram_archive::constant_codec::ConstantEntry::bytes: alloc::vec::Vec<u8>
+pub hologram_archive::constant_codec::ConstantEntry::dtype: u8
+pub hologram_archive::constant_codec::ConstantEntry::fingerprint: [u8; 32]
+pub hologram_archive::constant_codec::ConstantEntry::slot: u32
+impl hologram_archive::constant_codec::ConstantEntry
+pub fn hologram_archive::constant_codec::ConstantEntry::inline(u32, u8, alloc::vec::Vec<u8>) -> Self
+pub fn hologram_archive::constant_codec::ConstantEntry::reference(u32, u8, [u8; 32]) -> Self
+impl core::clone::Clone for hologram_archive::constant_codec::ConstantEntry
+pub fn hologram_archive::constant_codec::ConstantEntry::clone(&self) -> hologram_archive::constant_codec::ConstantEntry
+impl core::fmt::Debug for hologram_archive::constant_codec::ConstantEntry
+pub fn hologram_archive::constant_codec::ConstantEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::constant_codec::ConstantEntry
+impl core::marker::Send for hologram_archive::constant_codec::ConstantEntry
+impl core::marker::Sync for hologram_archive::constant_codec::ConstantEntry
+impl core::marker::Unpin for hologram_archive::constant_codec::ConstantEntry
+impl core::marker::UnsafeUnpin for hologram_archive::constant_codec::ConstantEntry
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::constant_codec::ConstantEntry
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::constant_codec::ConstantEntry
+pub fn hologram_archive::constant_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::constant_codec::encode(&[hologram_archive::constant_codec::ConstantEntry]) -> alloc::vec::Vec<u8>
+pub mod hologram_archive::decoder
+pub fn hologram_archive::decoder::decode_calls(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>, hologram_archive::error::ArchiveError>
+pub mod hologram_archive::error
+pub enum hologram_archive::error::ArchiveError
+pub hologram_archive::error::ArchiveError::BadMagic([u8; 4])
+pub hologram_archive::error::ArchiveError::ChecksumMismatch
+pub hologram_archive::error::ArchiveError::Io(&'static str)
+pub hologram_archive::error::ArchiveError::SectionMissing(hologram_archive::format::SectionKind)
+pub hologram_archive::error::ArchiveError::Truncated
+pub hologram_archive::error::ArchiveError::Truncated::actual: usize
+pub hologram_archive::error::ArchiveError::Truncated::needed: usize
+pub hologram_archive::error::ArchiveError::UnsupportedVersion(u16)
+impl core::error::Error for hologram_archive::error::ArchiveError
+impl core::fmt::Debug for hologram_archive::error::ArchiveError
+pub fn hologram_archive::error::ArchiveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_archive::error::ArchiveError
+pub fn hologram_archive::error::ArchiveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::error::ArchiveError
+impl core::marker::Send for hologram_archive::error::ArchiveError
+impl core::marker::Sync for hologram_archive::error::ArchiveError
+impl core::marker::Unpin for hologram_archive::error::ArchiveError
+impl core::marker::UnsafeUnpin for hologram_archive::error::ArchiveError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::error::ArchiveError
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::error::ArchiveError
+pub mod hologram_archive::format
+#[repr(u8)] pub enum hologram_archive::format::SectionKind
+pub hologram_archive::format::SectionKind::AppManifest = 15
+pub hologram_archive::format::SectionKind::Certificates = 6
+pub hologram_archive::format::SectionKind::Constants = 11
+pub hologram_archive::format::SectionKind::ContentBlob = 16
+pub hologram_archive::format::SectionKind::DTypeRegistry = 5
+pub hologram_archive::format::SectionKind::ExecPlan = 12
+pub hologram_archive::format::SectionKind::Extension = 14
+pub hologram_archive::format::SectionKind::Inputs = 9
+pub hologram_archive::format::SectionKind::KernelCalls = 1
+pub hologram_archive::format::SectionKind::Metadata = 8
+pub hologram_archive::format::SectionKind::Outputs = 10
+pub hologram_archive::format::SectionKind::Schedule = 2
+pub hologram_archive::format::SectionKind::ShapeRegistry = 4
+pub hologram_archive::format::SectionKind::Trace = 7
+pub hologram_archive::format::SectionKind::WarmStart = 13
+pub hologram_archive::format::SectionKind::Weights = 3
+impl core::clone::Clone for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::clone(&self) -> hologram_archive::format::SectionKind
+impl core::cmp::Eq for hologram_archive::format::SectionKind
+impl core::cmp::PartialEq for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::eq(&self, &hologram_archive::format::SectionKind) -> bool
+impl core::fmt::Debug for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_archive::format::SectionKind
+impl core::marker::StructuralPartialEq for hologram_archive::format::SectionKind
+impl core::marker::Freeze for hologram_archive::format::SectionKind
+impl core::marker::Send for hologram_archive::format::SectionKind
+impl core::marker::Sync for hologram_archive::format::SectionKind
+impl core::marker::Unpin for hologram_archive::format::SectionKind
+impl core::marker::UnsafeUnpin for hologram_archive::format::SectionKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::SectionKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionKind
+pub struct hologram_archive::format::HoloHeader
+pub hologram_archive::format::HoloHeader::flags: u16
+pub hologram_archive::format::HoloHeader::format_version: u16
+pub hologram_archive::format::HoloHeader::magic: [u8; 4]
+pub hologram_archive::format::HoloHeader::section_count: u16
+pub hologram_archive::format::HoloHeader::sections: alloc::vec::Vec<hologram_archive::format::SectionRef>
+impl core::clone::Clone for hologram_archive::format::HoloHeader
+pub fn hologram_archive::format::HoloHeader::clone(&self) -> hologram_archive::format::HoloHeader
+impl core::fmt::Debug for hologram_archive::format::HoloHeader
+pub fn hologram_archive::format::HoloHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::format::HoloHeader
+impl core::marker::Send for hologram_archive::format::HoloHeader
+impl core::marker::Sync for hologram_archive::format::HoloHeader
+impl core::marker::Unpin for hologram_archive::format::HoloHeader
+impl core::marker::UnsafeUnpin for hologram_archive::format::HoloHeader
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::HoloHeader
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::HoloHeader
+pub struct hologram_archive::format::SectionRef
+pub hologram_archive::format::SectionRef::kind: hologram_archive::format::SectionKind
+pub hologram_archive::format::SectionRef::length: u64
+pub hologram_archive::format::SectionRef::offset: u64
+impl core::clone::Clone for hologram_archive::format::SectionRef
+pub fn hologram_archive::format::SectionRef::clone(&self) -> hologram_archive::format::SectionRef
+impl core::fmt::Debug for hologram_archive::format::SectionRef
+pub fn hologram_archive::format::SectionRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for hologram_archive::format::SectionRef
+impl core::marker::Freeze for hologram_archive::format::SectionRef
+impl core::marker::Send for hologram_archive::format::SectionRef
+impl core::marker::Sync for hologram_archive::format::SectionRef
+impl core::marker::Unpin for hologram_archive::format::SectionRef
+impl core::marker::UnsafeUnpin for hologram_archive::format::SectionRef
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::SectionRef
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionRef
+pub const hologram_archive::format::FORMAT_VERSION: u16
+pub const hologram_archive::format::MAGIC: [u8; 4]
+pub const hologram_archive::format::MIN_READ_VERSION: u16
+pub mod hologram_archive::kernel_codec
+pub fn hologram_archive::kernel_codec::encode_calls(&[hologram_compute::kernel_call::KernelCall]) -> alloc::vec::Vec<u8>
+pub mod hologram_archive::loader
+pub struct hologram_archive::loader::HoloLoader<'a>
+impl<'a> hologram_archive::loader::HoloLoader<'a>
+pub fn hologram_archive::loader::HoloLoader<'a>::fingerprint(&self) -> [u8; 32]
+pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes_unchecked(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::HoloLoader<'a>::into_plan(self) -> core::result::Result<hologram_archive::loader::LoadedPlan<'a>, hologram_archive::error::ArchiveError>
+impl<'a> core::marker::Freeze for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Send for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Sync for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Unpin for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::HoloLoader<'a>
+pub struct hologram_archive::loader::LoadedPlan<'a>
+impl<'a> hologram_archive::loader::LoadedPlan<'a>
+pub fn hologram_archive::loader::LoadedPlan<'a>::app_manifest(&self) -> core::option::Option<&'a [u8]>
+pub fn hologram_archive::loader::LoadedPlan<'a>::content_blobs(&self) -> core::result::Result<hologram_archive::loader::ContentBlobs<'a>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::extensions(&self) -> core::result::Result<alloc::vec::Vec<(&'a str, &'a [u8])>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::section(&self, hologram_archive::format::SectionKind) -> core::result::Result<&'a [u8], hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::sections(&self) -> &[hologram_archive::format::SectionRef]
+impl<'a> core::marker::Freeze for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Send for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Sync for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Unpin for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::LoadedPlan<'a>
+pub type hologram_archive::loader::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>
+pub mod hologram_archive::schedule_codec
+pub fn hologram_archive::schedule_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>
+pub mod hologram_archive::warm_codec
+pub struct hologram_archive::warm_codec::WarmEntry
+pub hologram_archive::warm_codec::WarmEntry::label: hologram_archive::address::ContentLabel
+pub hologram_archive::warm_codec::WarmEntry::result: alloc::vec::Vec<u8>
+pub hologram_archive::warm_codec::WarmEntry::slot: u32
+impl core::clone::Clone for hologram_archive::warm_codec::WarmEntry
+pub fn hologram_archive::warm_codec::WarmEntry::clone(&self) -> hologram_archive::warm_codec::WarmEntry
+impl core::fmt::Debug for hologram_archive::warm_codec::WarmEntry
+pub fn hologram_archive::warm_codec::WarmEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Send for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Sync for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Unpin for hologram_archive::warm_codec::WarmEntry
+impl core::marker::UnsafeUnpin for hologram_archive::warm_codec::WarmEntry
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::warm_codec::WarmEntry
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::warm_codec::WarmEntry
+pub fn hologram_archive::warm_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::warm_codec::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
+pub fn hologram_archive::warm_codec::encode(&[hologram_archive::warm_codec::WarmEntry]) -> alloc::vec::Vec<u8>
+pub mod hologram_archive::weight
+pub struct hologram_archive::weight::WeightFingerprint(pub [u8; 32])
+impl hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::content_label(&self) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::weight::WeightFingerprint::of(&[u8]) -> Self
+impl core::clone::Clone for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::clone(&self) -> hologram_archive::weight::WeightFingerprint
+impl core::cmp::Eq for hologram_archive::weight::WeightFingerprint
+impl core::cmp::PartialEq for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::eq(&self, &hologram_archive::weight::WeightFingerprint) -> bool
+impl core::fmt::Debug for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_archive::weight::WeightFingerprint
+impl core::marker::StructuralPartialEq for hologram_archive::weight::WeightFingerprint
+impl core::marker::Freeze for hologram_archive::weight::WeightFingerprint
+impl core::marker::Send for hologram_archive::weight::WeightFingerprint
+impl core::marker::Sync for hologram_archive::weight::WeightFingerprint
+impl core::marker::Unpin for hologram_archive::weight::WeightFingerprint
+impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightFingerprint
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightFingerprint
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightFingerprint
+pub struct hologram_archive::weight::WeightStore
+impl hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::entries(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&hologram_archive::weight::WeightFingerprint, &alloc::vec::Vec<u8>)>
+pub fn hologram_archive::weight::WeightStore::get(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<&[u8]>
+pub fn hologram_archive::weight::WeightStore::insert(&mut self, alloc::vec::Vec<u8>) -> hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightStore::is_empty(&self) -> bool
+pub fn hologram_archive::weight::WeightStore::len(&self) -> usize
+pub fn hologram_archive::weight::WeightStore::new() -> Self
+impl core::clone::Clone for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::clone(&self) -> hologram_archive::weight::WeightStore
+impl core::default::Default for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::default() -> hologram_archive::weight::WeightStore
+impl core::fmt::Debug for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl hologram_archive::weight::WeightProvider for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+impl core::marker::Freeze for hologram_archive::weight::WeightStore
+impl core::marker::Send for hologram_archive::weight::WeightStore
+impl core::marker::Sync for hologram_archive::weight::WeightStore
+impl core::marker::Unpin for hologram_archive::weight::WeightStore
+impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightStore
+pub trait hologram_archive::weight::WeightProvider
+pub fn hologram_archive::weight::WeightProvider::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::weight::WeightProvider::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+impl hologram_archive::weight::WeightProvider for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+pub mod hologram_archive::writer
+pub struct hologram_archive::writer::HoloWriter
+impl hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::add_content_blob(&mut self, impl core::convert::Into<alloc::vec::Vec<u8>>, impl core::convert::Into<alloc::vec::Vec<u8>>)
+pub fn hologram_archive::writer::HoloWriter::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::assemble(alloc::vec::Vec<(hologram_archive::format::SectionKind, alloc::vec::Vec<u8>)>) -> alloc::vec::Vec<u8>
+pub fn hologram_archive::writer::HoloWriter::finish(self) -> core::result::Result<alloc::vec::Vec<u8>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::writer::HoloWriter::new() -> Self
+pub fn hologram_archive::writer::HoloWriter::set_app_manifest(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_certificates(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_constants(&mut self, alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>)
+pub fn hologram_archive::writer::HoloWriter::set_exec_plan(&mut self, alloc::vec::Vec<alloc::vec::Vec<u32>>)
+pub fn hologram_archive::writer::HoloWriter::set_inputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
+pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>)
+pub fn hologram_archive::writer::HoloWriter::set_metadata(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_outputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
+pub fn hologram_archive::writer::HoloWriter::set_schedule(&mut self, hologram_graph::schedule::Schedule)
+pub fn hologram_archive::writer::HoloWriter::set_shape_registry(&mut self, hologram_graph::registry::ShapeRegistry)
+pub fn hologram_archive::writer::HoloWriter::set_trace(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_weights(&mut self, hologram_archive::weight::WeightStore)
+impl core::default::Default for hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::default() -> hologram_archive::writer::HoloWriter
+impl core::marker::Freeze for hologram_archive::writer::HoloWriter
+impl core::marker::Send for hologram_archive::writer::HoloWriter
+impl core::marker::Sync for hologram_archive::writer::HoloWriter
+impl core::marker::Unpin for hologram_archive::writer::HoloWriter
+impl core::marker::UnsafeUnpin for hologram_archive::writer::HoloWriter
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::HoloWriter
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::HoloWriter
+pub struct hologram_archive::writer::PortDescriptor
+pub hologram_archive::writer::PortDescriptor::dtype: u8
+pub hologram_archive::writer::PortDescriptor::element_count: u64
+pub hologram_archive::writer::PortDescriptor::name: alloc::string::String
+pub hologram_archive::writer::PortDescriptor::shape: alloc::vec::Vec<u64>
+pub hologram_archive::writer::PortDescriptor::slot: u32
+impl core::clone::Clone for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::clone(&self) -> hologram_archive::writer::PortDescriptor
+impl core::default::Default for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::default() -> hologram_archive::writer::PortDescriptor
+impl core::fmt::Debug for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::writer::PortDescriptor
+impl core::marker::Send for hologram_archive::writer::PortDescriptor
+impl core::marker::Sync for hologram_archive::writer::PortDescriptor
+impl core::marker::Unpin for hologram_archive::writer::PortDescriptor
+impl core::marker::UnsafeUnpin for hologram_archive::writer::PortDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::PortDescriptor
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::decode_exec_plan(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::writer::decode_ports(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::writer::PortDescriptor>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::writer::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>
+pub enum hologram_archive::ArchiveError
+pub hologram_archive::ArchiveError::BadMagic([u8; 4])
+pub hologram_archive::ArchiveError::ChecksumMismatch
+pub hologram_archive::ArchiveError::Io(&'static str)
+pub hologram_archive::ArchiveError::SectionMissing(hologram_archive::format::SectionKind)
+pub hologram_archive::ArchiveError::Truncated
+pub hologram_archive::ArchiveError::Truncated::actual: usize
+pub hologram_archive::ArchiveError::Truncated::needed: usize
+pub hologram_archive::ArchiveError::UnsupportedVersion(u16)
+impl core::error::Error for hologram_archive::error::ArchiveError
+impl core::fmt::Debug for hologram_archive::error::ArchiveError
+pub fn hologram_archive::error::ArchiveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for hologram_archive::error::ArchiveError
+pub fn hologram_archive::error::ArchiveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::error::ArchiveError
+impl core::marker::Send for hologram_archive::error::ArchiveError
+impl core::marker::Sync for hologram_archive::error::ArchiveError
+impl core::marker::Unpin for hologram_archive::error::ArchiveError
+impl core::marker::UnsafeUnpin for hologram_archive::error::ArchiveError
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::error::ArchiveError
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::error::ArchiveError
+#[repr(u8)] pub enum hologram_archive::SectionKind
+pub hologram_archive::SectionKind::AppManifest = 15
+pub hologram_archive::SectionKind::Certificates = 6
+pub hologram_archive::SectionKind::Constants = 11
+pub hologram_archive::SectionKind::ContentBlob = 16
+pub hologram_archive::SectionKind::DTypeRegistry = 5
+pub hologram_archive::SectionKind::ExecPlan = 12
+pub hologram_archive::SectionKind::Extension = 14
+pub hologram_archive::SectionKind::Inputs = 9
+pub hologram_archive::SectionKind::KernelCalls = 1
+pub hologram_archive::SectionKind::Metadata = 8
+pub hologram_archive::SectionKind::Outputs = 10
+pub hologram_archive::SectionKind::Schedule = 2
+pub hologram_archive::SectionKind::ShapeRegistry = 4
+pub hologram_archive::SectionKind::Trace = 7
+pub hologram_archive::SectionKind::WarmStart = 13
+pub hologram_archive::SectionKind::Weights = 3
+impl core::clone::Clone for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::clone(&self) -> hologram_archive::format::SectionKind
+impl core::cmp::Eq for hologram_archive::format::SectionKind
+impl core::cmp::PartialEq for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::eq(&self, &hologram_archive::format::SectionKind) -> bool
+impl core::fmt::Debug for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_archive::format::SectionKind
+pub fn hologram_archive::format::SectionKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_archive::format::SectionKind
+impl core::marker::StructuralPartialEq for hologram_archive::format::SectionKind
+impl core::marker::Freeze for hologram_archive::format::SectionKind
+impl core::marker::Send for hologram_archive::format::SectionKind
+impl core::marker::Sync for hologram_archive::format::SectionKind
+impl core::marker::Unpin for hologram_archive::format::SectionKind
+impl core::marker::UnsafeUnpin for hologram_archive::format::SectionKind
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::SectionKind
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionKind
+pub struct hologram_archive::HoloHeader
+pub hologram_archive::HoloHeader::flags: u16
+pub hologram_archive::HoloHeader::format_version: u16
+pub hologram_archive::HoloHeader::magic: [u8; 4]
+pub hologram_archive::HoloHeader::section_count: u16
+pub hologram_archive::HoloHeader::sections: alloc::vec::Vec<hologram_archive::format::SectionRef>
+impl core::clone::Clone for hologram_archive::format::HoloHeader
+pub fn hologram_archive::format::HoloHeader::clone(&self) -> hologram_archive::format::HoloHeader
+impl core::fmt::Debug for hologram_archive::format::HoloHeader
+pub fn hologram_archive::format::HoloHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::format::HoloHeader
+impl core::marker::Send for hologram_archive::format::HoloHeader
+impl core::marker::Sync for hologram_archive::format::HoloHeader
+impl core::marker::Unpin for hologram_archive::format::HoloHeader
+impl core::marker::UnsafeUnpin for hologram_archive::format::HoloHeader
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::HoloHeader
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::HoloHeader
+pub struct hologram_archive::HoloLoader<'a>
+impl<'a> hologram_archive::loader::HoloLoader<'a>
+pub fn hologram_archive::loader::HoloLoader<'a>::fingerprint(&self) -> [u8; 32]
+pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes_unchecked(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::HoloLoader<'a>::into_plan(self) -> core::result::Result<hologram_archive::loader::LoadedPlan<'a>, hologram_archive::error::ArchiveError>
+impl<'a> core::marker::Freeze for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Send for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Sync for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::Unpin for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::HoloLoader<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::HoloLoader<'a>
+pub struct hologram_archive::HoloWriter
+impl hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::add_content_blob(&mut self, impl core::convert::Into<alloc::vec::Vec<u8>>, impl core::convert::Into<alloc::vec::Vec<u8>>)
+pub fn hologram_archive::writer::HoloWriter::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::assemble(alloc::vec::Vec<(hologram_archive::format::SectionKind, alloc::vec::Vec<u8>)>) -> alloc::vec::Vec<u8>
+pub fn hologram_archive::writer::HoloWriter::finish(self) -> core::result::Result<alloc::vec::Vec<u8>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::writer::HoloWriter::new() -> Self
+pub fn hologram_archive::writer::HoloWriter::set_app_manifest(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_certificates(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_constants(&mut self, alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>)
+pub fn hologram_archive::writer::HoloWriter::set_exec_plan(&mut self, alloc::vec::Vec<alloc::vec::Vec<u32>>)
+pub fn hologram_archive::writer::HoloWriter::set_inputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
+pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>)
+pub fn hologram_archive::writer::HoloWriter::set_metadata(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_outputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)
+pub fn hologram_archive::writer::HoloWriter::set_schedule(&mut self, hologram_graph::schedule::Schedule)
+pub fn hologram_archive::writer::HoloWriter::set_shape_registry(&mut self, hologram_graph::registry::ShapeRegistry)
+pub fn hologram_archive::writer::HoloWriter::set_trace(&mut self, alloc::vec::Vec<u8>)
+pub fn hologram_archive::writer::HoloWriter::set_weights(&mut self, hologram_archive::weight::WeightStore)
+impl core::default::Default for hologram_archive::writer::HoloWriter
+pub fn hologram_archive::writer::HoloWriter::default() -> hologram_archive::writer::HoloWriter
+impl core::marker::Freeze for hologram_archive::writer::HoloWriter
+impl core::marker::Send for hologram_archive::writer::HoloWriter
+impl core::marker::Sync for hologram_archive::writer::HoloWriter
+impl core::marker::Unpin for hologram_archive::writer::HoloWriter
+impl core::marker::UnsafeUnpin for hologram_archive::writer::HoloWriter
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::HoloWriter
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::HoloWriter
+pub struct hologram_archive::LoadedPlan<'a>
+impl<'a> hologram_archive::loader::LoadedPlan<'a>
+pub fn hologram_archive::loader::LoadedPlan<'a>::app_manifest(&self) -> core::option::Option<&'a [u8]>
+pub fn hologram_archive::loader::LoadedPlan<'a>::content_blobs(&self) -> core::result::Result<hologram_archive::loader::ContentBlobs<'a>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::extensions(&self) -> core::result::Result<alloc::vec::Vec<(&'a str, &'a [u8])>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::section(&self, hologram_archive::format::SectionKind) -> core::result::Result<&'a [u8], hologram_archive::error::ArchiveError>
+pub fn hologram_archive::loader::LoadedPlan<'a>::sections(&self) -> &[hologram_archive::format::SectionRef]
+impl<'a> core::marker::Freeze for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Send for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Sync for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::Unpin for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::LoadedPlan<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::LoadedPlan<'a>
+pub struct hologram_archive::PortDescriptor
+pub hologram_archive::PortDescriptor::dtype: u8
+pub hologram_archive::PortDescriptor::element_count: u64
+pub hologram_archive::PortDescriptor::name: alloc::string::String
+pub hologram_archive::PortDescriptor::shape: alloc::vec::Vec<u64>
+pub hologram_archive::PortDescriptor::slot: u32
+impl core::clone::Clone for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::clone(&self) -> hologram_archive::writer::PortDescriptor
+impl core::default::Default for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::default() -> hologram_archive::writer::PortDescriptor
+impl core::fmt::Debug for hologram_archive::writer::PortDescriptor
+pub fn hologram_archive::writer::PortDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::writer::PortDescriptor
+impl core::marker::Send for hologram_archive::writer::PortDescriptor
+impl core::marker::Sync for hologram_archive::writer::PortDescriptor
+impl core::marker::Unpin for hologram_archive::writer::PortDescriptor
+impl core::marker::UnsafeUnpin for hologram_archive::writer::PortDescriptor
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::PortDescriptor
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::PortDescriptor
+pub struct hologram_archive::WarmEntry
+pub hologram_archive::WarmEntry::label: hologram_archive::address::ContentLabel
+pub hologram_archive::WarmEntry::result: alloc::vec::Vec<u8>
+pub hologram_archive::WarmEntry::slot: u32
+impl core::clone::Clone for hologram_archive::warm_codec::WarmEntry
+pub fn hologram_archive::warm_codec::WarmEntry::clone(&self) -> hologram_archive::warm_codec::WarmEntry
+impl core::fmt::Debug for hologram_archive::warm_codec::WarmEntry
+pub fn hologram_archive::warm_codec::WarmEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Send for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Sync for hologram_archive::warm_codec::WarmEntry
+impl core::marker::Unpin for hologram_archive::warm_codec::WarmEntry
+impl core::marker::UnsafeUnpin for hologram_archive::warm_codec::WarmEntry
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::warm_codec::WarmEntry
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::warm_codec::WarmEntry
+pub struct hologram_archive::WeightFingerprint(pub [u8; 32])
+impl hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::content_label(&self) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::weight::WeightFingerprint::of(&[u8]) -> Self
+impl core::clone::Clone for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::clone(&self) -> hologram_archive::weight::WeightFingerprint
+impl core::cmp::Eq for hologram_archive::weight::WeightFingerprint
+impl core::cmp::PartialEq for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::eq(&self, &hologram_archive::weight::WeightFingerprint) -> bool
+impl core::fmt::Debug for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for hologram_archive::weight::WeightFingerprint
+impl core::marker::StructuralPartialEq for hologram_archive::weight::WeightFingerprint
+impl core::marker::Freeze for hologram_archive::weight::WeightFingerprint
+impl core::marker::Send for hologram_archive::weight::WeightFingerprint
+impl core::marker::Sync for hologram_archive::weight::WeightFingerprint
+impl core::marker::Unpin for hologram_archive::weight::WeightFingerprint
+impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightFingerprint
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightFingerprint
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightFingerprint
+pub struct hologram_archive::WeightStore
+impl hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::entries(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&hologram_archive::weight::WeightFingerprint, &alloc::vec::Vec<u8>)>
+pub fn hologram_archive::weight::WeightStore::get(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<&[u8]>
+pub fn hologram_archive::weight::WeightStore::insert(&mut self, alloc::vec::Vec<u8>) -> hologram_archive::weight::WeightFingerprint
+pub fn hologram_archive::weight::WeightStore::is_empty(&self) -> bool
+pub fn hologram_archive::weight::WeightStore::len(&self) -> usize
+pub fn hologram_archive::weight::WeightStore::new() -> Self
+impl core::clone::Clone for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::clone(&self) -> hologram_archive::weight::WeightStore
+impl core::default::Default for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::default() -> hologram_archive::weight::WeightStore
+impl core::fmt::Debug for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl hologram_archive::weight::WeightProvider for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+impl core::marker::Freeze for hologram_archive::weight::WeightStore
+impl core::marker::Send for hologram_archive::weight::WeightStore
+impl core::marker::Sync for hologram_archive::weight::WeightStore
+impl core::marker::Unpin for hologram_archive::weight::WeightStore
+impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightStore
+impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightStore
+impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightStore
+pub const hologram_archive::FORMAT_VERSION: u16
+pub const hologram_archive::MAGIC: [u8; 4]
+pub trait hologram_archive::WeightProvider
+pub fn hologram_archive::WeightProvider::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::WeightProvider::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+impl hologram_archive::weight::WeightProvider for hologram_archive::weight::WeightStore
+pub fn hologram_archive::weight::WeightStore::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>
+pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>
+pub fn hologram_archive::address_bytes(&[u8]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::address_ring(&[u8]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::ring::pipeline::AddressFailure>
+pub fn hologram_archive::compose_model(&[uor_addr::label::KappaLabel<71>]) -> core::result::Result<uor_addr::label::KappaLabel<71>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::decode_exec_plan(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::decode_ports(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::writer::PortDescriptor>, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>
+pub fn hologram_archive::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>
+pub fn hologram_archive::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel
+pub fn hologram_archive::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>
+pub fn hologram_archive::label_from_fingerprint(&[u8; 32]) -> hologram_archive::address::ContentLabel
+pub type hologram_archive::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>
+pub type hologram_archive::ContentLabel = uor_addr::label::KappaLabel<71>

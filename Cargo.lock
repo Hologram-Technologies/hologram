@@ -1621,7 +1621,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "hologram-archive"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "hashbrown 0.15.5",
@@ -1639,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-bench"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "criterion",
  "hologram-compiler",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "hologram-archive",
@@ -1673,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compiler"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-compute"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "bytemuck",
  "hologram-ops",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-conformance"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "cucumber",
@@ -1731,7 +1731,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-emulator"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "dlmalloc",
  "hologram-space",
@@ -1741,7 +1741,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-exec"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-archive",
@@ -1758,7 +1758,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ffi"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hologram-archive",
  "hologram-compiler",
@@ -1771,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-graph"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hologram-ops",
  "hologram-types",
@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-net"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-ops"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hologram-types",
  "libm",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-runtime"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -1826,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-space"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1844,7 +1844,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "criterion",
  "hashbrown 0.15.5",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-tck"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-types"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "holospaces"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "blake3",
@@ -1917,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "holospaces-node"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "hologram-net",
  "hologram-space",
@@ -4585,7 +4585,7 @@ dependencies = [
 
 [[package]]
 name = "uor-hologram"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "hologram-archive",

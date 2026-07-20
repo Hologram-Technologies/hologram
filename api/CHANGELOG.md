@@ -1,5 +1,7071 @@
 # Public API changelog
 
+## v0.12.0
+
+### Added
+- `            compose_ordered_inference(input)`
+- `        AddrBounds,`
+- `        AddressResolverTuple<Blake3Hasher>,`
+- `        Blake3Hasher,`
+- `        DefaultHostTypes,`
+- `        EmptyCommitment`
+- `        fn route(input: Self::Input) -> Self::Output {`
+- `        type Input = OrderedCarrier<'a>;`
+- `        type Output = OrderedLabel;`
+- `        type Route = OrderedRoute;`
+- `        }`
+- `    > for OrderedModel {`
+- `    impl PrismModel<`
+- `    pub struct OrderedModel;`
+- `    pub struct OrderedRoute;`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_abi_version() -> u32`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_archive_format_version() -> u32`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_error_message() -> *const std::os::raw::c_char`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error() -> std::os::raw::c_int`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error_code() -> std::os::raw::c_int`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error_column() -> usize`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error_line() -> usize`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error_message() -> *const std::os::raw::c_char`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_last_error_rejected() -> *const std::os::raw::c_char`
+- `#[no_mangle] pub c fn hologram_ffi::hologram_source_builder_new() -> *mut hologram_ffi::HologramSourceBuilder`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_empty(*mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_compile_source(*const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_feature_supported(hologram_ffi::HologramString) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_archive_fingerprint(std::os::raw::c_int, *mut std::os::raw::c_uchar) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_close(std::os::raw::c_int) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_execute(std::os::raw::c_int, *const *const std::os::raw::c_uchar, *const usize, usize, *const *mut std::os::raw::c_uchar, *const usize, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_extension(std::os::raw::c_int, *const std::os::raw::c_uchar, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_count(std::os::raw::c_int) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_dtype(std::os::raw::c_int, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_input_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_kernel_count(std::os::raw::c_int) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_load(*const std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_byte_len(std::os::raw::c_int, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_count(std::os::raw::c_int) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_dtype(std::os::raw::c_int, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_name(std::os::raw::c_int, usize, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_session_output_shape(std::os::raw::c_int, usize, *mut u64, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_compile(*const hologram_ffi::HologramSourceBuilder, *mut std::os::raw::c_uchar, usize) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_const(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramConstDesc) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_const_ref(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramExternalTensorDesc) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_free(*mut hologram_ffi::HologramSourceBuilder)`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_input(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramTensorDesc) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_op(*mut hologram_ffi::HologramSourceBuilder, *const hologram_ffi::HologramSourceOp) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_output(*mut hologram_ffi::HologramSourceBuilder, hologram_ffi::HologramString) -> std::os::raw::c_int`
+- `#[no_mangle] pub unsafe c fn hologram_ffi::hologram_source_builder_output_alias(*mut hologram_ffi::HologramSourceBuilder, hologram_ffi::HologramString, hologram_ffi::HologramString) -> std::os::raw::c_int`
+- `#[repr(u8)] pub enum hologram_archive::format::SectionKind`
+- `impl !core::marker::Send for hologram_exec::prism_route::AttestedExecution`
+- `impl !core::marker::Send for hologram_ffi::HologramConstDesc`
+- `impl !core::marker::Send for hologram_ffi::HologramExternalTensorDesc`
+- `impl !core::marker::Send for hologram_ffi::HologramShape`
+- `impl !core::marker::Send for hologram_ffi::HologramSourceOp`
+- `impl !core::marker::Send for hologram_ffi::HologramString`
+- `impl !core::marker::Send for hologram_ffi::HologramTensorDesc`
+- `impl !core::marker::Sync for hologram_exec::prism_route::AttestedExecution`
+- `impl !core::marker::Sync for hologram_ffi::HologramConstDesc`
+- `impl !core::marker::Sync for hologram_ffi::HologramExternalTensorDesc`
+- `impl !core::marker::Sync for hologram_ffi::HologramShape`
+- `impl !core::marker::Sync for hologram_ffi::HologramSourceOp`
+- `impl !core::marker::Sync for hologram_ffi::HologramString`
+- `impl !core::marker::Sync for hologram_ffi::HologramTensorDesc`
+- `impl !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::prism_route::AttestedExecution`
+- `impl !core::panic::unwind_safe::UnwindSafe for hologram_exec::prism_route::AttestedExecution`
+- `impl core::clone::Clone for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::clone::Clone for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::clone::Clone for hologram_archive::format::HoloHeader`
+- `impl core::clone::Clone for hologram_archive::format::SectionKind`
+- `impl core::clone::Clone for hologram_archive::format::SectionRef`
+- `impl core::clone::Clone for hologram_archive::warm_codec::WarmEntry`
+- `impl core::clone::Clone for hologram_archive::weight::WeightFingerprint`
+- `impl core::clone::Clone for hologram_archive::weight::WeightStore`
+- `impl core::clone::Clone for hologram_archive::writer::PortDescriptor`
+- `impl core::clone::Clone for hologram_compiler::cache::CachedCertificate`
+- `impl core::clone::Clone for hologram_compiler::compiler::BackendKind`
+- `impl core::clone::Clone for hologram_compiler::compiler::CompilationStats`
+- `impl core::clone::Clone for hologram_compiler::lower::QuantParams`
+- `impl core::clone::Clone for hologram_compiler::lower::ShapeArgs`
+- `impl core::clone::Clone for hologram_compiler::source::HologramFrontend`
+- `impl core::clone::Clone for hologram_compiler::source::PythonFrontend`
+- `impl core::clone::Clone for hologram_compiler::source::RustFrontend`
+- `impl core::clone::Clone for hologram_compiler::source::SourceAttrs`
+- `impl core::clone::Clone for hologram_compiler::source::SourceBinding`
+- `impl core::clone::Clone for hologram_compiler::source::SourceConst`
+- `impl core::clone::Clone for hologram_compiler::source::SourceDiagnostic`
+- `impl core::clone::Clone for hologram_compiler::source::SourceDocument`
+- `impl core::clone::Clone for hologram_compiler::source::SourceExpr`
+- `impl core::clone::Clone for hologram_compiler::source::SourceExternalConst`
+- `impl core::clone::Clone for hologram_compiler::source::SourceExternalTensor`
+- `impl core::clone::Clone for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::clone::Clone for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::clone::Clone for hologram_compiler::source::SourceGraph`
+- `impl core::clone::Clone for hologram_compiler::source::SourceInput`
+- `impl core::clone::Clone for hologram_compiler::source::SourceItem`
+- `impl core::clone::Clone for hologram_compiler::source::SourceLanguage`
+- `impl core::clone::Clone for hologram_compiler::source::SourceOpCall`
+- `impl core::clone::Clone for hologram_compiler::source::SourceOutput`
+- `impl core::clone::Clone for hologram_compiler::source::SourceParseOptions`
+- `impl core::clone::Clone for hologram_compiler::source::SourceProgram`
+- `impl core::clone::Clone for hologram_compiler::source::SourceSpan`
+- `impl core::clone::Clone for hologram_compiler::source::SourceSymbol`
+- `impl core::clone::Clone for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::clone::Clone for hologram_compiler::source::SourceType`
+- `impl core::clone::Clone for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::clone::Clone for hologram_compute::AttentionCall`
+- `impl core::clone::Clone for hologram_compute::BinaryCall`
+- `impl core::clone::Clone for hologram_compute::BroadcastBinaryCall`
+- `impl core::clone::Clone for hologram_compute::CastCall`
+- `impl core::clone::Clone for hologram_compute::Conv2dCall`
+- `impl core::clone::Clone for hologram_compute::DecodeAttentionCall`
+- `impl core::clone::Clone for hologram_compute::DecodeAttentionValidCall`
+- `impl core::clone::Clone for hologram_compute::DequantActivationCall`
+- `impl core::clone::Clone for hologram_compute::DequantizeCall`
+- `impl core::clone::Clone for hologram_compute::ExpandCall`
+- `impl core::clone::Clone for hologram_compute::GatherCall`
+- `impl core::clone::Clone for hologram_compute::GemmCall`
+- `impl core::clone::Clone for hologram_compute::Im2ColCall`
+- `impl core::clone::Clone for hologram_compute::KernelCall`
+- `impl core::clone::Clone for hologram_compute::KvCacheWriteCall`
+- `impl core::clone::Clone for hologram_compute::LayoutCall`
+- `impl core::clone::Clone for hologram_compute::LrnCall`
+- `impl core::clone::Clone for hologram_compute::MatMulActivationCall`
+- `impl core::clone::Clone for hologram_compute::MatMulAddActivationCall`
+- `impl core::clone::Clone for hologram_compute::MatMulAddCall`
+- `impl core::clone::Clone for hologram_compute::MatMulCall`
+- `impl core::clone::Clone for hologram_compute::MatMulDequantCall`
+- `impl core::clone::Clone for hologram_compute::NormCall`
+- `impl core::clone::Clone for hologram_compute::OpSignature`
+- `impl core::clone::Clone for hologram_compute::PoolCall`
+- `impl core::clone::Clone for hologram_compute::ReduceCall`
+- `impl core::clone::Clone for hologram_compute::RoPECall`
+- `impl core::clone::Clone for hologram_compute::SoftmaxCall`
+- `impl core::clone::Clone for hologram_compute::TransposeCall`
+- `impl core::clone::Clone for hologram_compute::UnaryCall`
+- `impl core::clone::Clone for hologram_compute::WhereCall`
+- `impl core::clone::Clone for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::clone::Clone for hologram_compute::quant_tier::QuantTier`
+- `impl core::clone::Clone for hologram_compute::workspace::BufferRef`
+- `impl core::clone::Clone for hologram_exec::buffer::SlotSpan`
+- `impl core::clone::Clone for hologram_exec::refinement::ConvergenceKind`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementPlan`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementReport`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementStateContract`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementStatePort`
+- `impl core::clone::Clone for hologram_exec::refinement::RefinementStatus`
+- `impl core::clone::Clone for hologram_exec::refinement::RepairPolicy`
+- `impl core::clone::Clone for hologram_exec::refinement::ValidatorCost`
+- `impl core::clone::Clone for hologram_exec::refinement::ValidatorKind`
+- `impl core::clone::Clone for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::clone::Clone for hologram_ffi::HologramConstDesc`
+- `impl core::clone::Clone for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::clone::Clone for hologram_ffi::HologramShape`
+- `impl core::clone::Clone for hologram_ffi::HologramSourceOp`
+- `impl core::clone::Clone for hologram_ffi::HologramString`
+- `impl core::clone::Clone for hologram_ffi::HologramTensorDesc`
+- `impl core::clone::Clone for hologram_ffi::sdk::SdkDType`
+- `impl core::clone::Clone for hologram_ffi::sdk::SdkOp`
+- `impl core::clone::Clone for hologram_graph::backward::BackwardError`
+- `impl core::clone::Clone for hologram_graph::constant::ConstantEntry`
+- `impl core::clone::Clone for hologram_graph::constant::ConstantStore`
+- `impl core::clone::Clone for hologram_graph::node::AttentionAttrs`
+- `impl core::clone::Clone for hologram_graph::node::ConstantId`
+- `impl core::clone::Clone for hologram_graph::node::ConvAttrs`
+- `impl core::clone::Clone for hologram_graph::node::GatherAttrs`
+- `impl core::clone::Clone for hologram_graph::node::GemmAttrs`
+- `impl core::clone::Clone for hologram_graph::node::GraphOp`
+- `impl core::clone::Clone for hologram_graph::node::InputSource`
+- `impl core::clone::Clone for hologram_graph::node::LrnAttrs`
+- `impl core::clone::Clone for hologram_graph::node::Node`
+- `impl core::clone::Clone for hologram_graph::node::NodeId`
+- `impl core::clone::Clone for hologram_graph::node::NormAttrs`
+- `impl core::clone::Clone for hologram_graph::node::QuantAttrs`
+- `impl core::clone::Clone for hologram_graph::node::ReduceAttrs`
+- `impl core::clone::Clone for hologram_graph::registry::ShapeDescriptor`
+- `impl core::clone::Clone for hologram_graph::registry::ShapeId`
+- `impl core::clone::Clone for hologram_graph::registry::ShapeRegistry`
+- `impl core::clone::Clone for hologram_graph::schedule::Schedule`
+- `impl core::clone::Clone for hologram_ops::activations::Gelu`
+- `impl core::clone::Clone for hologram_ops::activations::Relu`
+- `impl core::clone::Clone for hologram_ops::activations::Sigmoid`
+- `impl core::clone::Clone for hologram_ops::activations::Silu`
+- `impl core::clone::Clone for hologram_ops::activations::Tanh`
+- `impl core::clone::Clone for hologram_ops::direct::AddOp`
+- `impl core::clone::Clone for hologram_ops::direct::AndOp`
+- `impl core::clone::Clone for hologram_ops::direct::BnotOp`
+- `impl core::clone::Clone for hologram_ops::direct::MulOp`
+- `impl core::clone::Clone for hologram_ops::direct::NegOp`
+- `impl core::clone::Clone for hologram_ops::direct::OrOp`
+- `impl core::clone::Clone for hologram_ops::direct::PredOp`
+- `impl core::clone::Clone for hologram_ops::direct::SubOp`
+- `impl core::clone::Clone for hologram_ops::direct::SuccOp`
+- `impl core::clone::Clone for hologram_ops::direct::XorOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::DivOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::LessOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::MinOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::ModOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_binary::PowOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::CosOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::EluOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::LogOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SignOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SinOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::TanOp`
+- `impl core::clone::Clone for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::clone::Clone for hologram_ops::kind::OpKind`
+- `impl core::clone::Clone for hologram_ops::reference::EvalError`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsAvx2`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsAvx512`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsCpu`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsMetal`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsNeon`
+- `impl core::clone::Clone for hologram_types::HologramHostBoundsWgpu`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeBf16`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeBool`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeF16`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeF32`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeF64`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeI32`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeI4`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeI64`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeI8`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeKind`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeU64`
+- `impl core::clone::Clone for hologram_types::dtype::DTypeU8`
+- `impl core::clone::Clone for hologram_types::dtype_id::DTypeId`
+- `impl core::clone::Clone for hologram_types::memory_tier::MemoryTier`
+- `impl core::cmp::Eq for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::cmp::Eq for hologram_archive::format::SectionKind`
+- `impl core::cmp::Eq for hologram_archive::weight::WeightFingerprint`
+- `impl core::cmp::Eq for hologram_compiler::compiler::BackendKind`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceAttrs`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceDiagnostic`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceLanguage`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceParseOptions`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceSpan`
+- `impl core::cmp::Eq for hologram_compiler::source::SourceSymbol`
+- `impl core::cmp::Eq for hologram_compute::quant_tier::QuantTier`
+- `impl core::cmp::Eq for hologram_compute::workspace::BufferRef`
+- `impl core::cmp::Eq for hologram_exec::refinement::ConvergenceKind`
+- `impl core::cmp::Eq for hologram_exec::refinement::RefinementStateContract`
+- `impl core::cmp::Eq for hologram_exec::refinement::RefinementStatePort`
+- `impl core::cmp::Eq for hologram_exec::refinement::RefinementStatus`
+- `impl core::cmp::Eq for hologram_exec::refinement::RepairPolicy`
+- `impl core::cmp::Eq for hologram_exec::refinement::ValidatorCost`
+- `impl core::cmp::Eq for hologram_exec::refinement::ValidatorKind`
+- `impl core::cmp::Eq for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::cmp::Eq for hologram_ffi::sdk::SdkDType`
+- `impl core::cmp::Eq for hologram_ffi::sdk::SdkOp`
+- `impl core::cmp::Eq for hologram_graph::backward::BackwardError`
+- `impl core::cmp::Eq for hologram_graph::node::AttentionAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::ConstantId`
+- `impl core::cmp::Eq for hologram_graph::node::ConvAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::GatherAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::GemmAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::GraphOp`
+- `impl core::cmp::Eq for hologram_graph::node::InputSource`
+- `impl core::cmp::Eq for hologram_graph::node::LrnAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::NodeId`
+- `impl core::cmp::Eq for hologram_graph::node::NormAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::QuantAttrs`
+- `impl core::cmp::Eq for hologram_graph::node::ReduceAttrs`
+- `impl core::cmp::Eq for hologram_graph::registry::ShapeId`
+- `impl core::cmp::Eq for hologram_ops::direct::AddOp`
+- `impl core::cmp::Eq for hologram_ops::direct::AndOp`
+- `impl core::cmp::Eq for hologram_ops::direct::BnotOp`
+- `impl core::cmp::Eq for hologram_ops::direct::MulOp`
+- `impl core::cmp::Eq for hologram_ops::direct::NegOp`
+- `impl core::cmp::Eq for hologram_ops::direct::OrOp`
+- `impl core::cmp::Eq for hologram_ops::direct::PredOp`
+- `impl core::cmp::Eq for hologram_ops::direct::SubOp`
+- `impl core::cmp::Eq for hologram_ops::direct::SuccOp`
+- `impl core::cmp::Eq for hologram_ops::direct::XorOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::DivOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::LessOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::MinOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::ModOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_binary::PowOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::CosOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::EluOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::LogOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SignOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SinOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::TanOp`
+- `impl core::cmp::Eq for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::cmp::Eq for hologram_ops::kind::OpKind`
+- `impl core::cmp::Eq for hologram_ops::reference::EvalError`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx2`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsAvx512`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsCpu`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsMetal`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsNeon`
+- `impl core::cmp::Eq for hologram_types::HologramHostBoundsWgpu`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeBf16`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeBool`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeF16`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeF32`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeF64`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeI32`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeI4`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeI64`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeI8`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeKind`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeU64`
+- `impl core::cmp::Eq for hologram_types::dtype::DTypeU8`
+- `impl core::cmp::Eq for hologram_types::dtype_id::DTypeId`
+- `impl core::cmp::Eq for hologram_types::memory_tier::MemoryTier`
+- `impl core::cmp::Ord for hologram_compiler::source::SourceSymbol`
+- `impl core::cmp::Ord for hologram_graph::node::ConstantId`
+- `impl core::cmp::Ord for hologram_graph::node::NodeId`
+- `impl core::cmp::Ord for hologram_graph::registry::ShapeId`
+- `impl core::cmp::Ord for hologram_types::dtype_id::DTypeId`
+- `impl core::cmp::Ord for hologram_types::memory_tier::MemoryTier`
+- `impl core::cmp::PartialEq for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::cmp::PartialEq for hologram_archive::format::SectionKind`
+- `impl core::cmp::PartialEq for hologram_archive::weight::WeightFingerprint`
+- `impl core::cmp::PartialEq for hologram_compiler::compiler::BackendKind`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceAttrs`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceDiagnostic`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceLanguage`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceParseOptions`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceSpan`
+- `impl core::cmp::PartialEq for hologram_compiler::source::SourceSymbol`
+- `impl core::cmp::PartialEq for hologram_compute::quant_tier::QuantTier`
+- `impl core::cmp::PartialEq for hologram_compute::workspace::BufferRef`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::ConvergenceKind`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStateContract`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatePort`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::RefinementStatus`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::RepairPolicy`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorCost`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorKind`
+- `impl core::cmp::PartialEq for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::cmp::PartialEq for hologram_ffi::sdk::SdkDType`
+- `impl core::cmp::PartialEq for hologram_ffi::sdk::SdkOp`
+- `impl core::cmp::PartialEq for hologram_graph::backward::BackwardError`
+- `impl core::cmp::PartialEq for hologram_graph::node::AttentionAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::ConstantId`
+- `impl core::cmp::PartialEq for hologram_graph::node::ConvAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::GatherAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::GemmAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::GraphOp`
+- `impl core::cmp::PartialEq for hologram_graph::node::InputSource`
+- `impl core::cmp::PartialEq for hologram_graph::node::LrnAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::NodeId`
+- `impl core::cmp::PartialEq for hologram_graph::node::NormAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::QuantAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::node::ReduceAttrs`
+- `impl core::cmp::PartialEq for hologram_graph::registry::ShapeId`
+- `impl core::cmp::PartialEq for hologram_ops::direct::AddOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::AndOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::BnotOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::MulOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::NegOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::OrOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::PredOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::SubOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::SuccOp`
+- `impl core::cmp::PartialEq for hologram_ops::direct::XorOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::DivOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::LessOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::MinOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::ModOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_binary::PowOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::CosOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::EluOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::LogOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SignOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SinOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::TanOp`
+- `impl core::cmp::PartialEq for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::cmp::PartialEq for hologram_ops::kind::OpKind`
+- `impl core::cmp::PartialEq for hologram_ops::reference::EvalError`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx2`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsAvx512`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsCpu`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsMetal`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsNeon`
+- `impl core::cmp::PartialEq for hologram_types::HologramHostBoundsWgpu`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeBf16`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeBool`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeF16`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeF32`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeF64`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeI32`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeI4`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeI64`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeI8`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeKind`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeU64`
+- `impl core::cmp::PartialEq for hologram_types::dtype::DTypeU8`
+- `impl core::cmp::PartialEq for hologram_types::dtype_id::DTypeId`
+- `impl core::cmp::PartialEq for hologram_types::memory_tier::MemoryTier`
+- `impl core::cmp::PartialOrd for hologram_compiler::source::SourceSymbol`
+- `impl core::cmp::PartialOrd for hologram_graph::node::ConstantId`
+- `impl core::cmp::PartialOrd for hologram_graph::node::NodeId`
+- `impl core::cmp::PartialOrd for hologram_graph::registry::ShapeId`
+- `impl core::cmp::PartialOrd for hologram_types::dtype_id::DTypeId`
+- `impl core::cmp::PartialOrd for hologram_types::memory_tier::MemoryTier`
+- `impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_compiler::error::CompileError`
+- `impl core::convert::From<hologram_archive::error::ArchiveError> for hologram_exec::error::ExecError`
+- `impl core::convert::From<hologram_exec::error::ExecError> for hologram_exec::refinement::RefinementError`
+- `impl core::default::Default for hologram_archive::weight::WeightStore`
+- `impl core::default::Default for hologram_archive::writer::HoloWriter`
+- `impl core::default::Default for hologram_archive::writer::PortDescriptor`
+- `impl core::default::Default for hologram_compiler::cache::CertificateCache`
+- `impl core::default::Default for hologram_compiler::compiler::CompilationStats`
+- `impl core::default::Default for hologram_compiler::lower::QuantParams`
+- `impl core::default::Default for hologram_compiler::lower::ShapeArgs`
+- `impl core::default::Default for hologram_compiler::source::HologramFrontend`
+- `impl core::default::Default for hologram_compiler::source::PythonFrontend`
+- `impl core::default::Default for hologram_compiler::source::RustFrontend`
+- `impl core::default::Default for hologram_compiler::source::SourceAttrs`
+- `impl core::default::Default for hologram_compiler::source::SourceDocument`
+- `impl core::default::Default for hologram_compiler::source::SourceParseOptions`
+- `impl core::default::Default for hologram_compiler::source::SourceProgram`
+- `impl core::default::Default for hologram_compiler::source::SourceSpan`
+- `impl core::default::Default for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::default::Default for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::default::Default for hologram_exec::buffer::BufferArena`
+- `impl core::default::Default for hologram_exec::buffer::SlotSpan`
+- `impl core::default::Default for hologram_exec::refinement::RepairPolicy`
+- `impl core::default::Default for hologram_exec::warm::MemWarmStore`
+- `impl core::default::Default for hologram_graph::constant::ConstantStore`
+- `impl core::default::Default for hologram_graph::graph::Graph`
+- `impl core::default::Default for hologram_graph::node::AttentionAttrs`
+- `impl core::default::Default for hologram_graph::node::ConvAttrs`
+- `impl core::default::Default for hologram_graph::node::GatherAttrs`
+- `impl core::default::Default for hologram_graph::node::GemmAttrs`
+- `impl core::default::Default for hologram_graph::node::LrnAttrs`
+- `impl core::default::Default for hologram_graph::node::NormAttrs`
+- `impl core::default::Default for hologram_graph::node::QuantAttrs`
+- `impl core::default::Default for hologram_graph::node::ReduceAttrs`
+- `impl core::default::Default for hologram_graph::registry::ShapeRegistry`
+- `impl core::default::Default for hologram_graph::schedule::Schedule`
+- `impl core::default::Default for hologram_ops::activations::Gelu`
+- `impl core::default::Default for hologram_ops::activations::Relu`
+- `impl core::default::Default for hologram_ops::activations::Sigmoid`
+- `impl core::default::Default for hologram_ops::activations::Silu`
+- `impl core::default::Default for hologram_ops::activations::Tanh`
+- `impl core::default::Default for hologram_ops::direct::AddOp`
+- `impl core::default::Default for hologram_ops::direct::AndOp`
+- `impl core::default::Default for hologram_ops::direct::BnotOp`
+- `impl core::default::Default for hologram_ops::direct::MulOp`
+- `impl core::default::Default for hologram_ops::direct::NegOp`
+- `impl core::default::Default for hologram_ops::direct::OrOp`
+- `impl core::default::Default for hologram_ops::direct::PredOp`
+- `impl core::default::Default for hologram_ops::direct::SubOp`
+- `impl core::default::Default for hologram_ops::direct::SuccOp`
+- `impl core::default::Default for hologram_ops::direct::XorOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::DivOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::LessOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::MinOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::ModOp`
+- `impl core::default::Default for hologram_ops::elementwise_binary::PowOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::CosOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::EluOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::LogOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SignOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SinOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::TanOp`
+- `impl core::default::Default for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::default::Default for hologram_types::HologramHostBoundsAvx2`
+- `impl core::default::Default for hologram_types::HologramHostBoundsAvx512`
+- `impl core::default::Default for hologram_types::HologramHostBoundsCpu`
+- `impl core::default::Default for hologram_types::HologramHostBoundsMetal`
+- `impl core::default::Default for hologram_types::HologramHostBoundsNeon`
+- `impl core::default::Default for hologram_types::HologramHostBoundsWgpu`
+- `impl core::default::Default for hologram_types::dtype::DTypeBf16`
+- `impl core::default::Default for hologram_types::dtype::DTypeBool`
+- `impl core::default::Default for hologram_types::dtype::DTypeF16`
+- `impl core::default::Default for hologram_types::dtype::DTypeF32`
+- `impl core::default::Default for hologram_types::dtype::DTypeF64`
+- `impl core::default::Default for hologram_types::dtype::DTypeI32`
+- `impl core::default::Default for hologram_types::dtype::DTypeI4`
+- `impl core::default::Default for hologram_types::dtype::DTypeI64`
+- `impl core::default::Default for hologram_types::dtype::DTypeI8`
+- `impl core::default::Default for hologram_types::dtype::DTypeU64`
+- `impl core::default::Default for hologram_types::dtype::DTypeU8`
+- `impl core::error::Error for hologram_archive::error::ArchiveError`
+- `impl core::error::Error for hologram_compiler::error::CompileError`
+- `impl core::error::Error for hologram_compute::error::BackendError`
+- `impl core::error::Error for hologram_exec::error::ExecError`
+- `impl core::error::Error for hologram_exec::refinement::RefinementError`
+- `impl core::fmt::Debug for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::fmt::Debug for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::fmt::Debug for hologram_archive::error::ArchiveError`
+- `impl core::fmt::Debug for hologram_archive::format::HoloHeader`
+- `impl core::fmt::Debug for hologram_archive::format::SectionKind`
+- `impl core::fmt::Debug for hologram_archive::format::SectionRef`
+- `impl core::fmt::Debug for hologram_archive::warm_codec::WarmEntry`
+- `impl core::fmt::Debug for hologram_archive::weight::WeightFingerprint`
+- `impl core::fmt::Debug for hologram_archive::weight::WeightStore`
+- `impl core::fmt::Debug for hologram_archive::writer::PortDescriptor`
+- `impl core::fmt::Debug for hologram_compiler::cache::CachedCertificate`
+- `impl core::fmt::Debug for hologram_compiler::compiler::BackendKind`
+- `impl core::fmt::Debug for hologram_compiler::compiler::CompilationStats`
+- `impl core::fmt::Debug for hologram_compiler::error::CompileError`
+- `impl core::fmt::Debug for hologram_compiler::lower::QuantParams`
+- `impl core::fmt::Debug for hologram_compiler::lower::ShapeArgs`
+- `impl core::fmt::Debug for hologram_compiler::source::HologramFrontend`
+- `impl core::fmt::Debug for hologram_compiler::source::PythonFrontend`
+- `impl core::fmt::Debug for hologram_compiler::source::RustFrontend`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceAttrs`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceBinding`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceConst`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceDiagnostic`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceDocument`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceExpr`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceExternalConst`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceExternalTensor`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceGraph`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceInput`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceItem`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceLanguage`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceOpCall`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceOutput`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceParseOptions`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceProgram`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceSpan`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceSymbol`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::fmt::Debug for hologram_compiler::source::SourceType`
+- `impl core::fmt::Debug for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::fmt::Debug for hologram_compute::AttentionCall`
+- `impl core::fmt::Debug for hologram_compute::BinaryCall`
+- `impl core::fmt::Debug for hologram_compute::BroadcastBinaryCall`
+- `impl core::fmt::Debug for hologram_compute::CastCall`
+- `impl core::fmt::Debug for hologram_compute::Conv2dCall`
+- `impl core::fmt::Debug for hologram_compute::DecodeAttentionCall`
+- `impl core::fmt::Debug for hologram_compute::DecodeAttentionValidCall`
+- `impl core::fmt::Debug for hologram_compute::DequantActivationCall`
+- `impl core::fmt::Debug for hologram_compute::DequantizeCall`
+- `impl core::fmt::Debug for hologram_compute::ExpandCall`
+- `impl core::fmt::Debug for hologram_compute::GatherCall`
+- `impl core::fmt::Debug for hologram_compute::GemmCall`
+- `impl core::fmt::Debug for hologram_compute::Im2ColCall`
+- `impl core::fmt::Debug for hologram_compute::KernelCall`
+- `impl core::fmt::Debug for hologram_compute::KvCacheWriteCall`
+- `impl core::fmt::Debug for hologram_compute::LayoutCall`
+- `impl core::fmt::Debug for hologram_compute::LrnCall`
+- `impl core::fmt::Debug for hologram_compute::MatMulActivationCall`
+- `impl core::fmt::Debug for hologram_compute::MatMulAddActivationCall`
+- `impl core::fmt::Debug for hologram_compute::MatMulAddCall`
+- `impl core::fmt::Debug for hologram_compute::MatMulCall`
+- `impl core::fmt::Debug for hologram_compute::MatMulDequantCall`
+- `impl core::fmt::Debug for hologram_compute::NormCall`
+- `impl core::fmt::Debug for hologram_compute::OpSignature`
+- `impl core::fmt::Debug for hologram_compute::PoolCall`
+- `impl core::fmt::Debug for hologram_compute::ReduceCall`
+- `impl core::fmt::Debug for hologram_compute::RoPECall`
+- `impl core::fmt::Debug for hologram_compute::SoftmaxCall`
+- `impl core::fmt::Debug for hologram_compute::TransposeCall`
+- `impl core::fmt::Debug for hologram_compute::UnaryCall`
+- `impl core::fmt::Debug for hologram_compute::WhereCall`
+- `impl core::fmt::Debug for hologram_compute::error::BackendError`
+- `impl core::fmt::Debug for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::fmt::Debug for hologram_compute::quant_tier::QuantTier`
+- `impl core::fmt::Debug for hologram_compute::workspace::BufferRef`
+- `impl core::fmt::Debug for hologram_exec::buffer::BufferArena`
+- `impl core::fmt::Debug for hologram_exec::buffer::SlotSpan`
+- `impl core::fmt::Debug for hologram_exec::error::ExecError`
+- `impl core::fmt::Debug for hologram_exec::refinement::ConvergenceKind`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementError`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementPlan`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementReport`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementStateContract`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementStatePort`
+- `impl core::fmt::Debug for hologram_exec::refinement::RefinementStatus`
+- `impl core::fmt::Debug for hologram_exec::refinement::RepairPolicy`
+- `impl core::fmt::Debug for hologram_exec::refinement::ValidatorCost`
+- `impl core::fmt::Debug for hologram_exec::refinement::ValidatorKind`
+- `impl core::fmt::Debug for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::fmt::Debug for hologram_ffi::sdk::SdkDType`
+- `impl core::fmt::Debug for hologram_ffi::sdk::SdkOp`
+- `impl core::fmt::Debug for hologram_graph::backward::BackwardError`
+- `impl core::fmt::Debug for hologram_graph::constant::ConstantEntry`
+- `impl core::fmt::Debug for hologram_graph::constant::ConstantStore`
+- `impl core::fmt::Debug for hologram_graph::graph::Graph`
+- `impl core::fmt::Debug for hologram_graph::node::AttentionAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::ConstantId`
+- `impl core::fmt::Debug for hologram_graph::node::ConvAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::GatherAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::GemmAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::GraphOp`
+- `impl core::fmt::Debug for hologram_graph::node::InputSource`
+- `impl core::fmt::Debug for hologram_graph::node::LrnAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::Node`
+- `impl core::fmt::Debug for hologram_graph::node::NodeId`
+- `impl core::fmt::Debug for hologram_graph::node::NormAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::QuantAttrs`
+- `impl core::fmt::Debug for hologram_graph::node::ReduceAttrs`
+- `impl core::fmt::Debug for hologram_graph::registry::ShapeDescriptor`
+- `impl core::fmt::Debug for hologram_graph::registry::ShapeId`
+- `impl core::fmt::Debug for hologram_graph::registry::ShapeRegistry`
+- `impl core::fmt::Debug for hologram_graph::schedule::Schedule`
+- `impl core::fmt::Debug for hologram_ops::activations::Gelu`
+- `impl core::fmt::Debug for hologram_ops::activations::Relu`
+- `impl core::fmt::Debug for hologram_ops::activations::Sigmoid`
+- `impl core::fmt::Debug for hologram_ops::activations::Silu`
+- `impl core::fmt::Debug for hologram_ops::activations::Tanh`
+- `impl core::fmt::Debug for hologram_ops::direct::AddOp`
+- `impl core::fmt::Debug for hologram_ops::direct::AndOp`
+- `impl core::fmt::Debug for hologram_ops::direct::BnotOp`
+- `impl core::fmt::Debug for hologram_ops::direct::MulOp`
+- `impl core::fmt::Debug for hologram_ops::direct::NegOp`
+- `impl core::fmt::Debug for hologram_ops::direct::OrOp`
+- `impl core::fmt::Debug for hologram_ops::direct::PredOp`
+- `impl core::fmt::Debug for hologram_ops::direct::SubOp`
+- `impl core::fmt::Debug for hologram_ops::direct::SuccOp`
+- `impl core::fmt::Debug for hologram_ops::direct::XorOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::DivOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::LessOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::MinOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::ModOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_binary::PowOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::CosOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::EluOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::LogOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SignOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SinOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::TanOp`
+- `impl core::fmt::Debug for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::fmt::Debug for hologram_ops::kind::OpKind`
+- `impl core::fmt::Debug for hologram_ops::reference::EvalError`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx2`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsAvx512`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsCpu`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsMetal`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsNeon`
+- `impl core::fmt::Debug for hologram_types::HologramHostBoundsWgpu`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeBf16`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeBool`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeF16`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeF32`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeF64`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeI32`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeI4`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeI64`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeI8`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeKind`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeU64`
+- `impl core::fmt::Debug for hologram_types::dtype::DTypeU8`
+- `impl core::fmt::Debug for hologram_types::dtype_id::DTypeId`
+- `impl core::fmt::Debug for hologram_types::memory_tier::MemoryTier`
+- `impl core::fmt::Display for hologram_archive::error::ArchiveError`
+- `impl core::fmt::Display for hologram_compiler::error::CompileError`
+- `impl core::fmt::Display for hologram_compute::error::BackendError`
+- `impl core::fmt::Display for hologram_exec::error::ExecError`
+- `impl core::fmt::Display for hologram_exec::refinement::RefinementError`
+- `impl core::hash::Hash for hologram_archive::format::SectionKind`
+- `impl core::hash::Hash for hologram_archive::weight::WeightFingerprint`
+- `impl core::hash::Hash for hologram_compiler::compiler::BackendKind`
+- `impl core::hash::Hash for hologram_compiler::source::SourceSymbol`
+- `impl core::hash::Hash for hologram_compute::workspace::BufferRef`
+- `impl core::hash::Hash for hologram_graph::node::AttentionAttrs`
+- `impl core::hash::Hash for hologram_graph::node::ConstantId`
+- `impl core::hash::Hash for hologram_graph::node::ConvAttrs`
+- `impl core::hash::Hash for hologram_graph::node::GatherAttrs`
+- `impl core::hash::Hash for hologram_graph::node::GemmAttrs`
+- `impl core::hash::Hash for hologram_graph::node::GraphOp`
+- `impl core::hash::Hash for hologram_graph::node::InputSource`
+- `impl core::hash::Hash for hologram_graph::node::LrnAttrs`
+- `impl core::hash::Hash for hologram_graph::node::NodeId`
+- `impl core::hash::Hash for hologram_graph::node::NormAttrs`
+- `impl core::hash::Hash for hologram_graph::node::QuantAttrs`
+- `impl core::hash::Hash for hologram_graph::node::ReduceAttrs`
+- `impl core::hash::Hash for hologram_graph::registry::ShapeId`
+- `impl core::hash::Hash for hologram_ops::direct::AddOp`
+- `impl core::hash::Hash for hologram_ops::direct::AndOp`
+- `impl core::hash::Hash for hologram_ops::direct::BnotOp`
+- `impl core::hash::Hash for hologram_ops::direct::MulOp`
+- `impl core::hash::Hash for hologram_ops::direct::NegOp`
+- `impl core::hash::Hash for hologram_ops::direct::OrOp`
+- `impl core::hash::Hash for hologram_ops::direct::PredOp`
+- `impl core::hash::Hash for hologram_ops::direct::SubOp`
+- `impl core::hash::Hash for hologram_ops::direct::SuccOp`
+- `impl core::hash::Hash for hologram_ops::direct::XorOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::DivOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::LessOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::MinOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::ModOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_binary::PowOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::CosOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::EluOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::LogOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SignOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SinOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::TanOp`
+- `impl core::hash::Hash for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::hash::Hash for hologram_ops::kind::OpKind`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsAvx2`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsAvx512`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsCpu`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsMetal`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsNeon`
+- `impl core::hash::Hash for hologram_types::HologramHostBoundsWgpu`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeBf16`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeBool`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeF16`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeF32`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeF64`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeI32`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeI4`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeI64`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeI8`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeKind`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeU64`
+- `impl core::hash::Hash for hologram_types::dtype::DTypeU8`
+- `impl core::hash::Hash for hologram_types::dtype_id::DTypeId`
+- `impl core::hash::Hash for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::Copy for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::Copy for hologram_archive::format::SectionKind`
+- `impl core::marker::Copy for hologram_archive::format::SectionRef`
+- `impl core::marker::Copy for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::Copy for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::Copy for hologram_compiler::lower::QuantParams`
+- `impl core::marker::Copy for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::Copy for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::Copy for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::Copy for hologram_compiler::source::RustFrontend`
+- `impl core::marker::Copy for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::Copy for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::Copy for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::Copy for hologram_compiler::source::SourceSpan`
+- `impl core::marker::Copy for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::Copy for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::Copy for hologram_compute::AttentionCall`
+- `impl core::marker::Copy for hologram_compute::BinaryCall`
+- `impl core::marker::Copy for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::Copy for hologram_compute::CastCall`
+- `impl core::marker::Copy for hologram_compute::Conv2dCall`
+- `impl core::marker::Copy for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::Copy for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::Copy for hologram_compute::DequantActivationCall`
+- `impl core::marker::Copy for hologram_compute::DequantizeCall`
+- `impl core::marker::Copy for hologram_compute::ExpandCall`
+- `impl core::marker::Copy for hologram_compute::GatherCall`
+- `impl core::marker::Copy for hologram_compute::GemmCall`
+- `impl core::marker::Copy for hologram_compute::Im2ColCall`
+- `impl core::marker::Copy for hologram_compute::KernelCall`
+- `impl core::marker::Copy for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::Copy for hologram_compute::LayoutCall`
+- `impl core::marker::Copy for hologram_compute::LrnCall`
+- `impl core::marker::Copy for hologram_compute::MatMulActivationCall`
+- `impl core::marker::Copy for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::Copy for hologram_compute::MatMulAddCall`
+- `impl core::marker::Copy for hologram_compute::MatMulCall`
+- `impl core::marker::Copy for hologram_compute::MatMulDequantCall`
+- `impl core::marker::Copy for hologram_compute::NormCall`
+- `impl core::marker::Copy for hologram_compute::OpSignature`
+- `impl core::marker::Copy for hologram_compute::PoolCall`
+- `impl core::marker::Copy for hologram_compute::ReduceCall`
+- `impl core::marker::Copy for hologram_compute::RoPECall`
+- `impl core::marker::Copy for hologram_compute::SoftmaxCall`
+- `impl core::marker::Copy for hologram_compute::TransposeCall`
+- `impl core::marker::Copy for hologram_compute::UnaryCall`
+- `impl core::marker::Copy for hologram_compute::WhereCall`
+- `impl core::marker::Copy for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::Copy for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::Copy for hologram_compute::workspace::BufferRef`
+- `impl core::marker::Copy for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::Copy for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::Copy for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::Copy for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::Copy for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::Copy for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::Copy for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::Copy for hologram_ffi::HologramConstDesc`
+- `impl core::marker::Copy for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::marker::Copy for hologram_ffi::HologramShape`
+- `impl core::marker::Copy for hologram_ffi::HologramSourceOp`
+- `impl core::marker::Copy for hologram_ffi::HologramString`
+- `impl core::marker::Copy for hologram_ffi::HologramTensorDesc`
+- `impl core::marker::Copy for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::Copy for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::Copy for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::Copy for hologram_graph::node::ConstantId`
+- `impl core::marker::Copy for hologram_graph::node::ConvAttrs`
+- `impl core::marker::Copy for hologram_graph::node::GatherAttrs`
+- `impl core::marker::Copy for hologram_graph::node::GemmAttrs`
+- `impl core::marker::Copy for hologram_graph::node::GraphOp`
+- `impl core::marker::Copy for hologram_graph::node::InputSource`
+- `impl core::marker::Copy for hologram_graph::node::LrnAttrs`
+- `impl core::marker::Copy for hologram_graph::node::NodeId`
+- `impl core::marker::Copy for hologram_graph::node::NormAttrs`
+- `impl core::marker::Copy for hologram_graph::node::QuantAttrs`
+- `impl core::marker::Copy for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::Copy for hologram_graph::registry::ShapeId`
+- `impl core::marker::Copy for hologram_ops::activations::Gelu`
+- `impl core::marker::Copy for hologram_ops::activations::Relu`
+- `impl core::marker::Copy for hologram_ops::activations::Sigmoid`
+- `impl core::marker::Copy for hologram_ops::activations::Silu`
+- `impl core::marker::Copy for hologram_ops::activations::Tanh`
+- `impl core::marker::Copy for hologram_ops::direct::AddOp`
+- `impl core::marker::Copy for hologram_ops::direct::AndOp`
+- `impl core::marker::Copy for hologram_ops::direct::BnotOp`
+- `impl core::marker::Copy for hologram_ops::direct::MulOp`
+- `impl core::marker::Copy for hologram_ops::direct::NegOp`
+- `impl core::marker::Copy for hologram_ops::direct::OrOp`
+- `impl core::marker::Copy for hologram_ops::direct::PredOp`
+- `impl core::marker::Copy for hologram_ops::direct::SubOp`
+- `impl core::marker::Copy for hologram_ops::direct::SuccOp`
+- `impl core::marker::Copy for hologram_ops::direct::XorOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::Copy for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::Copy for hologram_ops::kind::OpKind`
+- `impl core::marker::Copy for hologram_ops::reference::EvalError`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::Copy for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeBool`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeF16`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeF32`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeF64`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeI32`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeI4`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeI64`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeI8`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeKind`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeU64`
+- `impl core::marker::Copy for hologram_types::dtype::DTypeU8`
+- `impl core::marker::Copy for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::Copy for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::Freeze for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::Freeze for hologram_archive::compose::OrderedLabel`
+- `impl core::marker::Freeze for hologram_archive::compose::OrderedModel`
+- `impl core::marker::Freeze for hologram_archive::compose::OrderedRoute`
+- `impl core::marker::Freeze for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::marker::Freeze for hologram_archive::error::ArchiveError`
+- `impl core::marker::Freeze for hologram_archive::format::HoloHeader`
+- `impl core::marker::Freeze for hologram_archive::format::SectionKind`
+- `impl core::marker::Freeze for hologram_archive::format::SectionRef`
+- `impl core::marker::Freeze for hologram_archive::warm_codec::WarmEntry`
+- `impl core::marker::Freeze for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::Freeze for hologram_archive::weight::WeightStore`
+- `impl core::marker::Freeze for hologram_archive::writer::HoloWriter`
+- `impl core::marker::Freeze for hologram_archive::writer::PortDescriptor`
+- `impl core::marker::Freeze for hologram_compiler::cache::CachedCertificate`
+- `impl core::marker::Freeze for hologram_compiler::cache::CertificateCache`
+- `impl core::marker::Freeze for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::Freeze for hologram_compiler::compiler::CompilationOutput`
+- `impl core::marker::Freeze for hologram_compiler::compiler::CompilationStats`
+- `impl core::marker::Freeze for hologram_compiler::compiler::Compiler`
+- `impl core::marker::Freeze for hologram_compiler::error::CompileError`
+- `impl core::marker::Freeze for hologram_compiler::lower::LoweredNode`
+- `impl core::marker::Freeze for hologram_compiler::lower::QuantParams`
+- `impl core::marker::Freeze for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::Freeze for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::Freeze for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::Freeze for hologram_compiler::source::RustFrontend`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceBinding`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceConst`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceDocument`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceExpr`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceExternalConst`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceExternalTensor`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceGraph`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceInput`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceItem`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceOpCall`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceOutput`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceProgram`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceSpan`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::marker::Freeze for hologram_compiler::source::SourceType`
+- `impl core::marker::Freeze for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::Freeze for hologram_compute::AttentionCall`
+- `impl core::marker::Freeze for hologram_compute::BinaryCall`
+- `impl core::marker::Freeze for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::Freeze for hologram_compute::CastCall`
+- `impl core::marker::Freeze for hologram_compute::Conv2dCall`
+- `impl core::marker::Freeze for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::Freeze for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::Freeze for hologram_compute::DequantActivationCall`
+- `impl core::marker::Freeze for hologram_compute::DequantizeCall`
+- `impl core::marker::Freeze for hologram_compute::ExpandCall`
+- `impl core::marker::Freeze for hologram_compute::GatherCall`
+- `impl core::marker::Freeze for hologram_compute::GemmCall`
+- `impl core::marker::Freeze for hologram_compute::Im2ColCall`
+- `impl core::marker::Freeze for hologram_compute::KernelCall`
+- `impl core::marker::Freeze for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::Freeze for hologram_compute::LayoutCall`
+- `impl core::marker::Freeze for hologram_compute::LrnCall`
+- `impl core::marker::Freeze for hologram_compute::MatMulActivationCall`
+- `impl core::marker::Freeze for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::Freeze for hologram_compute::MatMulAddCall`
+- `impl core::marker::Freeze for hologram_compute::MatMulCall`
+- `impl core::marker::Freeze for hologram_compute::MatMulDequantCall`
+- `impl core::marker::Freeze for hologram_compute::NormCall`
+- `impl core::marker::Freeze for hologram_compute::OpSignature`
+- `impl core::marker::Freeze for hologram_compute::PoolCall`
+- `impl core::marker::Freeze for hologram_compute::ReduceCall`
+- `impl core::marker::Freeze for hologram_compute::RoPECall`
+- `impl core::marker::Freeze for hologram_compute::SoftmaxCall`
+- `impl core::marker::Freeze for hologram_compute::TransposeCall`
+- `impl core::marker::Freeze for hologram_compute::UnaryCall`
+- `impl core::marker::Freeze for hologram_compute::WhereCall`
+- `impl core::marker::Freeze for hologram_compute::error::BackendError`
+- `impl core::marker::Freeze for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::Freeze for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::Freeze for hologram_compute::workspace::BufferRef`
+- `impl core::marker::Freeze for hologram_exec::buffer::BufferArena`
+- `impl core::marker::Freeze for hologram_exec::buffer::OutputBuffer`
+- `impl core::marker::Freeze for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::Freeze for hologram_exec::error::ExecError`
+- `impl core::marker::Freeze for hologram_exec::prism_route::AttestedExecution`
+- `impl core::marker::Freeze for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementError`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementPlan`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementReport`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::Freeze for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::Freeze for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::Freeze for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::Freeze for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::Freeze for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::Freeze for hologram_exec::warm::FileWarmStore`
+- `impl core::marker::Freeze for hologram_exec::warm::MemWarmStore`
+- `impl core::marker::Freeze for hologram_ffi::HologramConstDesc`
+- `impl core::marker::Freeze for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::marker::Freeze for hologram_ffi::HologramShape`
+- `impl core::marker::Freeze for hologram_ffi::HologramSourceBuilder`
+- `impl core::marker::Freeze for hologram_ffi::HologramSourceOp`
+- `impl core::marker::Freeze for hologram_ffi::HologramString`
+- `impl core::marker::Freeze for hologram_ffi::HologramTensorDesc`
+- `impl core::marker::Freeze for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::Freeze for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::Freeze for hologram_graph::backward::BackwardError`
+- `impl core::marker::Freeze for hologram_graph::constant::ConstantEntry`
+- `impl core::marker::Freeze for hologram_graph::constant::ConstantStore`
+- `impl core::marker::Freeze for hologram_graph::graph::Graph`
+- `impl core::marker::Freeze for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::ConstantId`
+- `impl core::marker::Freeze for hologram_graph::node::ConvAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::GatherAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::GemmAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::GraphOp`
+- `impl core::marker::Freeze for hologram_graph::node::InputSource`
+- `impl core::marker::Freeze for hologram_graph::node::LrnAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::Node`
+- `impl core::marker::Freeze for hologram_graph::node::NodeId`
+- `impl core::marker::Freeze for hologram_graph::node::NormAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::QuantAttrs`
+- `impl core::marker::Freeze for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::Freeze for hologram_graph::registry::ShapeDescriptor`
+- `impl core::marker::Freeze for hologram_graph::registry::ShapeId`
+- `impl core::marker::Freeze for hologram_graph::registry::ShapeRegistry`
+- `impl core::marker::Freeze for hologram_graph::schedule::Schedule`
+- `impl core::marker::Freeze for hologram_ops::activations::Gelu`
+- `impl core::marker::Freeze for hologram_ops::activations::Relu`
+- `impl core::marker::Freeze for hologram_ops::activations::Sigmoid`
+- `impl core::marker::Freeze for hologram_ops::activations::Silu`
+- `impl core::marker::Freeze for hologram_ops::activations::Tanh`
+- `impl core::marker::Freeze for hologram_ops::direct::AddOp`
+- `impl core::marker::Freeze for hologram_ops::direct::AndOp`
+- `impl core::marker::Freeze for hologram_ops::direct::BnotOp`
+- `impl core::marker::Freeze for hologram_ops::direct::MulOp`
+- `impl core::marker::Freeze for hologram_ops::direct::NegOp`
+- `impl core::marker::Freeze for hologram_ops::direct::OrOp`
+- `impl core::marker::Freeze for hologram_ops::direct::PredOp`
+- `impl core::marker::Freeze for hologram_ops::direct::SubOp`
+- `impl core::marker::Freeze for hologram_ops::direct::SuccOp`
+- `impl core::marker::Freeze for hologram_ops::direct::XorOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::Freeze for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::Freeze for hologram_ops::kind::OpKind`
+- `impl core::marker::Freeze for hologram_ops::reference::EvalError`
+- `impl core::marker::Freeze for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::Freeze for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeBool`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeF16`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeF32`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeF64`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeI32`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeI4`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeI64`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeI8`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeKind`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeU64`
+- `impl core::marker::Freeze for hologram_types::dtype::DTypeU8`
+- `impl core::marker::Freeze for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::Freeze for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::Send for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::Send for hologram_archive::compose::OrderedLabel`
+- `impl core::marker::Send for hologram_archive::compose::OrderedModel`
+- `impl core::marker::Send for hologram_archive::compose::OrderedRoute`
+- `impl core::marker::Send for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::marker::Send for hologram_archive::error::ArchiveError`
+- `impl core::marker::Send for hologram_archive::format::HoloHeader`
+- `impl core::marker::Send for hologram_archive::format::SectionKind`
+- `impl core::marker::Send for hologram_archive::format::SectionRef`
+- `impl core::marker::Send for hologram_archive::warm_codec::WarmEntry`
+- `impl core::marker::Send for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::Send for hologram_archive::weight::WeightStore`
+- `impl core::marker::Send for hologram_archive::writer::HoloWriter`
+- `impl core::marker::Send for hologram_archive::writer::PortDescriptor`
+- `impl core::marker::Send for hologram_compiler::cache::CachedCertificate`
+- `impl core::marker::Send for hologram_compiler::cache::CertificateCache`
+- `impl core::marker::Send for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::Send for hologram_compiler::compiler::CompilationOutput`
+- `impl core::marker::Send for hologram_compiler::compiler::CompilationStats`
+- `impl core::marker::Send for hologram_compiler::compiler::Compiler`
+- `impl core::marker::Send for hologram_compiler::error::CompileError`
+- `impl core::marker::Send for hologram_compiler::lower::LoweredNode`
+- `impl core::marker::Send for hologram_compiler::lower::QuantParams`
+- `impl core::marker::Send for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::Send for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::Send for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::Send for hologram_compiler::source::RustFrontend`
+- `impl core::marker::Send for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::Send for hologram_compiler::source::SourceBinding`
+- `impl core::marker::Send for hologram_compiler::source::SourceConst`
+- `impl core::marker::Send for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::Send for hologram_compiler::source::SourceDocument`
+- `impl core::marker::Send for hologram_compiler::source::SourceExpr`
+- `impl core::marker::Send for hologram_compiler::source::SourceExternalConst`
+- `impl core::marker::Send for hologram_compiler::source::SourceExternalTensor`
+- `impl core::marker::Send for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::marker::Send for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::Send for hologram_compiler::source::SourceGraph`
+- `impl core::marker::Send for hologram_compiler::source::SourceInput`
+- `impl core::marker::Send for hologram_compiler::source::SourceItem`
+- `impl core::marker::Send for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::Send for hologram_compiler::source::SourceOpCall`
+- `impl core::marker::Send for hologram_compiler::source::SourceOutput`
+- `impl core::marker::Send for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::Send for hologram_compiler::source::SourceProgram`
+- `impl core::marker::Send for hologram_compiler::source::SourceSpan`
+- `impl core::marker::Send for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::Send for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::marker::Send for hologram_compiler::source::SourceType`
+- `impl core::marker::Send for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::Send for hologram_compute::AttentionCall`
+- `impl core::marker::Send for hologram_compute::BinaryCall`
+- `impl core::marker::Send for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::Send for hologram_compute::CastCall`
+- `impl core::marker::Send for hologram_compute::Conv2dCall`
+- `impl core::marker::Send for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::Send for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::Send for hologram_compute::DequantActivationCall`
+- `impl core::marker::Send for hologram_compute::DequantizeCall`
+- `impl core::marker::Send for hologram_compute::ExpandCall`
+- `impl core::marker::Send for hologram_compute::GatherCall`
+- `impl core::marker::Send for hologram_compute::GemmCall`
+- `impl core::marker::Send for hologram_compute::Im2ColCall`
+- `impl core::marker::Send for hologram_compute::KernelCall`
+- `impl core::marker::Send for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::Send for hologram_compute::LayoutCall`
+- `impl core::marker::Send for hologram_compute::LrnCall`
+- `impl core::marker::Send for hologram_compute::MatMulActivationCall`
+- `impl core::marker::Send for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::Send for hologram_compute::MatMulAddCall`
+- `impl core::marker::Send for hologram_compute::MatMulCall`
+- `impl core::marker::Send for hologram_compute::MatMulDequantCall`
+- `impl core::marker::Send for hologram_compute::NormCall`
+- `impl core::marker::Send for hologram_compute::OpSignature`
+- `impl core::marker::Send for hologram_compute::PoolCall`
+- `impl core::marker::Send for hologram_compute::ReduceCall`
+- `impl core::marker::Send for hologram_compute::RoPECall`
+- `impl core::marker::Send for hologram_compute::SoftmaxCall`
+- `impl core::marker::Send for hologram_compute::TransposeCall`
+- `impl core::marker::Send for hologram_compute::UnaryCall`
+- `impl core::marker::Send for hologram_compute::WhereCall`
+- `impl core::marker::Send for hologram_compute::error::BackendError`
+- `impl core::marker::Send for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::Send for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::Send for hologram_compute::workspace::BufferRef`
+- `impl core::marker::Send for hologram_exec::buffer::BufferArena`
+- `impl core::marker::Send for hologram_exec::buffer::OutputBuffer`
+- `impl core::marker::Send for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::Send for hologram_exec::error::ExecError`
+- `impl core::marker::Send for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementError`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementPlan`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementReport`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::Send for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::Send for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::Send for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::Send for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::Send for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::Send for hologram_exec::warm::FileWarmStore`
+- `impl core::marker::Send for hologram_exec::warm::MemWarmStore`
+- `impl core::marker::Send for hologram_ffi::HologramSourceBuilder`
+- `impl core::marker::Send for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::Send for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::Send for hologram_graph::backward::BackwardError`
+- `impl core::marker::Send for hologram_graph::constant::ConstantEntry`
+- `impl core::marker::Send for hologram_graph::constant::ConstantStore`
+- `impl core::marker::Send for hologram_graph::graph::Graph`
+- `impl core::marker::Send for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::Send for hologram_graph::node::ConstantId`
+- `impl core::marker::Send for hologram_graph::node::ConvAttrs`
+- `impl core::marker::Send for hologram_graph::node::GatherAttrs`
+- `impl core::marker::Send for hologram_graph::node::GemmAttrs`
+- `impl core::marker::Send for hologram_graph::node::GraphOp`
+- `impl core::marker::Send for hologram_graph::node::InputSource`
+- `impl core::marker::Send for hologram_graph::node::LrnAttrs`
+- `impl core::marker::Send for hologram_graph::node::Node`
+- `impl core::marker::Send for hologram_graph::node::NodeId`
+- `impl core::marker::Send for hologram_graph::node::NormAttrs`
+- `impl core::marker::Send for hologram_graph::node::QuantAttrs`
+- `impl core::marker::Send for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::Send for hologram_graph::registry::ShapeDescriptor`
+- `impl core::marker::Send for hologram_graph::registry::ShapeId`
+- `impl core::marker::Send for hologram_graph::registry::ShapeRegistry`
+- `impl core::marker::Send for hologram_graph::schedule::Schedule`
+- `impl core::marker::Send for hologram_ops::activations::Gelu`
+- `impl core::marker::Send for hologram_ops::activations::Relu`
+- `impl core::marker::Send for hologram_ops::activations::Sigmoid`
+- `impl core::marker::Send for hologram_ops::activations::Silu`
+- `impl core::marker::Send for hologram_ops::activations::Tanh`
+- `impl core::marker::Send for hologram_ops::direct::AddOp`
+- `impl core::marker::Send for hologram_ops::direct::AndOp`
+- `impl core::marker::Send for hologram_ops::direct::BnotOp`
+- `impl core::marker::Send for hologram_ops::direct::MulOp`
+- `impl core::marker::Send for hologram_ops::direct::NegOp`
+- `impl core::marker::Send for hologram_ops::direct::OrOp`
+- `impl core::marker::Send for hologram_ops::direct::PredOp`
+- `impl core::marker::Send for hologram_ops::direct::SubOp`
+- `impl core::marker::Send for hologram_ops::direct::SuccOp`
+- `impl core::marker::Send for hologram_ops::direct::XorOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::Send for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::Send for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::Send for hologram_ops::kind::OpKind`
+- `impl core::marker::Send for hologram_ops::reference::EvalError`
+- `impl core::marker::Send for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::Send for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::Send for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::Send for hologram_types::dtype::DTypeBool`
+- `impl core::marker::Send for hologram_types::dtype::DTypeF16`
+- `impl core::marker::Send for hologram_types::dtype::DTypeF32`
+- `impl core::marker::Send for hologram_types::dtype::DTypeF64`
+- `impl core::marker::Send for hologram_types::dtype::DTypeI32`
+- `impl core::marker::Send for hologram_types::dtype::DTypeI4`
+- `impl core::marker::Send for hologram_types::dtype::DTypeI64`
+- `impl core::marker::Send for hologram_types::dtype::DTypeI8`
+- `impl core::marker::Send for hologram_types::dtype::DTypeKind`
+- `impl core::marker::Send for hologram_types::dtype::DTypeU64`
+- `impl core::marker::Send for hologram_types::dtype::DTypeU8`
+- `impl core::marker::Send for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::Send for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::StructuralPartialEq for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::StructuralPartialEq for hologram_archive::format::SectionKind`
+- `impl core::marker::StructuralPartialEq for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceSpan`
+- `impl core::marker::StructuralPartialEq for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::StructuralPartialEq for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::StructuralPartialEq for hologram_compute::workspace::BufferRef`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::StructuralPartialEq for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::StructuralPartialEq for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::StructuralPartialEq for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::StructuralPartialEq for hologram_graph::backward::BackwardError`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::ConstantId`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::ConvAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::GatherAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::GemmAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::GraphOp`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::InputSource`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::LrnAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::NodeId`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::NormAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::QuantAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::StructuralPartialEq for hologram_graph::registry::ShapeId`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::AddOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::AndOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::BnotOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::MulOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::NegOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::OrOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::PredOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::SubOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::SuccOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::direct::XorOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::StructuralPartialEq for hologram_ops::kind::OpKind`
+- `impl core::marker::StructuralPartialEq for hologram_ops::reference::EvalError`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::StructuralPartialEq for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeBool`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF16`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF32`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeF64`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI32`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI4`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI64`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeI8`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeKind`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU64`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype::DTypeU8`
+- `impl core::marker::StructuralPartialEq for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::StructuralPartialEq for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::Sync for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::Sync for hologram_archive::compose::OrderedLabel`
+- `impl core::marker::Sync for hologram_archive::compose::OrderedModel`
+- `impl core::marker::Sync for hologram_archive::compose::OrderedRoute`
+- `impl core::marker::Sync for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::marker::Sync for hologram_archive::error::ArchiveError`
+- `impl core::marker::Sync for hologram_archive::format::HoloHeader`
+- `impl core::marker::Sync for hologram_archive::format::SectionKind`
+- `impl core::marker::Sync for hologram_archive::format::SectionRef`
+- `impl core::marker::Sync for hologram_archive::warm_codec::WarmEntry`
+- `impl core::marker::Sync for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::Sync for hologram_archive::weight::WeightStore`
+- `impl core::marker::Sync for hologram_archive::writer::HoloWriter`
+- `impl core::marker::Sync for hologram_archive::writer::PortDescriptor`
+- `impl core::marker::Sync for hologram_compiler::cache::CachedCertificate`
+- `impl core::marker::Sync for hologram_compiler::cache::CertificateCache`
+- `impl core::marker::Sync for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::Sync for hologram_compiler::compiler::CompilationOutput`
+- `impl core::marker::Sync for hologram_compiler::compiler::CompilationStats`
+- `impl core::marker::Sync for hologram_compiler::compiler::Compiler`
+- `impl core::marker::Sync for hologram_compiler::error::CompileError`
+- `impl core::marker::Sync for hologram_compiler::lower::LoweredNode`
+- `impl core::marker::Sync for hologram_compiler::lower::QuantParams`
+- `impl core::marker::Sync for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::Sync for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::Sync for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::Sync for hologram_compiler::source::RustFrontend`
+- `impl core::marker::Sync for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::Sync for hologram_compiler::source::SourceBinding`
+- `impl core::marker::Sync for hologram_compiler::source::SourceConst`
+- `impl core::marker::Sync for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::Sync for hologram_compiler::source::SourceDocument`
+- `impl core::marker::Sync for hologram_compiler::source::SourceExpr`
+- `impl core::marker::Sync for hologram_compiler::source::SourceExternalConst`
+- `impl core::marker::Sync for hologram_compiler::source::SourceExternalTensor`
+- `impl core::marker::Sync for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::marker::Sync for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::Sync for hologram_compiler::source::SourceGraph`
+- `impl core::marker::Sync for hologram_compiler::source::SourceInput`
+- `impl core::marker::Sync for hologram_compiler::source::SourceItem`
+- `impl core::marker::Sync for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::Sync for hologram_compiler::source::SourceOpCall`
+- `impl core::marker::Sync for hologram_compiler::source::SourceOutput`
+- `impl core::marker::Sync for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::Sync for hologram_compiler::source::SourceProgram`
+- `impl core::marker::Sync for hologram_compiler::source::SourceSpan`
+- `impl core::marker::Sync for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::Sync for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::marker::Sync for hologram_compiler::source::SourceType`
+- `impl core::marker::Sync for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::Sync for hologram_compute::AttentionCall`
+- `impl core::marker::Sync for hologram_compute::BinaryCall`
+- `impl core::marker::Sync for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::Sync for hologram_compute::CastCall`
+- `impl core::marker::Sync for hologram_compute::Conv2dCall`
+- `impl core::marker::Sync for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::Sync for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::Sync for hologram_compute::DequantActivationCall`
+- `impl core::marker::Sync for hologram_compute::DequantizeCall`
+- `impl core::marker::Sync for hologram_compute::ExpandCall`
+- `impl core::marker::Sync for hologram_compute::GatherCall`
+- `impl core::marker::Sync for hologram_compute::GemmCall`
+- `impl core::marker::Sync for hologram_compute::Im2ColCall`
+- `impl core::marker::Sync for hologram_compute::KernelCall`
+- `impl core::marker::Sync for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::Sync for hologram_compute::LayoutCall`
+- `impl core::marker::Sync for hologram_compute::LrnCall`
+- `impl core::marker::Sync for hologram_compute::MatMulActivationCall`
+- `impl core::marker::Sync for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::Sync for hologram_compute::MatMulAddCall`
+- `impl core::marker::Sync for hologram_compute::MatMulCall`
+- `impl core::marker::Sync for hologram_compute::MatMulDequantCall`
+- `impl core::marker::Sync for hologram_compute::NormCall`
+- `impl core::marker::Sync for hologram_compute::OpSignature`
+- `impl core::marker::Sync for hologram_compute::PoolCall`
+- `impl core::marker::Sync for hologram_compute::ReduceCall`
+- `impl core::marker::Sync for hologram_compute::RoPECall`
+- `impl core::marker::Sync for hologram_compute::SoftmaxCall`
+- `impl core::marker::Sync for hologram_compute::TransposeCall`
+- `impl core::marker::Sync for hologram_compute::UnaryCall`
+- `impl core::marker::Sync for hologram_compute::WhereCall`
+- `impl core::marker::Sync for hologram_compute::error::BackendError`
+- `impl core::marker::Sync for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::Sync for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::Sync for hologram_compute::workspace::BufferRef`
+- `impl core::marker::Sync for hologram_exec::buffer::BufferArena`
+- `impl core::marker::Sync for hologram_exec::buffer::OutputBuffer`
+- `impl core::marker::Sync for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::Sync for hologram_exec::error::ExecError`
+- `impl core::marker::Sync for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementError`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementPlan`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementReport`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::Sync for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::Sync for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::Sync for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::Sync for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::Sync for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::Sync for hologram_exec::warm::FileWarmStore`
+- `impl core::marker::Sync for hologram_exec::warm::MemWarmStore`
+- `impl core::marker::Sync for hologram_ffi::HologramSourceBuilder`
+- `impl core::marker::Sync for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::Sync for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::Sync for hologram_graph::backward::BackwardError`
+- `impl core::marker::Sync for hologram_graph::constant::ConstantEntry`
+- `impl core::marker::Sync for hologram_graph::constant::ConstantStore`
+- `impl core::marker::Sync for hologram_graph::graph::Graph`
+- `impl core::marker::Sync for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::Sync for hologram_graph::node::ConstantId`
+- `impl core::marker::Sync for hologram_graph::node::ConvAttrs`
+- `impl core::marker::Sync for hologram_graph::node::GatherAttrs`
+- `impl core::marker::Sync for hologram_graph::node::GemmAttrs`
+- `impl core::marker::Sync for hologram_graph::node::GraphOp`
+- `impl core::marker::Sync for hologram_graph::node::InputSource`
+- `impl core::marker::Sync for hologram_graph::node::LrnAttrs`
+- `impl core::marker::Sync for hologram_graph::node::Node`
+- `impl core::marker::Sync for hologram_graph::node::NodeId`
+- `impl core::marker::Sync for hologram_graph::node::NormAttrs`
+- `impl core::marker::Sync for hologram_graph::node::QuantAttrs`
+- `impl core::marker::Sync for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::Sync for hologram_graph::registry::ShapeDescriptor`
+- `impl core::marker::Sync for hologram_graph::registry::ShapeId`
+- `impl core::marker::Sync for hologram_graph::registry::ShapeRegistry`
+- `impl core::marker::Sync for hologram_graph::schedule::Schedule`
+- `impl core::marker::Sync for hologram_ops::activations::Gelu`
+- `impl core::marker::Sync for hologram_ops::activations::Relu`
+- `impl core::marker::Sync for hologram_ops::activations::Sigmoid`
+- `impl core::marker::Sync for hologram_ops::activations::Silu`
+- `impl core::marker::Sync for hologram_ops::activations::Tanh`
+- `impl core::marker::Sync for hologram_ops::direct::AddOp`
+- `impl core::marker::Sync for hologram_ops::direct::AndOp`
+- `impl core::marker::Sync for hologram_ops::direct::BnotOp`
+- `impl core::marker::Sync for hologram_ops::direct::MulOp`
+- `impl core::marker::Sync for hologram_ops::direct::NegOp`
+- `impl core::marker::Sync for hologram_ops::direct::OrOp`
+- `impl core::marker::Sync for hologram_ops::direct::PredOp`
+- `impl core::marker::Sync for hologram_ops::direct::SubOp`
+- `impl core::marker::Sync for hologram_ops::direct::SuccOp`
+- `impl core::marker::Sync for hologram_ops::direct::XorOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::Sync for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::Sync for hologram_ops::kind::OpKind`
+- `impl core::marker::Sync for hologram_ops::reference::EvalError`
+- `impl core::marker::Sync for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::Sync for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeBool`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeF16`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeF32`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeF64`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeI32`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeI4`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeI64`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeI8`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeKind`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeU64`
+- `impl core::marker::Sync for hologram_types::dtype::DTypeU8`
+- `impl core::marker::Sync for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::Sync for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::Unpin for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::Unpin for hologram_archive::compose::OrderedLabel`
+- `impl core::marker::Unpin for hologram_archive::compose::OrderedModel`
+- `impl core::marker::Unpin for hologram_archive::compose::OrderedRoute`
+- `impl core::marker::Unpin for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::marker::Unpin for hologram_archive::error::ArchiveError`
+- `impl core::marker::Unpin for hologram_archive::format::HoloHeader`
+- `impl core::marker::Unpin for hologram_archive::format::SectionKind`
+- `impl core::marker::Unpin for hologram_archive::format::SectionRef`
+- `impl core::marker::Unpin for hologram_archive::warm_codec::WarmEntry`
+- `impl core::marker::Unpin for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::Unpin for hologram_archive::weight::WeightStore`
+- `impl core::marker::Unpin for hologram_archive::writer::HoloWriter`
+- `impl core::marker::Unpin for hologram_archive::writer::PortDescriptor`
+- `impl core::marker::Unpin for hologram_compiler::cache::CachedCertificate`
+- `impl core::marker::Unpin for hologram_compiler::cache::CertificateCache`
+- `impl core::marker::Unpin for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::Unpin for hologram_compiler::compiler::CompilationOutput`
+- `impl core::marker::Unpin for hologram_compiler::compiler::CompilationStats`
+- `impl core::marker::Unpin for hologram_compiler::compiler::Compiler`
+- `impl core::marker::Unpin for hologram_compiler::error::CompileError`
+- `impl core::marker::Unpin for hologram_compiler::lower::LoweredNode`
+- `impl core::marker::Unpin for hologram_compiler::lower::QuantParams`
+- `impl core::marker::Unpin for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::Unpin for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::Unpin for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::Unpin for hologram_compiler::source::RustFrontend`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceBinding`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceConst`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceDocument`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceExpr`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceExternalConst`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceExternalTensor`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceGraph`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceInput`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceItem`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceOpCall`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceOutput`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceProgram`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceSpan`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::marker::Unpin for hologram_compiler::source::SourceType`
+- `impl core::marker::Unpin for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::Unpin for hologram_compute::AttentionCall`
+- `impl core::marker::Unpin for hologram_compute::BinaryCall`
+- `impl core::marker::Unpin for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::Unpin for hologram_compute::CastCall`
+- `impl core::marker::Unpin for hologram_compute::Conv2dCall`
+- `impl core::marker::Unpin for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::Unpin for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::Unpin for hologram_compute::DequantActivationCall`
+- `impl core::marker::Unpin for hologram_compute::DequantizeCall`
+- `impl core::marker::Unpin for hologram_compute::ExpandCall`
+- `impl core::marker::Unpin for hologram_compute::GatherCall`
+- `impl core::marker::Unpin for hologram_compute::GemmCall`
+- `impl core::marker::Unpin for hologram_compute::Im2ColCall`
+- `impl core::marker::Unpin for hologram_compute::KernelCall`
+- `impl core::marker::Unpin for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::Unpin for hologram_compute::LayoutCall`
+- `impl core::marker::Unpin for hologram_compute::LrnCall`
+- `impl core::marker::Unpin for hologram_compute::MatMulActivationCall`
+- `impl core::marker::Unpin for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::Unpin for hologram_compute::MatMulAddCall`
+- `impl core::marker::Unpin for hologram_compute::MatMulCall`
+- `impl core::marker::Unpin for hologram_compute::MatMulDequantCall`
+- `impl core::marker::Unpin for hologram_compute::NormCall`
+- `impl core::marker::Unpin for hologram_compute::OpSignature`
+- `impl core::marker::Unpin for hologram_compute::PoolCall`
+- `impl core::marker::Unpin for hologram_compute::ReduceCall`
+- `impl core::marker::Unpin for hologram_compute::RoPECall`
+- `impl core::marker::Unpin for hologram_compute::SoftmaxCall`
+- `impl core::marker::Unpin for hologram_compute::TransposeCall`
+- `impl core::marker::Unpin for hologram_compute::UnaryCall`
+- `impl core::marker::Unpin for hologram_compute::WhereCall`
+- `impl core::marker::Unpin for hologram_compute::error::BackendError`
+- `impl core::marker::Unpin for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::Unpin for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::Unpin for hologram_compute::workspace::BufferRef`
+- `impl core::marker::Unpin for hologram_exec::buffer::BufferArena`
+- `impl core::marker::Unpin for hologram_exec::buffer::OutputBuffer`
+- `impl core::marker::Unpin for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::Unpin for hologram_exec::error::ExecError`
+- `impl core::marker::Unpin for hologram_exec::prism_route::AttestedExecution`
+- `impl core::marker::Unpin for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementError`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementPlan`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementReport`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::Unpin for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::Unpin for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::Unpin for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::Unpin for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::Unpin for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::Unpin for hologram_exec::warm::FileWarmStore`
+- `impl core::marker::Unpin for hologram_exec::warm::MemWarmStore`
+- `impl core::marker::Unpin for hologram_ffi::HologramConstDesc`
+- `impl core::marker::Unpin for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::marker::Unpin for hologram_ffi::HologramShape`
+- `impl core::marker::Unpin for hologram_ffi::HologramSourceBuilder`
+- `impl core::marker::Unpin for hologram_ffi::HologramSourceOp`
+- `impl core::marker::Unpin for hologram_ffi::HologramString`
+- `impl core::marker::Unpin for hologram_ffi::HologramTensorDesc`
+- `impl core::marker::Unpin for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::Unpin for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::Unpin for hologram_graph::backward::BackwardError`
+- `impl core::marker::Unpin for hologram_graph::constant::ConstantEntry`
+- `impl core::marker::Unpin for hologram_graph::constant::ConstantStore`
+- `impl core::marker::Unpin for hologram_graph::graph::Graph`
+- `impl core::marker::Unpin for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::ConstantId`
+- `impl core::marker::Unpin for hologram_graph::node::ConvAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::GatherAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::GemmAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::GraphOp`
+- `impl core::marker::Unpin for hologram_graph::node::InputSource`
+- `impl core::marker::Unpin for hologram_graph::node::LrnAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::Node`
+- `impl core::marker::Unpin for hologram_graph::node::NodeId`
+- `impl core::marker::Unpin for hologram_graph::node::NormAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::QuantAttrs`
+- `impl core::marker::Unpin for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::Unpin for hologram_graph::registry::ShapeDescriptor`
+- `impl core::marker::Unpin for hologram_graph::registry::ShapeId`
+- `impl core::marker::Unpin for hologram_graph::registry::ShapeRegistry`
+- `impl core::marker::Unpin for hologram_graph::schedule::Schedule`
+- `impl core::marker::Unpin for hologram_ops::activations::Gelu`
+- `impl core::marker::Unpin for hologram_ops::activations::Relu`
+- `impl core::marker::Unpin for hologram_ops::activations::Sigmoid`
+- `impl core::marker::Unpin for hologram_ops::activations::Silu`
+- `impl core::marker::Unpin for hologram_ops::activations::Tanh`
+- `impl core::marker::Unpin for hologram_ops::direct::AddOp`
+- `impl core::marker::Unpin for hologram_ops::direct::AndOp`
+- `impl core::marker::Unpin for hologram_ops::direct::BnotOp`
+- `impl core::marker::Unpin for hologram_ops::direct::MulOp`
+- `impl core::marker::Unpin for hologram_ops::direct::NegOp`
+- `impl core::marker::Unpin for hologram_ops::direct::OrOp`
+- `impl core::marker::Unpin for hologram_ops::direct::PredOp`
+- `impl core::marker::Unpin for hologram_ops::direct::SubOp`
+- `impl core::marker::Unpin for hologram_ops::direct::SuccOp`
+- `impl core::marker::Unpin for hologram_ops::direct::XorOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::Unpin for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::Unpin for hologram_ops::kind::OpKind`
+- `impl core::marker::Unpin for hologram_ops::reference::EvalError`
+- `impl core::marker::Unpin for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::Unpin for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeBool`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeF16`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeF32`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeF64`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeI32`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeI4`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeI64`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeI8`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeKind`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeU64`
+- `impl core::marker::Unpin for hologram_types::dtype::DTypeU8`
+- `impl core::marker::Unpin for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::Unpin for hologram_types::memory_tier::MemoryTier`
+- `impl core::marker::UnsafeUnpin for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedLabel`
+- `impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedModel`
+- `impl core::marker::UnsafeUnpin for hologram_archive::compose::OrderedRoute`
+- `impl core::marker::UnsafeUnpin for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::marker::UnsafeUnpin for hologram_archive::error::ArchiveError`
+- `impl core::marker::UnsafeUnpin for hologram_archive::format::HoloHeader`
+- `impl core::marker::UnsafeUnpin for hologram_archive::format::SectionKind`
+- `impl core::marker::UnsafeUnpin for hologram_archive::format::SectionRef`
+- `impl core::marker::UnsafeUnpin for hologram_archive::warm_codec::WarmEntry`
+- `impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightFingerprint`
+- `impl core::marker::UnsafeUnpin for hologram_archive::weight::WeightStore`
+- `impl core::marker::UnsafeUnpin for hologram_archive::writer::HoloWriter`
+- `impl core::marker::UnsafeUnpin for hologram_archive::writer::PortDescriptor`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::cache::CachedCertificate`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::cache::CertificateCache`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::compiler::BackendKind`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationOutput`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::compiler::CompilationStats`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::compiler::Compiler`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::error::CompileError`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::lower::LoweredNode`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::lower::QuantParams`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::lower::ShapeArgs`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::HologramFrontend`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::PythonFrontend`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::RustFrontend`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceBinding`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceConst`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceDiagnostic`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceDocument`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExpr`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalConst`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalTensor`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceGraph`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceInput`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceItem`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceLanguage`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceOpCall`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceOutput`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceParseOptions`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceProgram`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceSpan`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceSymbol`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::SourceType`
+- `impl core::marker::UnsafeUnpin for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::marker::UnsafeUnpin for hologram_compute::AttentionCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::BinaryCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::BroadcastBinaryCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::CastCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::Conv2dCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::DecodeAttentionCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::DecodeAttentionValidCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::DequantActivationCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::DequantizeCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::ExpandCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::GatherCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::GemmCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::Im2ColCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::KernelCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::KvCacheWriteCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::LayoutCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::LrnCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::MatMulActivationCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::MatMulAddActivationCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::MatMulAddCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::MatMulCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::MatMulDequantCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::NormCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::OpSignature`
+- `impl core::marker::UnsafeUnpin for hologram_compute::PoolCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::ReduceCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::RoPECall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::SoftmaxCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::TransposeCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::UnaryCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::WhereCall`
+- `impl core::marker::UnsafeUnpin for hologram_compute::error::BackendError`
+- `impl core::marker::UnsafeUnpin for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::marker::UnsafeUnpin for hologram_compute::quant_tier::QuantTier`
+- `impl core::marker::UnsafeUnpin for hologram_compute::workspace::BufferRef`
+- `impl core::marker::UnsafeUnpin for hologram_exec::buffer::BufferArena`
+- `impl core::marker::UnsafeUnpin for hologram_exec::buffer::OutputBuffer`
+- `impl core::marker::UnsafeUnpin for hologram_exec::buffer::SlotSpan`
+- `impl core::marker::UnsafeUnpin for hologram_exec::error::ExecError`
+- `impl core::marker::UnsafeUnpin for hologram_exec::prism_route::AttestedExecution`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::ConvergenceKind`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementError`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlan`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementReport`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStateContract`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatePort`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementStatus`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::RepairPolicy`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorCost`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorKind`
+- `impl core::marker::UnsafeUnpin for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::marker::UnsafeUnpin for hologram_exec::warm::FileWarmStore`
+- `impl core::marker::UnsafeUnpin for hologram_exec::warm::MemWarmStore`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramConstDesc`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramShape`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramSourceBuilder`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramSourceOp`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramString`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::HologramTensorDesc`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::sdk::SdkDType`
+- `impl core::marker::UnsafeUnpin for hologram_ffi::sdk::SdkOp`
+- `impl core::marker::UnsafeUnpin for hologram_graph::backward::BackwardError`
+- `impl core::marker::UnsafeUnpin for hologram_graph::constant::ConstantEntry`
+- `impl core::marker::UnsafeUnpin for hologram_graph::constant::ConstantStore`
+- `impl core::marker::UnsafeUnpin for hologram_graph::graph::Graph`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::AttentionAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::ConstantId`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::ConvAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::GatherAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::GemmAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::GraphOp`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::InputSource`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::LrnAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::Node`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::NodeId`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::NormAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::QuantAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::node::ReduceAttrs`
+- `impl core::marker::UnsafeUnpin for hologram_graph::registry::ShapeDescriptor`
+- `impl core::marker::UnsafeUnpin for hologram_graph::registry::ShapeId`
+- `impl core::marker::UnsafeUnpin for hologram_graph::registry::ShapeRegistry`
+- `impl core::marker::UnsafeUnpin for hologram_graph::schedule::Schedule`
+- `impl core::marker::UnsafeUnpin for hologram_ops::activations::Gelu`
+- `impl core::marker::UnsafeUnpin for hologram_ops::activations::Relu`
+- `impl core::marker::UnsafeUnpin for hologram_ops::activations::Sigmoid`
+- `impl core::marker::UnsafeUnpin for hologram_ops::activations::Silu`
+- `impl core::marker::UnsafeUnpin for hologram_ops::activations::Tanh`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::AddOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::AndOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::BnotOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::MulOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::NegOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::OrOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::PredOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::SubOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::SuccOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::direct::XorOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::DivOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::LessOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::MinOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::ModOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_binary::PowOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::CosOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::EluOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::LogOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SignOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SinOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::TanOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::marker::UnsafeUnpin for hologram_ops::kind::OpKind`
+- `impl core::marker::UnsafeUnpin for hologram_ops::reference::EvalError`
+- `impl core::marker::UnsafeUnpin for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx2`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsAvx512`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsCpu`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsMetal`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsNeon`
+- `impl core::marker::UnsafeUnpin for hologram_types::HologramHostBoundsWgpu`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBf16`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeBool`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF16`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF32`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeF64`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI32`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI4`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI64`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeI8`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeKind`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU64`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype::DTypeU8`
+- `impl core::marker::UnsafeUnpin for hologram_types::dtype_id::DTypeId`
+- `impl core::marker::UnsafeUnpin for hologram_types::memory_tier::MemoryTier`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedLabel`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedModel`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedRoute`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::error::ArchiveError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::HoloHeader`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::SectionKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::format::SectionRef`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::warm_codec::WarmEntry`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightFingerprint`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::weight::WeightStore`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::HoloWriter`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_archive::writer::PortDescriptor`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CachedCertificate`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::cache::CertificateCache`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::BackendKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationOutput`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::CompilationStats`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::compiler::Compiler`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::error::CompileError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::LoweredNode`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::QuantParams`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::lower::ShapeArgs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::HologramFrontend`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::PythonFrontend`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::RustFrontend`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceBinding`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceConst`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceDiagnostic`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceDocument`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExpr`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalConst`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalTensor`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceGraph`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceInput`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceItem`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceLanguage`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceOpCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceOutput`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceParseOptions`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceProgram`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceSpan`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceSymbol`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::SourceType`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::AttentionCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::BinaryCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::BroadcastBinaryCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::CastCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::Conv2dCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::DecodeAttentionCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::DecodeAttentionValidCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::DequantActivationCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::DequantizeCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::ExpandCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::GatherCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::GemmCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::Im2ColCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::KernelCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::KvCacheWriteCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::LayoutCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::LrnCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::MatMulActivationCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::MatMulAddActivationCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::MatMulAddCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::MatMulCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::MatMulDequantCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::NormCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::OpSignature`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::PoolCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::ReduceCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::RoPECall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::SoftmaxCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::TransposeCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::UnaryCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::WhereCall`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::error::BackendError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::quant_tier::QuantTier`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_compute::workspace::BufferRef`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::BufferArena`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::OutputBuffer`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::SlotSpan`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::error::ExecError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ConvergenceKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlan`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementReport`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStateContract`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatePort`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementStatus`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RepairPolicy`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorCost`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::FileWarmStore`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_exec::warm::MemWarmStore`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramConstDesc`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramShape`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramSourceBuilder`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramSourceOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramString`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::HologramTensorDesc`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::sdk::SdkDType`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ffi::sdk::SdkOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::backward::BackwardError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::constant::ConstantEntry`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::constant::ConstantStore`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::graph::Graph`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::AttentionAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ConstantId`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ConvAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::GatherAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::GemmAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::GraphOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::InputSource`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::LrnAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::Node`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::NodeId`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::NormAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::QuantAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::node::ReduceAttrs`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::registry::ShapeDescriptor`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::registry::ShapeId`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::registry::ShapeRegistry`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_graph::schedule::Schedule`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activations::Gelu`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activations::Relu`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activations::Sigmoid`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activations::Silu`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activations::Tanh`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::AddOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::AndOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::BnotOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::MulOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::NegOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::OrOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::PredOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::SubOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::SuccOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::direct::XorOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::DivOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::LessOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::MinOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::ModOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_binary::PowOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::CosOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::EluOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::LogOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SignOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SinOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::TanOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::kind::OpKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reference::EvalError`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx2`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsAvx512`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsCpu`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsMetal`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsNeon`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::HologramHostBoundsWgpu`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBf16`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeBool`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF16`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF32`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeF64`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI32`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI4`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI64`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeI8`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeKind`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU64`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype::DTypeU8`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::dtype_id::DTypeId`
+- `impl core::panic::unwind_safe::RefUnwindSafe for hologram_types::memory_tier::MemoryTier`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::certificate_codec::CertificateRecord`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedLabel`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedModel`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedRoute`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::constant_codec::ConstantEntry`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::error::ArchiveError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::HoloHeader`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::format::SectionRef`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::warm_codec::WarmEntry`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightFingerprint`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::weight::WeightStore`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::HoloWriter`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_archive::writer::PortDescriptor`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CachedCertificate`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::cache::CertificateCache`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::BackendKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationOutput`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::CompilationStats`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::compiler::Compiler`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::error::CompileError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::LoweredNode`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::QuantParams`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::lower::ShapeArgs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::HologramFrontend`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::PythonFrontend`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::RustFrontend`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceBinding`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceConst`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceDiagnostic`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceDocument`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExpr`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalConst`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalTensor`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceExternalTensorLocation`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceFrontendInfo`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceGraph`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceInput`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceItem`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceLanguage`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceOpCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceOutput`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceParseOptions`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceProgram`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceSpan`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceSymbol`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceTensorLiteral`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::SourceType`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compiler::source::TypeScriptFrontend`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::AttentionCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::BinaryCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::BroadcastBinaryCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::CastCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::Conv2dCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::DecodeAttentionCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::DecodeAttentionValidCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::DequantActivationCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::DequantizeCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::ExpandCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::GatherCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::GemmCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::Im2ColCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::KernelCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::KvCacheWriteCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::LayoutCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::LrnCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::MatMulActivationCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::MatMulAddActivationCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::MatMulAddCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::MatMulCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::MatMulDequantCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::NormCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::OpSignature`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::PoolCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::ReduceCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::RoPECall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::SoftmaxCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::TransposeCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::UnaryCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::WhereCall`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::error::BackendError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::quant_tier::QuantTier`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_compute::workspace::BufferRef`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::BufferArena`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::OutputBuffer`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::SlotSpan`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::error::ExecError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ConvergenceKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlan`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementPlanBuilder`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementReport`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStateContract`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatePort`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementStatus`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RepairPolicy`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorCost`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::ValidatorOutcome`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::FileWarmStore`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_exec::warm::MemWarmStore`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramConstDesc`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramExternalTensorDesc`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramShape`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramSourceBuilder`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramSourceOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramString`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::HologramTensorDesc`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::sdk::SdkDType`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ffi::sdk::SdkOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::backward::BackwardError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::constant::ConstantEntry`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::constant::ConstantStore`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::graph::Graph`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::AttentionAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ConstantId`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ConvAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::GatherAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::GemmAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::GraphOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::InputSource`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::LrnAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::Node`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::NodeId`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::NormAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::QuantAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::node::ReduceAttrs`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::registry::ShapeDescriptor`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::registry::ShapeId`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::registry::ShapeRegistry`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_graph::schedule::Schedule`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::activations::Gelu`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::activations::Relu`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::activations::Sigmoid`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::activations::Silu`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::activations::Tanh`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::AddOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::AndOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::BnotOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::MulOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::NegOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::OrOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::PredOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::SubOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::SuccOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::direct::XorOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::DivOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::EqualOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::GreaterOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::LessOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::MaxOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::MinOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::ModOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_binary::PowOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::AbsOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::AcosOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::AsinOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::AtanOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::CeilOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::CosOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::EluOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::ErfOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::ExpOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::FloorOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::GeluOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::IsNaNOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::Log1pOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::LogOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::ReluOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::RoundOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SeluOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SigmoidOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SignOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SiluOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SinOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::SqrtOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::TanOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::elementwise_unary::TanhOp`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::kind::OpKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::reference::EvalError`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx2`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsAvx512`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsCpu`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsMetal`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsNeon`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::HologramHostBoundsWgpu`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBf16`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeBool`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF16`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF32`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeF64`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI32`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI4`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI64`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeI8`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeKind`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU64`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype::DTypeU8`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::dtype_id::DTypeId`
+- `impl core::panic::unwind_safe::UnwindSafe for hologram_types::memory_tier::MemoryTier`
+- `impl hologram_archive::certificate_codec::CertificateRecord`
+- `impl hologram_archive::constant_codec::ConstantEntry`
+- `impl hologram_archive::weight::WeightFingerprint`
+- `impl hologram_archive::weight::WeightProvider for hologram_archive::weight::WeightStore`
+- `impl hologram_archive::weight::WeightStore`
+- `impl hologram_archive::writer::HoloWriter`
+- `impl hologram_compiler::cache::CertificateCache`
+- `impl hologram_compiler::compiler::BackendKind`
+- `impl hologram_compiler::compiler::Compiler`
+- `impl hologram_compiler::lower::ShapeArgs`
+- `impl hologram_compiler::source::SourceBinding`
+- `impl hologram_compiler::source::SourceConst`
+- `impl hologram_compiler::source::SourceDiagnostic`
+- `impl hologram_compiler::source::SourceDocument`
+- `impl hologram_compiler::source::SourceExternalConst`
+- `impl hologram_compiler::source::SourceExternalTensor`
+- `impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::HologramFrontend`
+- `impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::PythonFrontend`
+- `impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::RustFrontend`
+- `impl hologram_compiler::source::SourceFrontend for hologram_compiler::source::TypeScriptFrontend`
+- `impl hologram_compiler::source::SourceFrontendInfo`
+- `impl hologram_compiler::source::SourceGraph`
+- `impl hologram_compiler::source::SourceInput`
+- `impl hologram_compiler::source::SourceOpCall`
+- `impl hologram_compiler::source::SourceOutput`
+- `impl hologram_compiler::source::SourceParseOptions`
+- `impl hologram_compiler::source::SourceProgram`
+- `impl hologram_compiler::source::SourceSpan`
+- `impl hologram_compiler::source::SourceTensorLiteral`
+- `impl hologram_compiler::source::SourceType`
+- `impl hologram_compute::DequantizeCall`
+- `impl hologram_compute::KernelCall`
+- `impl hologram_compute::MatMulDequantCall`
+- `impl hologram_compute::NormCall`
+- `impl hologram_compute::OpSignature`
+- `impl hologram_compute::quant_tier::QuantTier`
+- `impl hologram_compute::workspace::Workspace for hologram_exec::buffer::BufferArena`
+- `impl hologram_exec::buffer::BufferArena`
+- `impl hologram_exec::refinement::RefinementPlan`
+- `impl hologram_exec::refinement::RefinementPlanBuilder`
+- `impl hologram_exec::refinement::RefinementStateContract`
+- `impl hologram_exec::refinement::ValidatorKind`
+- `impl hologram_exec::warm::FileWarmStore`
+- `impl hologram_exec::warm::MemWarmStore`
+- `impl hologram_exec::warm::WarmStore for hologram_exec::warm::FileWarmStore`
+- `impl hologram_exec::warm::WarmStore for hologram_exec::warm::MemWarmStore`
+- `impl hologram_graph::constant::ConstantStore`
+- `impl hologram_graph::graph::Graph`
+- `impl hologram_graph::registry::ShapeDescriptor`
+- `impl hologram_graph::registry::ShapeRegistry`
+- `impl hologram_graph::schedule::Schedule`
+- `impl hologram_ops::direct::AddOp`
+- `impl hologram_ops::direct::AndOp`
+- `impl hologram_ops::direct::BnotOp`
+- `impl hologram_ops::direct::MulOp`
+- `impl hologram_ops::direct::NegOp`
+- `impl hologram_ops::direct::OrOp`
+- `impl hologram_ops::direct::PredOp`
+- `impl hologram_ops::direct::SubOp`
+- `impl hologram_ops::direct::SuccOp`
+- `impl hologram_ops::direct::XorOp`
+- `impl hologram_ops::elementwise_binary::DivOp`
+- `impl hologram_ops::elementwise_binary::EqualOp`
+- `impl hologram_ops::elementwise_binary::GreaterOp`
+- `impl hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `impl hologram_ops::elementwise_binary::LessOp`
+- `impl hologram_ops::elementwise_binary::LessOrEqualOp`
+- `impl hologram_ops::elementwise_binary::MaxOp`
+- `impl hologram_ops::elementwise_binary::MinOp`
+- `impl hologram_ops::elementwise_binary::ModOp`
+- `impl hologram_ops::elementwise_binary::PowOp`
+- `impl hologram_ops::elementwise_unary::AbsOp`
+- `impl hologram_ops::elementwise_unary::AcosOp`
+- `impl hologram_ops::elementwise_unary::AsinOp`
+- `impl hologram_ops::elementwise_unary::AtanOp`
+- `impl hologram_ops::elementwise_unary::CeilOp`
+- `impl hologram_ops::elementwise_unary::CosOp`
+- `impl hologram_ops::elementwise_unary::EluOp`
+- `impl hologram_ops::elementwise_unary::ErfOp`
+- `impl hologram_ops::elementwise_unary::ExpOp`
+- `impl hologram_ops::elementwise_unary::FloorOp`
+- `impl hologram_ops::elementwise_unary::GeluOp`
+- `impl hologram_ops::elementwise_unary::IsNaNOp`
+- `impl hologram_ops::elementwise_unary::Log1pOp`
+- `impl hologram_ops::elementwise_unary::LogOp`
+- `impl hologram_ops::elementwise_unary::ReciprocalOp`
+- `impl hologram_ops::elementwise_unary::ReluOp`
+- `impl hologram_ops::elementwise_unary::RoundOp`
+- `impl hologram_ops::elementwise_unary::SeluOp`
+- `impl hologram_ops::elementwise_unary::SigmoidOp`
+- `impl hologram_ops::elementwise_unary::SignOp`
+- `impl hologram_ops::elementwise_unary::SiluOp`
+- `impl hologram_ops::elementwise_unary::SinOp`
+- `impl hologram_ops::elementwise_unary::SqrtOp`
+- `impl hologram_ops::elementwise_unary::TanOp`
+- `impl hologram_ops::elementwise_unary::TanhOp`
+- `impl hologram_ops::kind::OpKind`
+- `impl hologram_ops::lut::ActivationFn for hologram_ops::activations::Gelu`
+- `impl hologram_ops::lut::ActivationFn for hologram_ops::activations::Relu`
+- `impl hologram_ops::lut::ActivationFn for hologram_ops::activations::Sigmoid`
+- `impl hologram_ops::lut::ActivationFn for hologram_ops::activations::Silu`
+- `impl hologram_ops::lut::ActivationFn for hologram_ops::activations::Tanh`
+- `impl hologram_ops::reference::ReferenceEvaluator for hologram_ops::reference::ScalarEvaluatorU64`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBf16`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeBool`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF16`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF32`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeF64`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI32`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI4`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI64`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeI8`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU64`
+- `impl hologram_types::dtype::DType for hologram_types::dtype::DTypeU8`
+- `impl hologram_types::dtype_id::DTypeId`
+- `impl hologram_types::memory_tier::MemoryTier`
+- `impl prism_tensor::tensor::TensorAxis for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx2`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsAvx512`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsCpu`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsMetal`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsNeon`
+- `impl uor_foundation::HostBounds for hologram_types::HologramHostBoundsWgpu`
+- `impl uor_foundation::enforcement::GroundedShape for hologram_archive::compose::OrderedLabel`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_archive::compose::OrderedCarrier<'_>`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_archive::compose::OrderedLabel`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBf16`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeBool`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF16`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF32`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeF64`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI32`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI4`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI64`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeI8`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU64`
+- `impl uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::dtype::DTypeU8`
+- `impl uor_foundation::pipeline::FoundationClosed<prism_model! {`
+- `impl uor_foundation::pipeline::PartitionProductFields for hologram_archive::compose::OrderedCarrier<'_>`
+- `impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedCarrier<'_>`
+- `impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedLabel`
+- `impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedModel`
+- `impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_archive::compose::OrderedRoute`
+- `impl uor_foundation::pipeline::__sdk_seal::Sealed for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl<'a, B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> core::marker::Freeze for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Send`
+- `impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync`
+- `impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a> !core::marker::Send for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> !core::marker::Sync for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> !core::panic::unwind_safe::RefUnwindSafe for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> !core::panic::unwind_safe::UnwindSafe for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> core::clone::Clone for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::fmt::Debug for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Copy for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Freeze for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Freeze for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::marker::Freeze for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::marker::Freeze for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> core::marker::Freeze for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::marker::Send for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Send for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::marker::Send for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::marker::Send for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::marker::Sync for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Sync for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::marker::Sync for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::marker::Sync for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::marker::Unpin for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::Unpin for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::marker::Unpin for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::marker::Unpin for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> core::marker::Unpin for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::marker::UnsafeUnpin for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::marker::UnsafeUnpin for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::marker::UnsafeUnpin for hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `impl<'a> core::marker::UnsafeUnpin for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::panic::unwind_safe::RefUnwindSafe for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> core::panic::unwind_safe::UnwindSafe for hologram_exec::buffer::InputBuffer<'a>`
+- `impl<'a> hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> hologram_archive::loader::HoloLoader<'a>`
+- `impl<'a> hologram_archive::loader::LoadedPlan<'a>`
+- `impl<'a> uor_foundation::pipeline::IntoBindingValue<'a> for hologram_archive::compose::OrderedCarrier<'a>`
+- `impl<'a> uor_foundation::pipeline::IntoBindingValue<'a> for hologram_archive::compose::OrderedLabel`
+- `impl<'a> uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, prism_model! {`
+- `impl<Axis, Inputs, D, B> core::default::Default for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: uor_foundation::pipeline::ConstrainedTypeShape, Inputs: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Axis, Inputs, D, B> core::marker::Freeze for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>`
+- `impl<Axis, Inputs, D, B> core::marker::Send for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Send, Inputs: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Axis, Inputs, D, B> core::marker::Sync for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Sync, Inputs: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Axis, Inputs, D, B> core::marker::Unpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Unpin, Inputs: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Axis, Inputs, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::RefUnwindSafe, Inputs: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::UnwindSafe, Inputs: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Axis, Inputs, D, B> hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: uor_foundation::pipeline::ConstrainedTypeShape, Inputs: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<B: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>> hologram_exec::session::SessionBackend for B`
+- `impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::CompiledRefinement<B>`
+- `impl<B: hologram_exec::session::SessionBackend> hologram_exec::refinement::RefinementRunner<'_, B>`
+- `impl<B: hologram_exec::session::SessionBackend> hologram_exec::session::InferenceSession<B>`
+- `impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::refinement::CompiledRefinement<B>`
+- `impl<B> !core::panic::unwind_safe::RefUnwindSafe for hologram_exec::session::InferenceSession<B>`
+- `impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::refinement::CompiledRefinement<B>`
+- `impl<B> !core::panic::unwind_safe::UnwindSafe for hologram_exec::session::InferenceSession<B>`
+- `impl<B> core::marker::Freeze for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Freeze`
+- `impl<B> core::marker::Freeze for hologram_exec::session::InferenceSession<B> where B: core::marker::Freeze`
+- `impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Send`
+- `impl<B> core::marker::Send for hologram_exec::session::InferenceSession<B> where B: core::marker::Send`
+- `impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync`
+- `impl<B> core::marker::Sync for hologram_exec::session::InferenceSession<B> where B: core::marker::Sync`
+- `impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin`
+- `impl<B> core::marker::Unpin for hologram_exec::session::InferenceSession<B> where B: core::marker::Unpin`
+- `impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin`
+- `impl<B> core::marker::UnsafeUnpin for hologram_exec::session::InferenceSession<B> where B: core::marker::UnsafeUnpin`
+- `impl<Cache, New, Pos, D, B> core::default::Default for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Cache, New, Pos, D, B> core::marker::Freeze for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>`
+- `impl<Cache, New, Pos, D, B> core::marker::Send for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Send, New: core::marker::Send, Pos: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Cache, New, Pos, D, B> core::marker::Sync for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Sync, New: core::marker::Sync, Pos: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Cache, New, Pos, D, B> core::marker::Unpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Unpin, New: core::marker::Unpin, Pos: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Cache, New, Pos, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::RefUnwindSafe, New: core::panic::unwind_safe::RefUnwindSafe, Pos: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::UnwindSafe, New: core::panic::unwind_safe::UnwindSafe, Pos: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Cache, New, Pos, D, B> hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<D, B> core::default::Default for hologram_ops::grounding::ConstantGrounding<D, B>`
+- `impl<D, B> core::default::Default for hologram_ops::grounding::WeightLoaderGrounding<D, B>`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::ConstantGrounding<D, B>`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::WeightLoaderGrounding<D, B>`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::ConstantGrounding<D, B>`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::WeightLoaderGrounding<D, B>`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> uor_foundation::enforcement::Grounding for hologram_ops::grounding::ConstantGrounding<D, B> where D: 'static, B: 'static`
+- `impl<D, B> uor_foundation::enforcement::Grounding for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: 'static, B: 'static`
+- `impl<D0, D1, const SITES: usize> core::default::Default for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0, D1, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0, D1, const SITES: usize> core::marker::Send for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Send, D1: core::marker::Send`
+- `impl<D0, D1, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Sync, D1: core::marker::Sync`
+- `impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Unpin, D1: core::marker::Unpin`
+- `impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe, D1: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::UnwindSafe, D1: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, D1, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape2<D0, D1, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape, D1: uor_foundation::pipeline::ConstrainedTypeShape`
+- `impl<D0, const SITES: usize> core::default::Default for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0, const SITES: usize> core::marker::Send for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Send`
+- `impl<D0, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Sync`
+- `impl<D0, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Unpin`
+- `impl<D0, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, const SITES: usize> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Shape1<D0, SITES> where D0: uor_foundation::pipeline::ConstrainedTypeShape`
+- `impl<D0: core::clone::Clone, D1: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::clone::Clone, const SITES: usize> core::clone::Clone for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::cmp::Eq, D1: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::cmp::Eq, const SITES: usize> core::cmp::Eq for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::cmp::PartialEq, D1: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::cmp::PartialEq, const SITES: usize> core::cmp::PartialEq for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::cmp::PartialEq, const SITES: usize> core::marker::StructuralPartialEq for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::fmt::Debug, D1: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::fmt::Debug, const SITES: usize> core::fmt::Debug for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::hash::Hash, D1: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::hash::Hash, const SITES: usize> core::hash::Hash for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0: core::marker::Copy, D1: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0: core::marker::Copy, const SITES: usize> core::marker::Copy for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<Q, K, V, D, B> core::default::Default for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, V: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Q, K, V, D, B> core::marker::Freeze for hologram_ops::structured::AttentionOp<Q, K, V, D, B>`
+- `impl<Q, K, V, D, B> core::marker::Send for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Send, K: core::marker::Send, V: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Q, K, V, D, B> core::marker::Sync for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Sync, K: core::marker::Sync, V: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Q, K, V, D, B> core::marker::Unpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Unpin, K: core::marker::Unpin, V: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Q, K, V, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B>`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, V: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, V: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Q, K, V, D, B> hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, V: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::default::Default for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::default::Default for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::default::Default for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::default::Default for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::default::Default for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axes, D, B> hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> core::default::Default for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> core::default::Default for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> core::default::Default for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::utility::CumSumOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::CumSumOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Axis, D, B> hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::normalization::GroupNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::normalization::LayerNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::normalization::RmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::utility::LrnOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::default::Default for hologram_ops::utility::WhereOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::AddRmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::GroupNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::InstanceNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::LayerNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::RmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::LrnOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::RotaryEmbeddingOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::WhereOp<S, D, B>`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::AddRmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::GroupNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::InstanceNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::LayerNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::RmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::LrnOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::WhereOp<S, D, B>`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::normalization::GroupNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::normalization::InstanceNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::normalization::LayerNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::normalization::RmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::utility::LrnOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, D, B> hologram_ops::utility::WhereOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Lo, Hi, D, B> core::default::Default for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Lo: uor_foundation::pipeline::ConstrainedTypeShape, Hi: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Lo, Hi, D, B> core::marker::Freeze for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>`
+- `impl<S, Lo, Hi, D, B> core::marker::Send for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Send, Lo: core::marker::Send, Hi: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Lo, Hi, D, B> core::marker::Sync for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Sync, Lo: core::marker::Sync, Hi: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Lo, Hi, D, B> core::marker::Unpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Unpin, Lo: core::marker::Unpin, Hi: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Lo, Hi, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Lo: core::panic::unwind_safe::RefUnwindSafe, Hi: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::panic::unwind_safe::UnwindSafe, Lo: core::panic::unwind_safe::UnwindSafe, Hi: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Lo, Hi, D, B> hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Lo: uor_foundation::pipeline::ConstrainedTypeShape, Hi: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Perm, D, B> core::default::Default for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Perm: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Perm, D, B> core::marker::Freeze for hologram_ops::layout::TransposeOp<S, Perm, D, B>`
+- `impl<S, Perm, D, B> core::marker::Send for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Send, Perm: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Perm, D, B> core::marker::Sync for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Sync, Perm: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Perm, D, B> core::marker::Unpin for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Unpin, Perm: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Perm, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::TransposeOp<S, Perm, D, B>`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Perm: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::panic::unwind_safe::UnwindSafe, Perm: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Perm, D, B> hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Perm: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Qd, Td, B> core::default::Default for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Qd: uor_foundation::pipeline::ConstrainedTypeShape, Td: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<S, Qd, Td, B> core::marker::Freeze for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>`
+- `impl<S, Qd, Td, B> core::marker::Send for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Send, Qd: core::marker::Send, Td: core::marker::Send, B: core::marker::Send`
+- `impl<S, Qd, Td, B> core::marker::Sync for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Sync, Qd: core::marker::Sync, Td: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Qd, Td, B> core::marker::Unpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Unpin, Qd: core::marker::Unpin, Td: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Qd, Td, B> core::marker::UnsafeUnpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::panic::unwind_safe::RefUnwindSafe, Qd: core::panic::unwind_safe::RefUnwindSafe, Td: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::panic::unwind_safe::UnwindSafe, Qd: core::panic::unwind_safe::UnwindSafe, Td: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Qd, Td, B> hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Qd: uor_foundation::pipeline::ConstrainedTypeShape, Td: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Pad, D, B> core::default::Default for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Pad: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Pad, D, B> core::marker::Freeze for hologram_ops::utility::PadOp<Sin, Pad, D, B>`
+- `impl<Sin, Pad, D, B> core::marker::Send for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Send, Pad: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Pad, D, B> core::marker::Sync for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Sync, Pad: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Pad, D, B> core::marker::Unpin for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Unpin, Pad: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Pad, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::PadOp<Sin, Pad, D, B>`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Pad: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Pad: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Pad, D, B> hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Pad: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> core::default::Default for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> core::default::Default for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> core::default::Default for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ExpandOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ResizeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Sout, D, B> hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Starts, Ends, D, B> core::default::Default for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Starts: uor_foundation::pipeline::ConstrainedTypeShape, Ends: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Freeze for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Send for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Send, Starts: core::marker::Send, Ends: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Sync for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Sync, Starts: core::marker::Sync, Ends: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Unpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Unpin, Starts: core::marker::Unpin, Ends: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Starts, Ends, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Starts: core::panic::unwind_safe::RefUnwindSafe, Ends: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Starts: core::panic::unwind_safe::UnwindSafe, Ends: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Starts: uor_foundation::pipeline::ConstrainedTypeShape, Ends: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<W: core::fmt::Debug + hologram_compute::workspace::Workspace> core::fmt::Debug for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W: hologram_compute::workspace::Workspace> core::clone::Clone for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W: hologram_compute::workspace::Workspace> core::default::Default for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W: hologram_compute::workspace::Workspace> core::marker::Copy for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W: hologram_compute::workspace::Workspace> hologram_compute::backend::Backend for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W: hologram_compute::workspace::Workspace> hologram_compute::cpu::CpuBackend<W>`
+- `impl<W> core::marker::Freeze for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W> core::marker::Send for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Send`
+- `impl<W> core::marker::Sync for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Sync`
+- `impl<W> core::marker::Unpin for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Unpin`
+- `impl<W> core::marker::UnsafeUnpin for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_compute::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<W> core::panic::unwind_safe::UnwindSafe for hologram_compute::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::default::Default for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, K, S, D, B> core::default::Default for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Send, K: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Send, K: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Sync, K: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Sync, K: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Unpin, K: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Unpin, K: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, K, S, D, B> hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, D, B> core::default::Default for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, D, B> core::marker::Freeze for hologram_ops::structured::FusedSwiGluOp<X, W, D, B>`
+- `impl<X, W, D, B> core::marker::Send for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Send, W: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, D, B> core::marker::Sync for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Sync, W: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, D, B> core::marker::Unpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B>`
+- `impl<X, W, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, D, B> hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, P, S, D, B> core::default::Default for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, P, S, D, B> core::default::Default for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Send, W: core::marker::Send, P: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Send, W: core::marker::Send, P: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Sync, W: core::marker::Sync, P: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Sync, W: core::marker::Sync, P: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, P: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, P: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, P: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, P: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, P: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, P: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<X, W, P, S, D, B> hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<const DIM: usize> core::clone::Clone for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::default::Default for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::fmt::Debug for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::Copy for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::Freeze for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::Send for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::Sync for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::Unpin for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::marker::UnsafeUnpin for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> core::panic::unwind_safe::UnwindSafe for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> prism_tensor::tensor::TensorAxis for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const DIM: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const INLINE_BYTES: usize, const DIM: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const INLINE_BYTES: usize, const FP_MAX: usize, const DIM: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `impl<const INLINE_BYTES: usize, const FP_MAX: usize, const N: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const INLINE_BYTES: usize, const FP_MAX: usize> uor_foundation::pipeline::AxisExtension<INLINE_BYTES, FP_MAX> for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl<const INLINE_BYTES: usize, const N: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const INLINE_BYTES: usize> uor_foundation::pipeline::SubstrateTermBody<INLINE_BYTES> for hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::default::Default for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::default::Default for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::GemmOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::MatMulOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::GemmOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds`
+- `impl<const N: u64> core::clone::Clone for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::cmp::Eq for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::cmp::PartialEq for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::default::Default for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::fmt::Debug for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::hash::Hash for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::Copy for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::Freeze for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::Send for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::StructuralPartialEq for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::Sync for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::Unpin for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::marker::UnsafeUnpin for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Dim<N>`
+- `impl<const N: u64> uor_foundation::pipeline::ConstrainedTypeShape for hologram_types::shape::Dim<N>`
+- `impl<const N: usize> core::clone::Clone for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::default::Default for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::fmt::Debug for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::Copy for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::Freeze for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::Send for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::Sync for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::Unpin for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::marker::UnsafeUnpin for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> core::panic::unwind_safe::UnwindSafe for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> prism_tensor::activation::ActivationAxis for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `impl<const N: usize> uor_foundation::pipeline::__sdk_seal::Sealed for hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `pub const fn hologram_archive::compose::VERB_TERMS_COMPOSE_ORDERED_INFERENCE<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]`
+- `pub const fn hologram_archive::compose::compose_ordered_inference_term_arena<const INLINE_BYTES: usize>() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]`
+- `pub const fn hologram_compiler::compiler::BackendKind::name(self) -> &'static str`
+- `pub const fn hologram_compiler::source::SourceFrontendInfo::extensions(self) -> &'static [&'static str]`
+- `pub const fn hologram_compiler::source::SourceFrontendInfo::language(self) -> hologram_compiler::source::SourceLanguage`
+- `pub const fn hologram_compiler::source::SourceFrontendInfo::names(self) -> &'static [&'static str]`
+- `pub const fn hologram_compiler::source::SourceFrontendInfo::new(hologram_compiler::source::SourceLanguage, &'static [&'static str], &'static [&'static str]) -> Self`
+- `pub const fn hologram_compiler::source::SourceSpan::empty() -> Self`
+- `pub const fn hologram_compiler::source::SourceType::f32(core::option::Option<hologram_graph::registry::ShapeDescriptor>) -> Self`
+- `pub const fn hologram_compute::DequantizeCall::extended(&self) -> bool`
+- `pub const fn hologram_compute::DequantizeCall::has_codebook(&self) -> bool`
+- `pub const fn hologram_compute::DequantizeCall::per_channel(&self) -> bool`
+- `pub const fn hologram_compute::MatMulDequantCall::extended(&self) -> bool`
+- `pub const fn hologram_compute::MatMulDequantCall::has_codebook(&self) -> bool`
+- `pub const fn hologram_compute::MatMulDequantCall::has_residual(&self) -> bool`
+- `pub const fn hologram_compute::MatMulDequantCall::per_channel(&self) -> bool`
+- `pub const fn hologram_compute::NormCall::has_residual(&self) -> bool`
+- `pub const fn hologram_compute::cpu::CpuBackend<W>::new() -> Self`
+- `pub const fn hologram_compute::cpu::dtype::bytes_per_element(u8) -> core::option::Option<usize>`
+- `pub const fn hologram_compute::cpu::dtype::is_float(u8) -> bool`
+- `pub const fn hologram_compute::cpu::dtype::storage_bytes(u8, u32) -> core::option::Option<u32>`
+- `pub const fn hologram_compute::quant_tier::QuantTier::divides_k(&self, usize) -> bool`
+- `pub const fn hologram_compute::quant_tier::QuantTier::omajor_k_ok(&self, usize) -> bool`
+- `pub const fn hologram_compute::quant_tier::QuantTier::rows(&self, usize) -> usize`
+- `pub const fn hologram_compute::quant_tier::QuantTier::unit_bits(&self) -> u32`
+- `pub const fn hologram_compute::quant_tier::QuantTier::weight_bytes(&self, usize, usize) -> core::option::Option<usize>`
+- `pub const fn hologram_exec::refinement::CompiledRefinement<B>::plan(&self) -> &hologram_exec::refinement::RefinementPlan`
+- `pub const fn hologram_exec::refinement::CompiledRefinement<B>::session(&self) -> &hologram_exec::session::InferenceSession<B>`
+- `pub const fn hologram_exec::refinement::RefinementPlan::max_passes(&self) -> u8`
+- `pub const fn hologram_exec::refinement::RefinementPlan::repair_policy(&self) -> hologram_exec::refinement::RepairPolicy`
+- `pub const fn hologram_exec::refinement::RefinementPlanBuilder::repair_policy(self, hologram_exec::refinement::RepairPolicy) -> Self`
+- `pub const fn hologram_exec::refinement::ValidatorKind::cost(self) -> hologram_exec::refinement::ValidatorCost`
+- `pub const fn hologram_ops::kind::OpKind::cap(self) -> usize`
+- `pub const fn hologram_ops::kind::OpKind::is_direct(self) -> bool`
+- `pub const fn hologram_ops::kind::OpKind::is_layout_only(self) -> bool`
+- `pub const fn hologram_ops::kind::OpKind::name(self) -> &'static str`
+- `pub const fn hologram_ops::kind::OpKind::primary_arity(self) -> u8`
+- `pub const fn hologram_ops::kind::OpKind::primary_primitive(self) -> uor_foundation::enums::PrimitiveOp`
+- `pub const fn hologram_types::dtype_id::DTypeId::bytes_per_element(self) -> core::option::Option<usize>`
+- `pub const fn hologram_types::dtype_id::DTypeId::is_float(self) -> bool`
+- `pub const fn hologram_types::dtype_id::DTypeId::is_quantized_weight(self) -> bool`
+- `pub const fn hologram_types::dtype_id::DTypeId::is_sub_byte(self) -> bool`
+- `pub const fn hologram_types::dtype_id::DTypeId::known(self) -> core::option::Option<Self>`
+- `pub const fn hologram_types::dtype_id::DTypeId::name(self) -> &'static str`
+- `pub const fn hologram_types::dtype_id::DTypeId::raw(self) -> u8`
+- `pub const fn hologram_types::dtype_id::DTypeId::storage_bytes(self, u32) -> core::option::Option<u32>`
+- `pub const fn hologram_types::dtype_id::DTypeId::storage_bytes_u64(self, u64) -> core::option::Option<u64>`
+- `pub const fn hologram_types::memory_tier::MemoryTier::from_u8(u8) -> core::option::Option<Self>`
+- `pub const fn hologram_types::memory_tier::MemoryTier::from_witt(u16, bool) -> Self`
+- `pub const fn hologram_types::memory_tier::MemoryTier::is_cpu(&self) -> bool`
+- `pub const hologram_archive::FORMAT_VERSION: u16`
+- `pub const hologram_archive::MAGIC: [u8; 4]`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::CYCLE_SIZE: u64`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::FIELDS: &'static [(u32, u32)]`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::FIELD_NAMES: &'static [&'static str]`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::IRI: &'static str`
+- `pub const hologram_archive::compose::OrderedCarrier<'_>::SITE_COUNT: usize`
+- `pub const hologram_archive::compose::OrderedLabel::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_archive::compose::OrderedLabel::CYCLE_SIZE: u64`
+- `pub const hologram_archive::compose::OrderedLabel::IRI: &'static str`
+- `pub const hologram_archive::compose::OrderedLabel::SITE_COUNT: usize`
+- `pub const hologram_archive::format::FORMAT_VERSION: u16`
+- `pub const hologram_archive::format::MAGIC: [u8; 4]`
+- `pub const hologram_archive::format::MIN_READ_VERSION: u16`
+- `pub const hologram_compiler::source::HologramFrontend::INFO: hologram_compiler::source::SourceFrontendInfo`
+- `pub const hologram_compiler::source::PythonFrontend::INFO: hologram_compiler::source::SourceFrontendInfo`
+- `pub const hologram_compiler::source::RustFrontend::INFO: hologram_compiler::source::SourceFrontendInfo`
+- `pub const hologram_compiler::source::SourceFrontend::INFO: hologram_compiler::source::SourceFrontendInfo`
+- `pub const hologram_compiler::source::TypeScriptFrontend::INFO: hologram_compiler::source::SourceFrontendInfo`
+- `pub const hologram_compute::DequantizeCall::NO_CODEBOOK: hologram_compute::workspace::BufferRef`
+- `pub const hologram_compute::DequantizeCall::NO_VEC: hologram_compute::workspace::BufferRef`
+- `pub const hologram_compute::HOLOGRAM_MAX_ACTIVATION_LEN: usize`
+- `pub const hologram_compute::HOLOGRAM_MAX_TENSOR_DIM: usize`
+- `pub const hologram_compute::MAX_RANK: usize`
+- `pub const hologram_compute::MatMulDequantCall::NO_CODEBOOK: hologram_compute::workspace::BufferRef`
+- `pub const hologram_compute::MatMulDequantCall::NO_RESIDUAL: hologram_compute::workspace::BufferRef`
+- `pub const hologram_compute::NormCall::NO_RESIDUAL: hologram_compute::workspace::BufferRef`
+- `pub const hologram_compute::broadcast_op::ADD: u8`
+- `pub const hologram_compute::broadcast_op::MUL: u8`
+- `pub const hologram_compute::broadcast_op::SUB: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_BF16: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_BOOL: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_E8CB: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_F16: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_F32: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_F64: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_I32: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_I4: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_I64: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_I8: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_U64: u8`
+- `pub const hologram_compute::cpu::dtype::DTYPE_U8: u8`
+- `pub const hologram_compute::cpu::simd::E8_CODEBOOK: [i8; 2048]`
+- `pub const hologram_compute::cpu::simd::EXP_F32_HI: f32`
+- `pub const hologram_compute::cpu::simd::EXP_F32_LO: f32`
+- `pub const hologram_compute::cpu::simd::I4_VALUES: [i8; 16]`
+- `pub const hologram_compute::cpu::simd::I8_DOT_K_MAX: usize`
+- `pub const hologram_compute::decode_gate::FUSED_W8A32_MAX_M: usize`
+- `pub const hologram_compute::decode_gate::OMAJOR_W8A8_MAX_M: u32`
+- `pub const hologram_compute::fused_activation::ELU: u8`
+- `pub const hologram_compute::fused_activation::EXP: u8`
+- `pub const hologram_compute::fused_activation::GELU: u8`
+- `pub const hologram_compute::fused_activation::RELU: u8`
+- `pub const hologram_compute::fused_activation::SELU: u8`
+- `pub const hologram_compute::fused_activation::SIGMOID: u8`
+- `pub const hologram_compute::fused_activation::SILU: u8`
+- `pub const hologram_compute::fused_activation::TANH: u8`
+- `pub const hologram_compute::kernel_call::MAX_RANK: usize`
+- `pub const hologram_compute::kernel_call::broadcast_op::ADD: u8`
+- `pub const hologram_compute::kernel_call::broadcast_op::MUL: u8`
+- `pub const hologram_compute::kernel_call::broadcast_op::SUB: u8`
+- `pub const hologram_compute::kernel_call::decode_gate::FUSED_W8A32_MAX_M: usize`
+- `pub const hologram_compute::kernel_call::decode_gate::OMAJOR_W8A8_MAX_M: u32`
+- `pub const hologram_compute::kernel_call::fused_activation::ELU: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::EXP: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::GELU: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::RELU: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::SELU: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::SIGMOID: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::SILU: u8`
+- `pub const hologram_compute::kernel_call::fused_activation::TANH: u8`
+- `pub const hologram_compute::kernel_call::lut_act::COUNT: usize`
+- `pub const hologram_compute::kernel_call::lut_act::ERF: u8`
+- `pub const hologram_compute::kernel_call::lut_act::EXP: u8`
+- `pub const hologram_compute::kernel_call::lut_act::GELU: u8`
+- `pub const hologram_compute::kernel_call::lut_act::SIGMOID: u8`
+- `pub const hologram_compute::kernel_call::lut_act::SILU: u8`
+- `pub const hologram_compute::kernel_call::lut_act::TANH: u8`
+- `pub const hologram_compute::kernel_call::mm_act_quant::ACCUM_CAPACITY: usize`
+- `pub const hologram_compute::kernel_call::mm_act_quant::ALPHABET_BOUND: usize`
+- `pub const hologram_compute::kernel_call::mm_act_quant::K_MAX: usize`
+- `pub const hologram_compute::kernel_call::mm_act_quant::W8A32: u8`
+- `pub const hologram_compute::kernel_call::mm_act_quant::W8A8_TOKEN_SYM: u8`
+- `pub const hologram_compute::layout::PANEL: usize`
+- `pub const hologram_compute::lut_act::COUNT: usize`
+- `pub const hologram_compute::lut_act::ERF: u8`
+- `pub const hologram_compute::lut_act::EXP: u8`
+- `pub const hologram_compute::lut_act::GELU: u8`
+- `pub const hologram_compute::lut_act::SIGMOID: u8`
+- `pub const hologram_compute::lut_act::SILU: u8`
+- `pub const hologram_compute::lut_act::TANH: u8`
+- `pub const hologram_compute::mm_act_quant::ACCUM_CAPACITY: usize`
+- `pub const hologram_compute::mm_act_quant::ALPHABET_BOUND: usize`
+- `pub const hologram_compute::mm_act_quant::K_MAX: usize`
+- `pub const hologram_compute::mm_act_quant::W8A32: u8`
+- `pub const hologram_compute::mm_act_quant::W8A8_TOKEN_SYM: u8`
+- `pub const hologram_compute::prism_axes::HOLOGRAM_MATMUL_HEADER_BYTES: usize`
+- `pub const hologram_compute::prism_axes::HOLOGRAM_MAX_ACTIVATION_LEN: usize`
+- `pub const hologram_compute::prism_axes::HOLOGRAM_MAX_TENSOR_DIM: usize`
+- `pub const hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::AXIS_ADDRESS: &'static str`
+- `pub const hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::MAX_OUTPUT_BYTES: usize`
+- `pub const hologram_compute::prism_axes::HologramF32VectorActivation<N>::AXIS_ADDRESS: &'static str`
+- `pub const hologram_compute::prism_axes::HologramF32VectorActivation<N>::MAX_OUTPUT_BYTES: usize`
+- `pub const hologram_compute::prism_axes::HologramTensorMatmulF32::AXIS_ADDRESS: &'static str`
+- `pub const hologram_compute::prism_axes::HologramTensorMatmulF32::MAX_OUTPUT_BYTES: usize`
+- `pub const hologram_ffi::HOLOGRAM_ABI_VERSION: u32`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_ABI_MISMATCH: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_ARCHIVE_LOAD: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_BAD_ATTR: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_COMPILE: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_EXECUTION: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_EXTERNAL_TENSOR: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_GRAPH: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_INVALID_ARGUMENT: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_NONE: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_PARSE: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_SHAPE: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_UNSUPPORTED_DTYPE: std::os::raw::c_int`
+- `pub const hologram_ffi::HOLOGRAM_ERROR_UNSUPPORTED_OP: std::os::raw::c_int`
+- `pub const hologram_ffi::sdk::DTYPES: &[hologram_ffi::sdk::SdkDType]`
+- `pub const hologram_ffi::sdk::FEATURES: &[&str]`
+- `pub const hologram_ops::HOLOGRAM_INLINE_BYTES: usize`
+- `pub const hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>::CAP: usize`
+- `pub const hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>::IRI: &'static str`
+- `pub const hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>::CAP: usize`
+- `pub const hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>::IRI: &'static str`
+- `pub const hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>::CAP: usize`
+- `pub const hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>::CAP: usize`
+- `pub const hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::direct::AddOp::ARITY: u8`
+- `pub const hologram_ops::direct::AddOp::CAP: usize`
+- `pub const hologram_ops::direct::AddOp::IRI: &'static str`
+- `pub const hologram_ops::direct::AddOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::AndOp::ARITY: u8`
+- `pub const hologram_ops::direct::AndOp::CAP: usize`
+- `pub const hologram_ops::direct::AndOp::IRI: &'static str`
+- `pub const hologram_ops::direct::AndOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::BnotOp::ARITY: u8`
+- `pub const hologram_ops::direct::BnotOp::CAP: usize`
+- `pub const hologram_ops::direct::BnotOp::IRI: &'static str`
+- `pub const hologram_ops::direct::BnotOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::MulOp::ARITY: u8`
+- `pub const hologram_ops::direct::MulOp::CAP: usize`
+- `pub const hologram_ops::direct::MulOp::IRI: &'static str`
+- `pub const hologram_ops::direct::MulOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::NegOp::ARITY: u8`
+- `pub const hologram_ops::direct::NegOp::CAP: usize`
+- `pub const hologram_ops::direct::NegOp::IRI: &'static str`
+- `pub const hologram_ops::direct::NegOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::OrOp::ARITY: u8`
+- `pub const hologram_ops::direct::OrOp::CAP: usize`
+- `pub const hologram_ops::direct::OrOp::IRI: &'static str`
+- `pub const hologram_ops::direct::OrOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::PredOp::ARITY: u8`
+- `pub const hologram_ops::direct::PredOp::CAP: usize`
+- `pub const hologram_ops::direct::PredOp::IRI: &'static str`
+- `pub const hologram_ops::direct::PredOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::SubOp::ARITY: u8`
+- `pub const hologram_ops::direct::SubOp::CAP: usize`
+- `pub const hologram_ops::direct::SubOp::IRI: &'static str`
+- `pub const hologram_ops::direct::SubOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::SuccOp::ARITY: u8`
+- `pub const hologram_ops::direct::SuccOp::CAP: usize`
+- `pub const hologram_ops::direct::SuccOp::IRI: &'static str`
+- `pub const hologram_ops::direct::SuccOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::direct::XorOp::ARITY: u8`
+- `pub const hologram_ops::direct::XorOp::CAP: usize`
+- `pub const hologram_ops::direct::XorOp::IRI: &'static str`
+- `pub const hologram_ops::direct::XorOp::PRIMITIVE: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::DivOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::DivOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::DivOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::DivOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::EqualOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::EqualOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::EqualOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::EqualOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::GreaterOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::GreaterOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::GreaterOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::GreaterOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::GreaterOrEqualOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::GreaterOrEqualOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::GreaterOrEqualOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::GreaterOrEqualOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::LessOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::LessOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::LessOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::LessOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::LessOrEqualOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::LessOrEqualOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::LessOrEqualOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::LessOrEqualOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::MaxOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::MaxOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::MaxOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::MaxOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::MinOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::MinOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::MinOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::MinOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::ModOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::ModOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::ModOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::ModOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_binary::PowOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_binary::PowOp::CAP: usize`
+- `pub const hologram_ops::elementwise_binary::PowOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_binary::PowOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::AbsOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::AbsOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::AbsOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::AbsOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::AcosOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::AcosOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::AcosOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::AcosOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::AsinOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::AsinOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::AsinOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::AsinOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::AtanOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::AtanOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::AtanOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::AtanOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::CeilOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::CeilOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::CeilOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::CeilOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::CosOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::CosOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::CosOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::CosOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::EluOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::EluOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::EluOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::EluOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::ErfOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::ErfOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::ErfOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::ErfOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::ExpOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::ExpOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::ExpOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::ExpOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::FloorOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::FloorOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::FloorOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::FloorOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::GeluOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::GeluOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::GeluOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::GeluOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::IsNaNOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::IsNaNOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::IsNaNOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::IsNaNOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::Log1pOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::Log1pOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::Log1pOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::Log1pOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::LogOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::LogOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::LogOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::LogOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::ReciprocalOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::ReciprocalOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::ReciprocalOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::ReciprocalOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::ReluOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::ReluOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::ReluOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::ReluOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::RoundOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::RoundOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::RoundOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::RoundOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SeluOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SeluOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SeluOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SeluOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SigmoidOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SigmoidOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SigmoidOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SigmoidOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SignOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SignOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SignOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SignOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SiluOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SiluOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SiluOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SiluOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SinOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SinOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SinOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SinOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::SqrtOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::SqrtOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::SqrtOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::SqrtOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::TanOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::TanOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::TanOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::TanOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::elementwise_unary::TanhOp::ARITY: u8`
+- `pub const hologram_ops::elementwise_unary::TanhOp::CAP: usize`
+- `pub const hologram_ops::elementwise_unary::TanhOp::IRI: &'static str`
+- `pub const hologram_ops::elementwise_unary::TanhOp::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::emit::HOLOGRAM_INLINE_BYTES: usize`
+- `pub const hologram_ops::kind::OpKind::ALL: &'static [Self]`
+- `pub const hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>::CAP: usize`
+- `pub const hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>::IRI: &'static str`
+- `pub const hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::CAP: usize`
+- `pub const hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::IRI: &'static str`
+- `pub const hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>::CAP: usize`
+- `pub const hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>::IRI: &'static str`
+- `pub const hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>::CAP: usize`
+- `pub const hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>::IRI: &'static str`
+- `pub const hologram_ops::layout::TransposeOp<S, Perm, D, B>::CAP: usize`
+- `pub const hologram_ops::layout::TransposeOp<S, Perm, D, B>::IRI: &'static str`
+- `pub const hologram_ops::linalg::GemmOp<M, K, N, D, B>::CAP: usize`
+- `pub const hologram_ops::linalg::GemmOp<M, K, N, D, B>::IRI: &'static str`
+- `pub const hologram_ops::linalg::MatMulOp<M, K, N, D, B>::CAP: usize`
+- `pub const hologram_ops::linalg::MatMulOp<M, K, N, D, B>::IRI: &'static str`
+- `pub const hologram_ops::normalization::AddRmsNormOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::normalization::AddRmsNormOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::normalization::GroupNormOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::normalization::GroupNormOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::normalization::InstanceNormOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::normalization::InstanceNormOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::normalization::LayerNormOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::normalization::LayerNormOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::normalization::RmsNormOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::normalization::RmsNormOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>::CAP: usize`
+- `pub const hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>::CAP: usize`
+- `pub const hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::ARITY: u8`
+- `pub const hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::CAP: usize`
+- `pub const hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::IRI: &'static str`
+- `pub const hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::PRIMARY_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>::CAP: usize`
+- `pub const hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>::IRI: &'static str`
+- `pub const hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>::CAP: usize`
+- `pub const hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>::IRI: &'static str`
+- `pub const hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>::CAP: usize`
+- `pub const hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>::IRI: &'static str`
+- `pub const hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>::CAP: usize`
+- `pub const hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>::IRI: &'static str`
+- `pub const hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>::CAP: usize`
+- `pub const hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>::IRI: &'static str`
+- `pub const hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>::STEP_OP: uor_foundation::enums::PrimitiveOp`
+- `pub const hologram_ops::reference::MAX_RECURSE_ITERATIONS: u64`
+- `pub const hologram_ops::structured::AttentionOp<Q, K, V, D, B>::CAP: usize`
+- `pub const hologram_ops::structured::AttentionOp<Q, K, V, D, B>::IRI: &'static str`
+- `pub const hologram_ops::structured::FusedSwiGluOp<X, W, D, B>::CAP: usize`
+- `pub const hologram_ops::structured::FusedSwiGluOp<X, W, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::CumSumOp<S, Axis, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::CumSumOp<S, Axis, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::ExpandOp<Sin, Sout, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::ExpandOp<Sin, Sout, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::LrnOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::LrnOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::PadOp<Sin, Pad, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::PadOp<Sin, Pad, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::ResizeOp<Sin, Sout, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::ResizeOp<Sin, Sout, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::RotaryEmbeddingOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::RotaryEmbeddingOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_ops::utility::WhereOp<S, D, B>::CAP: usize`
+- `pub const hologram_ops::utility::WhereOp<S, D, B>::IRI: &'static str`
+- `pub const hologram_types::DType::BIT_WIDTH: u32`
+- `pub const hologram_types::DType::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::HologramHostBoundsAvx2::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx2::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::HologramHostBoundsAvx512::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsAvx512::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::HologramHostBoundsCpu::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsCpu::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::HologramHostBoundsMetal::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsMetal::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::HologramHostBoundsNeon::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsNeon::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::HologramHostBoundsWgpu::AFFINE_COEFFS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::BETTI_DIMENSION_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::CONJUNCTION_TERMS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MAX_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::FINGERPRINT_MIN_BYTES: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::FOLD_UNROLL_THRESHOLD: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::JACOBIAN_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::NERVE_CONSTRAINTS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::NERVE_SITES_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::OP_CHAIN_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::RECURSION_TRACE_DEPTH_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::TRACE_MAX_EVENTS: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::UNFOLD_ITERATIONS_MAX: usize`
+- `pub const hologram_types::HologramHostBoundsWgpu::WITT_LEVEL_MAX_BITS: u32`
+- `pub const hologram_types::IRI_PREFIX: &str`
+- `pub const hologram_types::act_quant::W8A32: u8`
+- `pub const hologram_types::act_quant::W8A8_TOKEN_SYM: u8`
+- `pub const hologram_types::dtype::DType::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DType::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeBf16::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeBf16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeBf16::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeBf16::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeBf16::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeBf16::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeBool::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeBool::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeBool::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeBool::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeBool::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeBool::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeF16::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeF16::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeF16::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeF16::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeF16::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeF16::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeF32::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeF32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeF32::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeF32::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeF32::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeF32::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeF64::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeF64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeF64::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeF64::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeF64::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeF64::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeI32::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeI32::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeI32::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeI32::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeI32::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeI32::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeI4::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeI4::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeI4::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeI4::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeI4::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeI4::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeI64::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeI64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeI64::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeI64::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeI64::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeI64::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeI8::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeI8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeI8::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeI8::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeI8::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeI8::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeU64::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeU64::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeU64::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeU64::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeU64::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeU64::SITE_COUNT: usize`
+- `pub const hologram_types::dtype::DTypeU8::BIT_WIDTH: u32`
+- `pub const hologram_types::dtype::DTypeU8::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::dtype::DTypeU8::CYCLE_SIZE: u64`
+- `pub const hologram_types::dtype::DTypeU8::IRI: &'static str`
+- `pub const hologram_types::dtype::DTypeU8::KIND: hologram_types::dtype::DTypeKind`
+- `pub const hologram_types::dtype::DTypeU8::SITE_COUNT: usize`
+- `pub const hologram_types::dtype_id::DTypeId::ALL: [Self; 12]`
+- `pub const hologram_types::dtype_id::DTypeId::BF16: Self`
+- `pub const hologram_types::dtype_id::DTypeId::BOOL: Self`
+- `pub const hologram_types::dtype_id::DTypeId::E8CB: Self`
+- `pub const hologram_types::dtype_id::DTypeId::E8CB_GROUP_DIM: u32`
+- `pub const hologram_types::dtype_id::DTypeId::E8CB_MAX_ENTRIES: usize`
+- `pub const hologram_types::dtype_id::DTypeId::F16: Self`
+- `pub const hologram_types::dtype_id::DTypeId::F32: Self`
+- `pub const hologram_types::dtype_id::DTypeId::F64: Self`
+- `pub const hologram_types::dtype_id::DTypeId::I32: Self`
+- `pub const hologram_types::dtype_id::DTypeId::I4: Self`
+- `pub const hologram_types::dtype_id::DTypeId::I64: Self`
+- `pub const hologram_types::dtype_id::DTypeId::I8: Self`
+- `pub const hologram_types::dtype_id::DTypeId::U64: Self`
+- `pub const hologram_types::dtype_id::DTypeId::U8: Self`
+- `pub const hologram_types::dtype_id::act_quant::W8A32: u8`
+- `pub const hologram_types::dtype_id::act_quant::W8A8_TOKEN_SYM: u8`
+- `pub const hologram_types::dtype_id::weight_layout::OUTPUT_MAJOR: u8`
+- `pub const hologram_types::dtype_id::weight_layout::ROW_MAJOR: u8`
+- `pub const hologram_types::shape::Dim<N>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::shape::Dim<N>::CYCLE_SIZE: u64`
+- `pub const hologram_types::shape::Dim<N>::IRI: &'static str`
+- `pub const hologram_types::shape::Dim<N>::SITE_COUNT: usize`
+- `pub const hologram_types::shape::Shape1<D0, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::shape::Shape1<D0, SITES>::CYCLE_SIZE: u64`
+- `pub const hologram_types::shape::Shape1<D0, SITES>::IRI: &'static str`
+- `pub const hologram_types::shape::Shape1<D0, SITES>::SITE_COUNT: usize`
+- `pub const hologram_types::shape::Shape2<D0, D1, SITES>::CONSTRAINTS: &'static [uor_foundation::pipeline::ConstraintRef]`
+- `pub const hologram_types::shape::Shape2<D0, D1, SITES>::CYCLE_SIZE: u64`
+- `pub const hologram_types::shape::Shape2<D0, D1, SITES>::IRI: &'static str`
+- `pub const hologram_types::shape::Shape2<D0, D1, SITES>::SITE_COUNT: usize`
+- `pub const hologram_types::weight_layout::OUTPUT_MAJOR: u8`
+- `pub const hologram_types::weight_layout::ROW_MAJOR: u8`
+- `pub enum hologram_archive::ArchiveError`
+- `pub enum hologram_archive::error::ArchiveError`
+- `pub enum hologram_compiler::BackendKind`
+- `pub enum hologram_compiler::CompileError`
+- `pub enum hologram_compiler::compiler::BackendKind`
+- `pub enum hologram_compiler::error::CompileError`
+- `pub enum hologram_compiler::source::SourceExpr`
+- `pub enum hologram_compiler::source::SourceExternalTensorLocation`
+- `pub enum hologram_compiler::source::SourceItem`
+- `pub enum hologram_compiler::source::SourceLanguage`
+- `pub enum hologram_compute::BackendError`
+- `pub enum hologram_compute::KernelCall`
+- `pub enum hologram_compute::error::BackendError`
+- `pub enum hologram_compute::kernel_call::KernelCall`
+- `pub enum hologram_exec::ConvergenceKind`
+- `pub enum hologram_exec::ExecError`
+- `pub enum hologram_exec::RefinementError`
+- `pub enum hologram_exec::RefinementStatus`
+- `pub enum hologram_exec::RepairPolicy`
+- `pub enum hologram_exec::ValidatorCost`
+- `pub enum hologram_exec::ValidatorKind`
+- `pub enum hologram_exec::error::ExecError`
+- `pub enum hologram_exec::refinement::ConvergenceKind`
+- `pub enum hologram_exec::refinement::RefinementError`
+- `pub enum hologram_exec::refinement::RefinementStatus`
+- `pub enum hologram_exec::refinement::RepairPolicy`
+- `pub enum hologram_exec::refinement::ValidatorCost`
+- `pub enum hologram_exec::refinement::ValidatorKind`
+- `pub enum hologram_graph::BackwardError`
+- `pub enum hologram_graph::GraphOp`
+- `pub enum hologram_graph::InputSource`
+- `pub enum hologram_graph::backward::BackwardError`
+- `pub enum hologram_graph::node::GraphOp`
+- `pub enum hologram_graph::node::InputSource`
+- `pub enum hologram_ops::EvalError`
+- `pub enum hologram_ops::reference::EvalError`
+- `pub enum hologram_types::DTypeKind`
+- `pub enum hologram_types::dtype::DTypeKind`
+- `pub fn hologram_archive::WeightProvider::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>`
+- `pub fn hologram_archive::WeightProvider::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>`
+- `pub fn hologram_archive::address::address_bytes(&[u8]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::address::address_ring(&[u8]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::ring::pipeline::AddressFailure>`
+- `pub fn hologram_archive::address::compose_model(&[uor_addr::label::KappaLabel<71>]) -> core::result::Result<uor_addr::label::KappaLabel<71>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::address::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::address::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::address::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::address::label_from_fingerprint(&[u8; 32]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::address_bytes(&[u8]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::address_ring(&[u8]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::ring::pipeline::AddressFailure>`
+- `pub fn hologram_archive::certificate_codec::CertificateRecord::clone(&self) -> hologram_archive::certificate_codec::CertificateRecord`
+- `pub fn hologram_archive::certificate_codec::CertificateRecord::eq(&self, &hologram_archive::certificate_codec::CertificateRecord) -> bool`
+- `pub fn hologram_archive::certificate_codec::CertificateRecord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::certificate_codec::CertificateRecord::from_validated(&uor_foundation::enforcement::Validated<uor_foundation::enforcement::LiftChainCertificate>) -> Self`
+- `pub fn hologram_archive::certificate_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::certificate_codec::CertificateRecord>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::certificate_codec::encode(&[hologram_archive::certificate_codec::CertificateRecord]) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_archive::compose::OrderedCarrier<'a>::as_binding_value<const INLINE_BYTES: usize>(&self) -> uor_foundation::pipeline::TermValue<'a, INLINE_BYTES>`
+- `pub fn hologram_archive::compose::OrderedCarrier<'a>::clone(&self) -> hologram_archive::compose::OrderedCarrier<'a>`
+- `pub fn hologram_archive::compose::OrderedCarrier<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::compose::OrderedCarrier<'a>::new(&'a [u8]) -> Self`
+- `pub fn hologram_archive::compose::OrderedLabel::as_binding_value<const INLINE_BYTES: usize>(&self) -> uor_foundation::pipeline::TermValue<'a, INLINE_BYTES>`
+- `pub fn hologram_archive::compose::OrderedModel::forward(<Self as uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>, uor_foundation::pipeline::EmptyCommitment>>::Input) -> core::result::Result<uor_foundation::enforcement::Grounded<'a, <Self as uor_foundation::pipeline::PrismModel<'a, uor_foundation::DefaultHostTypes, uor_addr::bounds::AddrBounds, prism_crypto::hash::Blake3Hasher, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>, uor_foundation::pipeline::EmptyCommitment>>::Output, { _ }, { <AddrBounds as ::uor_foundation::HostBounds>::FINGERPRINT_MAX_BYTES }>, uor_foundation::enforcement::PipelineFailure>`
+- `pub fn hologram_archive::compose::OrderedRoute::arena_slice() -> &'static [uor_foundation::enforcement::Term<'static, { _ }>]`
+- `pub fn hologram_archive::compose::compose_ordered_blake3(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::outcome::AddressOutcome<LABEL>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::compose::compose_ordered_blake3_address(&uor_addr::label::KappaLabel<LABEL>, &uor_addr::label::KappaLabel<LABEL>) -> core::result::Result<uor_addr::label::KappaLabel<LABEL>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::compose::compose_ordered_inference(hologram_archive::compose::OrderedCarrier<'_>) -> hologram_archive::compose::OrderedLabel`
+- `pub fn hologram_archive::compose_model(&[uor_addr::label::KappaLabel<71>]) -> core::result::Result<uor_addr::label::KappaLabel<71>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::constant_codec::ConstantEntry::clone(&self) -> hologram_archive::constant_codec::ConstantEntry`
+- `pub fn hologram_archive::constant_codec::ConstantEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::constant_codec::ConstantEntry::inline(u32, u8, alloc::vec::Vec<u8>) -> Self`
+- `pub fn hologram_archive::constant_codec::ConstantEntry::reference(u32, u8, [u8; 32]) -> Self`
+- `pub fn hologram_archive::constant_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::constant_codec::encode(&[hologram_archive::constant_codec::ConstantEntry]) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_archive::decode_exec_plan(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::decode_ports(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::writer::PortDescriptor>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::decoder::decode_calls(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>`
+- `pub fn hologram_archive::derive_label(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::derive_label_boundary(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_archive::address::ContentLabel, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::derive_label_witnessed(u16, &[u8], &[hologram_archive::address::ContentLabel]) -> core::result::Result<uor_addr::outcome::AddressOutcome<71>, uor_addr::composition::CompositionFailure>`
+- `pub fn hologram_archive::error::ArchiveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::format::HoloHeader::clone(&self) -> hologram_archive::format::HoloHeader`
+- `pub fn hologram_archive::format::HoloHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::format::SectionKind::clone(&self) -> hologram_archive::format::SectionKind`
+- `pub fn hologram_archive::format::SectionKind::eq(&self, &hologram_archive::format::SectionKind) -> bool`
+- `pub fn hologram_archive::format::SectionKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::format::SectionKind::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_archive::format::SectionRef::clone(&self) -> hologram_archive::format::SectionRef`
+- `pub fn hologram_archive::format::SectionRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::kernel_codec::encode_calls(&[hologram_compute::kernel_call::KernelCall]) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_archive::label_from_fingerprint(&[u8; 32]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::loader::HoloLoader<'a>::fingerprint(&self) -> [u8; 32]`
+- `pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::HoloLoader<'a>::from_bytes_unchecked(&'a [u8]) -> core::result::Result<Self, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::HoloLoader<'a>::into_plan(self) -> core::result::Result<hologram_archive::loader::LoadedPlan<'a>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::LoadedPlan<'a>::app_manifest(&self) -> core::option::Option<&'a [u8]>`
+- `pub fn hologram_archive::loader::LoadedPlan<'a>::content_blobs(&self) -> core::result::Result<hologram_archive::loader::ContentBlobs<'a>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::LoadedPlan<'a>::extensions(&self) -> core::result::Result<alloc::vec::Vec<(&'a str, &'a [u8])>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::LoadedPlan<'a>::section(&self, hologram_archive::format::SectionKind) -> core::result::Result<&'a [u8], hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::loader::LoadedPlan<'a>::sections(&self) -> &[hologram_archive::format::SectionRef]`
+- `pub fn hologram_archive::schedule_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::warm_codec::WarmEntry::clone(&self) -> hologram_archive::warm_codec::WarmEntry`
+- `pub fn hologram_archive::warm_codec::WarmEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::warm_codec::decode(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::warm_codec::derive_cone_lattice(&[hologram_compute::kernel_call::KernelCall], &[(u32, hologram_archive::address::ContentLabel)], &[u32]) -> alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>`
+- `pub fn hologram_archive::warm_codec::encode(&[hologram_archive::warm_codec::WarmEntry]) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_archive::weight::WeightFingerprint::clone(&self) -> hologram_archive::weight::WeightFingerprint`
+- `pub fn hologram_archive::weight::WeightFingerprint::content_label(&self) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_archive::weight::WeightFingerprint::eq(&self, &hologram_archive::weight::WeightFingerprint) -> bool`
+- `pub fn hologram_archive::weight::WeightFingerprint::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::weight::WeightFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_archive::weight::WeightFingerprint::of(&[u8]) -> Self`
+- `pub fn hologram_archive::weight::WeightProvider::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>`
+- `pub fn hologram_archive::weight::WeightProvider::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>`
+- `pub fn hologram_archive::weight::WeightStore::clone(&self) -> hologram_archive::weight::WeightStore`
+- `pub fn hologram_archive::weight::WeightStore::default() -> hologram_archive::weight::WeightStore`
+- `pub fn hologram_archive::weight::WeightStore::entries(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&hologram_archive::weight::WeightFingerprint, &alloc::vec::Vec<u8>)>`
+- `pub fn hologram_archive::weight::WeightStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::weight::WeightStore::get(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<&[u8]>`
+- `pub fn hologram_archive::weight::WeightStore::get_range(&self, hologram_archive::weight::WeightFingerprint, usize, usize) -> core::option::Option<alloc::borrow::Cow<'_, [u8]>>`
+- `pub fn hologram_archive::weight::WeightStore::insert(&mut self, alloc::vec::Vec<u8>) -> hologram_archive::weight::WeightFingerprint`
+- `pub fn hologram_archive::weight::WeightStore::is_empty(&self) -> bool`
+- `pub fn hologram_archive::weight::WeightStore::len(&self) -> usize`
+- `pub fn hologram_archive::weight::WeightStore::new() -> Self`
+- `pub fn hologram_archive::weight::WeightStore::size(&self, hologram_archive::weight::WeightFingerprint) -> core::option::Option<usize>`
+- `pub fn hologram_archive::writer::HoloWriter::add_content_blob(&mut self, impl core::convert::Into<alloc::vec::Vec<u8>>, impl core::convert::Into<alloc::vec::Vec<u8>>)`
+- `pub fn hologram_archive::writer::HoloWriter::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)`
+- `pub fn hologram_archive::writer::HoloWriter::assemble(alloc::vec::Vec<(hologram_archive::format::SectionKind, alloc::vec::Vec<u8>)>) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_archive::writer::HoloWriter::default() -> hologram_archive::writer::HoloWriter`
+- `pub fn hologram_archive::writer::HoloWriter::finish(self) -> core::result::Result<alloc::vec::Vec<u8>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::writer::HoloWriter::new() -> Self`
+- `pub fn hologram_archive::writer::HoloWriter::set_app_manifest(&mut self, alloc::vec::Vec<u8>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_certificates(&mut self, alloc::vec::Vec<u8>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_constants(&mut self, alloc::vec::Vec<hologram_archive::constant_codec::ConstantEntry>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_exec_plan(&mut self, alloc::vec::Vec<alloc::vec::Vec<u32>>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_inputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_kernel_calls(&mut self, alloc::vec::Vec<hologram_compute::kernel_call::KernelCall>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_metadata(&mut self, alloc::vec::Vec<u8>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_outputs(&mut self, alloc::vec::Vec<hologram_archive::writer::PortDescriptor>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_schedule(&mut self, hologram_graph::schedule::Schedule)`
+- `pub fn hologram_archive::writer::HoloWriter::set_shape_registry(&mut self, hologram_graph::registry::ShapeRegistry)`
+- `pub fn hologram_archive::writer::HoloWriter::set_trace(&mut self, alloc::vec::Vec<u8>)`
+- `pub fn hologram_archive::writer::HoloWriter::set_weights(&mut self, hologram_archive::weight::WeightStore)`
+- `pub fn hologram_archive::writer::PortDescriptor::clone(&self) -> hologram_archive::writer::PortDescriptor`
+- `pub fn hologram_archive::writer::PortDescriptor::default() -> hologram_archive::writer::PortDescriptor`
+- `pub fn hologram_archive::writer::PortDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_archive::writer::decode_exec_plan(&[u8]) -> core::result::Result<alloc::vec::Vec<alloc::vec::Vec<u32>>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::writer::decode_ports(&[u8]) -> core::result::Result<alloc::vec::Vec<hologram_archive::writer::PortDescriptor>, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_archive::writer::decode_weights(&[u8]) -> core::result::Result<hologram_archive::weight::WeightStore, hologram_archive::error::ArchiveError>`
+- `pub fn hologram_compiler::cache::CachedCertificate::clone(&self) -> hologram_compiler::cache::CachedCertificate`
+- `pub fn hologram_compiler::cache::CachedCertificate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::cache::CertificateCache::default() -> hologram_compiler::cache::CertificateCache`
+- `pub fn hologram_compiler::cache::CertificateCache::get(&self, &uor_foundation::enforcement::ContentFingerprint<32>) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>`
+- `pub fn hologram_compiler::cache::CertificateCache::get_raw(&self, &[u8; 32]) -> core::option::Option<&hologram_compiler::cache::CachedCertificate>`
+- `pub fn hologram_compiler::cache::CertificateCache::insert(&mut self, uor_foundation::enforcement::ContentFingerprint<32>, hologram_compiler::cache::CachedCertificate)`
+- `pub fn hologram_compiler::cache::CertificateCache::insert_raw(&mut self, [u8; 32], hologram_compiler::cache::CachedCertificate)`
+- `pub fn hologram_compiler::cache::CertificateCache::is_empty(&self) -> bool`
+- `pub fn hologram_compiler::cache::CertificateCache::len(&self) -> usize`
+- `pub fn hologram_compiler::cache::CertificateCache::new() -> Self`
+- `pub fn hologram_compiler::compile(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::compile_from_source(&str, uor_foundation::enums::WittLevel, hologram_compiler::compiler::BackendKind) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::compile_from_source_language(&str, hologram_compiler::source::SourceLanguage, uor_foundation::enums::WittLevel, hologram_compiler::compiler::BackendKind) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::compile_with_backward(hologram_graph::graph::Graph, hologram_graph::node::NodeId, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> core::result::Result<(hologram_compiler::compiler::CompilationOutput, alloc::vec::Vec<hologram_graph::node::NodeId>), hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::compiler::BackendKind::clone(&self) -> hologram_compiler::compiler::BackendKind`
+- `pub fn hologram_compiler::compiler::BackendKind::eq(&self, &hologram_compiler::compiler::BackendKind) -> bool`
+- `pub fn hologram_compiler::compiler::BackendKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::compiler::BackendKind::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_compiler::compiler::CompilationStats::clone(&self) -> hologram_compiler::compiler::CompilationStats`
+- `pub fn hologram_compiler::compiler::CompilationStats::default() -> hologram_compiler::compiler::CompilationStats`
+- `pub fn hologram_compiler::compiler::CompilationStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::compiler::Compiler::compile(self) -> core::result::Result<hologram_compiler::compiler::CompilationOutput, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::compiler::Compiler::new(hologram_graph::graph::Graph, hologram_compiler::compiler::BackendKind, uor_foundation::enums::WittLevel) -> Self`
+- `pub fn hologram_compiler::error::CompileError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::error::CompileError::from(hologram_archive::error::ArchiveError) -> Self`
+- `pub fn hologram_compiler::error::CompileError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>`
+- `pub fn hologram_compiler::lower::QuantParams::clone(&self) -> hologram_compiler::lower::QuantParams`
+- `pub fn hologram_compiler::lower::QuantParams::default() -> Self`
+- `pub fn hologram_compiler::lower::QuantParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::lower::ShapeArgs::clone(&self) -> hologram_compiler::lower::ShapeArgs`
+- `pub fn hologram_compiler::lower::ShapeArgs::default() -> hologram_compiler::lower::ShapeArgs`
+- `pub fn hologram_compiler::lower::ShapeArgs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::lower::ShapeArgs::from_graph(&hologram_graph::graph::Graph, hologram_graph::node::NodeId, &hologram_graph::node::Node) -> core::result::Result<Self, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::lower::lower(&hologram_compiler::lower::LoweredNode) -> core::result::Result<hologram_compute::kernel_call::KernelCall, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::pipeline::build_unit<'a>(&hologram_compiler::pipeline::PerNodeUnit<'a>) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::CompileUnit<'a, HOLOGRAM_INLINE_BYTES>>, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::pipeline::run_completeness(uor_foundation::enums::WittLevel) -> core::result::Result<uor_foundation::enforcement::Validated<uor_foundation::enforcement::LiftChainCertificate<FP_MAX>>, uor_foundation::enforcement::GenericImpossibilityWitness>`
+- `pub fn hologram_compiler::source::HologramFrontend::clone(&self) -> hologram_compiler::source::HologramFrontend`
+- `pub fn hologram_compiler::source::HologramFrontend::default() -> hologram_compiler::source::HologramFrontend`
+- `pub fn hologram_compiler::source::HologramFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::HologramFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::HologramFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::HologramFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::HologramFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::PythonFrontend::clone(&self) -> hologram_compiler::source::PythonFrontend`
+- `pub fn hologram_compiler::source::PythonFrontend::default() -> hologram_compiler::source::PythonFrontend`
+- `pub fn hologram_compiler::source::PythonFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::PythonFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::PythonFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::PythonFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::PythonFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::RustFrontend::clone(&self) -> hologram_compiler::source::RustFrontend`
+- `pub fn hologram_compiler::source::RustFrontend::default() -> hologram_compiler::source::RustFrontend`
+- `pub fn hologram_compiler::source::RustFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::RustFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::RustFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::RustFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::RustFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::SourceAttrs::clone(&self) -> hologram_compiler::source::SourceAttrs`
+- `pub fn hologram_compiler::source::SourceAttrs::default() -> hologram_compiler::source::SourceAttrs`
+- `pub fn hologram_compiler::source::SourceAttrs::eq(&self, &hologram_compiler::source::SourceAttrs) -> bool`
+- `pub fn hologram_compiler::source::SourceAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceBinding::clone(&self) -> hologram_compiler::source::SourceBinding`
+- `pub fn hologram_compiler::source::SourceBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceBinding::op(core::option::Option<hologram_compiler::source::SourceSymbol>, hologram_compiler::source::SourceOpCall) -> Self`
+- `pub fn hologram_compiler::source::SourceConst::clone(&self) -> hologram_compiler::source::SourceConst`
+- `pub fn hologram_compiler::source::SourceConst::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceConst::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType, hologram_compiler::source::SourceTensorLiteral) -> Self`
+- `pub fn hologram_compiler::source::SourceDiagnostic::clone(&self) -> hologram_compiler::source::SourceDiagnostic`
+- `pub fn hologram_compiler::source::SourceDiagnostic::eq(&self, &hologram_compiler::source::SourceDiagnostic) -> bool`
+- `pub fn hologram_compiler::source::SourceDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceDiagnostic::global(&'static str) -> Self`
+- `pub fn hologram_compiler::source::SourceDiagnostic::into_compile_error(self) -> hologram_compiler::error::CompileError`
+- `pub fn hologram_compiler::source::SourceDiagnostic::new(usize, usize, &'static str, alloc::string::String) -> Self`
+- `pub fn hologram_compiler::source::SourceDocument::clone(&self) -> hologram_compiler::source::SourceDocument`
+- `pub fn hologram_compiler::source::SourceDocument::default() -> hologram_compiler::source::SourceDocument`
+- `pub fn hologram_compiler::source::SourceDocument::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceDocument::graphs(&self) -> &[hologram_compiler::source::SourceGraph]`
+- `pub fn hologram_compiler::source::SourceDocument::new() -> Self`
+- `pub fn hologram_compiler::source::SourceDocument::push(&mut self, hologram_compiler::source::SourceGraph)`
+- `pub fn hologram_compiler::source::SourceDocument::select(self, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::SourceDocument::select_diagnostic(self, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::SourceDocument::single(hologram_compiler::source::SourceProgram) -> Self`
+- `pub fn hologram_compiler::source::SourceExpr::clone(&self) -> hologram_compiler::source::SourceExpr`
+- `pub fn hologram_compiler::source::SourceExpr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceExternalConst::clone(&self) -> hologram_compiler::source::SourceExternalConst`
+- `pub fn hologram_compiler::source::SourceExternalConst::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceExternalConst::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType, hologram_compiler::source::SourceExternalTensor) -> Self`
+- `pub fn hologram_compiler::source::SourceExternalTensor::clone(&self) -> hologram_compiler::source::SourceExternalTensor`
+- `pub fn hologram_compiler::source::SourceExternalTensor::file(impl core::convert::Into<alloc::string::String>, u64, u64, [u8; 32]) -> Self`
+- `pub fn hologram_compiler::source::SourceExternalTensor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceExternalTensorLocation::clone(&self) -> hologram_compiler::source::SourceExternalTensorLocation`
+- `pub fn hologram_compiler::source::SourceExternalTensorLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::SourceFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::SourceFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::SourceFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::SourceFrontendInfo::clone(&self) -> hologram_compiler::source::SourceFrontendInfo`
+- `pub fn hologram_compiler::source::SourceFrontendInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceFrontendInfo::matches_extension(self, &str) -> bool`
+- `pub fn hologram_compiler::source::SourceFrontendInfo::matches_name(self, &str) -> bool`
+- `pub fn hologram_compiler::source::SourceGraph::anonymous(hologram_compiler::source::SourceProgram) -> Self`
+- `pub fn hologram_compiler::source::SourceGraph::clone(&self) -> hologram_compiler::source::SourceGraph`
+- `pub fn hologram_compiler::source::SourceGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceGraph::named(impl core::convert::Into<alloc::string::String>, hologram_compiler::source::SourceProgram) -> Self`
+- `pub fn hologram_compiler::source::SourceInput::clone(&self) -> hologram_compiler::source::SourceInput`
+- `pub fn hologram_compiler::source::SourceInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceInput::new(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceType) -> Self`
+- `pub fn hologram_compiler::source::SourceItem::clone(&self) -> hologram_compiler::source::SourceItem`
+- `pub fn hologram_compiler::source::SourceItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceLanguage::clone(&self) -> hologram_compiler::source::SourceLanguage`
+- `pub fn hologram_compiler::source::SourceLanguage::eq(&self, &hologram_compiler::source::SourceLanguage) -> bool`
+- `pub fn hologram_compiler::source::SourceLanguage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceOpCall::clone(&self) -> hologram_compiler::source::SourceOpCall`
+- `pub fn hologram_compiler::source::SourceOpCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceOpCall::new(hologram_ops::kind::OpKind, alloc::vec::Vec<hologram_compiler::source::SourceSymbol>, core::option::Option<hologram_compiler::source::SourceType>) -> Self`
+- `pub fn hologram_compiler::source::SourceOutput::clone(&self) -> hologram_compiler::source::SourceOutput`
+- `pub fn hologram_compiler::source::SourceOutput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceOutput::new(hologram_compiler::source::SourceSymbol) -> Self`
+- `pub fn hologram_compiler::source::SourceOutput::with_port_name(hologram_compiler::source::SourceSymbol, hologram_compiler::source::SourceSymbol) -> Self`
+- `pub fn hologram_compiler::source::SourceParseOptions::clone(&self) -> hologram_compiler::source::SourceParseOptions`
+- `pub fn hologram_compiler::source::SourceParseOptions::default() -> hologram_compiler::source::SourceParseOptions`
+- `pub fn hologram_compiler::source::SourceParseOptions::eq(&self, &hologram_compiler::source::SourceParseOptions) -> bool`
+- `pub fn hologram_compiler::source::SourceParseOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceParseOptions::graph(self, impl core::convert::Into<alloc::string::String>) -> Self`
+- `pub fn hologram_compiler::source::SourceParseOptions::graph_name(&self) -> core::option::Option<&str>`
+- `pub fn hologram_compiler::source::SourceParseOptions::new() -> Self`
+- `pub fn hologram_compiler::source::SourceProgram::clone(&self) -> hologram_compiler::source::SourceProgram`
+- `pub fn hologram_compiler::source::SourceProgram::default() -> hologram_compiler::source::SourceProgram`
+- `pub fn hologram_compiler::source::SourceProgram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceProgram::intern(&mut self, &str) -> hologram_compiler::source::SourceSymbol`
+- `pub fn hologram_compiler::source::SourceProgram::items(&self) -> &[hologram_compiler::source::SourceItem]`
+- `pub fn hologram_compiler::source::SourceProgram::new() -> Self`
+- `pub fn hologram_compiler::source::SourceProgram::push(&mut self, hologram_compiler::source::SourceItem)`
+- `pub fn hologram_compiler::source::SourceProgram::symbol_name(&self, hologram_compiler::source::SourceSymbol) -> core::option::Option<&str>`
+- `pub fn hologram_compiler::source::SourceSpan::clone(&self) -> hologram_compiler::source::SourceSpan`
+- `pub fn hologram_compiler::source::SourceSpan::default() -> hologram_compiler::source::SourceSpan`
+- `pub fn hologram_compiler::source::SourceSpan::eq(&self, &hologram_compiler::source::SourceSpan) -> bool`
+- `pub fn hologram_compiler::source::SourceSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceSymbol::clone(&self) -> hologram_compiler::source::SourceSymbol`
+- `pub fn hologram_compiler::source::SourceSymbol::cmp(&self, &hologram_compiler::source::SourceSymbol) -> core::cmp::Ordering`
+- `pub fn hologram_compiler::source::SourceSymbol::eq(&self, &hologram_compiler::source::SourceSymbol) -> bool`
+- `pub fn hologram_compiler::source::SourceSymbol::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceSymbol::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_compiler::source::SourceSymbol::partial_cmp(&self, &hologram_compiler::source::SourceSymbol) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_compiler::source::SourceTensorLiteral::clone(&self) -> hologram_compiler::source::SourceTensorLiteral`
+- `pub fn hologram_compiler::source::SourceTensorLiteral::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::SourceTensorLiteral::new(alloc::vec::Vec<u8>, usize) -> Self`
+- `pub fn hologram_compiler::source::SourceType::clone(&self) -> hologram_compiler::source::SourceType`
+- `pub fn hologram_compiler::source::SourceType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::clone(&self) -> hologram_compiler::source::TypeScriptFrontend`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::default() -> hologram_compiler::source::TypeScriptFrontend`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::parse_document(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::parse_document_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::TypeScriptFrontend::parse_ir_diagnostic(&self, &str) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::lower_ir(&hologram_compiler::source::SourceProgram) -> core::result::Result<hologram_graph::graph::Graph, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::op_attr_names(hologram_ops::kind::OpKind) -> &'static [&'static str]`
+- `pub fn hologram_compiler::source::parse(&str) -> core::result::Result<hologram_graph::graph::Graph, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::parse_document(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::parse_document_diagnostic(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceDocument, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::parse_ir(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::parse_ir_diagnostic(&str, hologram_compiler::source::SourceLanguage) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::parse_ir_diagnostic_with_options(&str, hologram_compiler::source::SourceLanguage, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::source::SourceDiagnostic>`
+- `pub fn hologram_compiler::source::parse_ir_with_options(&str, hologram_compiler::source::SourceLanguage, &hologram_compiler::source::SourceParseOptions) -> core::result::Result<hologram_compiler::source::SourceProgram, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::resolve_source_language(core::option::Option<&str>, core::option::Option<&str>) -> core::result::Result<hologram_compiler::source::SourceLanguage, hologram_compiler::error::CompileError>`
+- `pub fn hologram_compiler::source::source_language_from_extension(&str) -> core::option::Option<hologram_compiler::source::SourceLanguage>`
+- `pub fn hologram_compiler::source::source_language_from_name(&str) -> core::option::Option<hologram_compiler::source::SourceLanguage>`
+- `pub fn hologram_compute::AttentionCall::clone(&self) -> hologram_compute::AttentionCall`
+- `pub fn hologram_compute::AttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::Backend::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>`
+- `pub fn hologram_compute::BinaryCall::clone(&self) -> hologram_compute::BinaryCall`
+- `pub fn hologram_compute::BinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::BroadcastBinaryCall::clone(&self) -> hologram_compute::BroadcastBinaryCall`
+- `pub fn hologram_compute::BroadcastBinaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::CastCall::clone(&self) -> hologram_compute::CastCall`
+- `pub fn hologram_compute::CastCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::Conv2dCall::clone(&self) -> hologram_compute::Conv2dCall`
+- `pub fn hologram_compute::Conv2dCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::DecodeAttentionCall::clone(&self) -> hologram_compute::DecodeAttentionCall`
+- `pub fn hologram_compute::DecodeAttentionCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::DecodeAttentionValidCall::clone(&self) -> hologram_compute::DecodeAttentionValidCall`
+- `pub fn hologram_compute::DecodeAttentionValidCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::DequantActivationCall::clone(&self) -> hologram_compute::DequantActivationCall`
+- `pub fn hologram_compute::DequantActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::DequantizeCall::clone(&self) -> hologram_compute::DequantizeCall`
+- `pub fn hologram_compute::DequantizeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::ExpandCall::clone(&self) -> hologram_compute::ExpandCall`
+- `pub fn hologram_compute::ExpandCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::GatherCall::clone(&self) -> hologram_compute::GatherCall`
+- `pub fn hologram_compute::GatherCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::GemmCall::clone(&self) -> hologram_compute::GemmCall`
+- `pub fn hologram_compute::GemmCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::Im2ColCall::clone(&self) -> hologram_compute::Im2ColCall`
+- `pub fn hologram_compute::Im2ColCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::KernelCall::clone(&self) -> hologram_compute::KernelCall`
+- `pub fn hologram_compute::KernelCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::KernelCall::fused_activation(&self) -> core::option::Option<u8>`
+- `pub fn hologram_compute::KernelCall::is_commutative(&self) -> bool`
+- `pub fn hologram_compute::KernelCall::op_signature(&self) -> hologram_compute::OpSignature`
+- `pub fn hologram_compute::KvCacheWriteCall::clone(&self) -> hologram_compute::KvCacheWriteCall`
+- `pub fn hologram_compute::KvCacheWriteCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::LayoutCall::clone(&self) -> hologram_compute::LayoutCall`
+- `pub fn hologram_compute::LayoutCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::LrnCall::clone(&self) -> hologram_compute::LrnCall`
+- `pub fn hologram_compute::LrnCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::MatMulActivationCall::clone(&self) -> hologram_compute::MatMulActivationCall`
+- `pub fn hologram_compute::MatMulActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::MatMulAddActivationCall::clone(&self) -> hologram_compute::MatMulAddActivationCall`
+- `pub fn hologram_compute::MatMulAddActivationCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::MatMulAddCall::clone(&self) -> hologram_compute::MatMulAddCall`
+- `pub fn hologram_compute::MatMulAddCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::MatMulCall::clone(&self) -> hologram_compute::MatMulCall`
+- `pub fn hologram_compute::MatMulCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::MatMulDequantCall::clone(&self) -> hologram_compute::MatMulDequantCall`
+- `pub fn hologram_compute::MatMulDequantCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::NormCall::clone(&self) -> hologram_compute::NormCall`
+- `pub fn hologram_compute::NormCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::OpSignature::clone(&self) -> hologram_compute::OpSignature`
+- `pub fn hologram_compute::OpSignature::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::OpSignature::params(&self) -> &[u8]`
+- `pub fn hologram_compute::PoolCall::clone(&self) -> hologram_compute::PoolCall`
+- `pub fn hologram_compute::PoolCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::ReduceCall::clone(&self) -> hologram_compute::ReduceCall`
+- `pub fn hologram_compute::ReduceCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::RoPECall::clone(&self) -> hologram_compute::RoPECall`
+- `pub fn hologram_compute::RoPECall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::SoftmaxCall::clone(&self) -> hologram_compute::SoftmaxCall`
+- `pub fn hologram_compute::SoftmaxCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::TransposeCall::clone(&self) -> hologram_compute::TransposeCall`
+- `pub fn hologram_compute::TransposeCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::UnaryCall::clone(&self) -> hologram_compute::UnaryCall`
+- `pub fn hologram_compute::UnaryCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::WhereCall::clone(&self) -> hologram_compute::WhereCall`
+- `pub fn hologram_compute::WhereCall::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::Workspace::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]`
+- `pub fn hologram_compute::Workspace::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>`
+- `pub fn hologram_compute::Workspace::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]`
+- `pub fn hologram_compute::backend::Backend::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>`
+- `pub fn hologram_compute::buffers(&hologram_compute::KernelCall) -> alloc::vec::Vec<hologram_compute::workspace::BufferRef>`
+- `pub fn hologram_compute::call_dtype(&hologram_compute::KernelCall) -> u8`
+- `pub fn hologram_compute::cpu::CpuBackend<W>::clone(&self) -> Self`
+- `pub fn hologram_compute::cpu::CpuBackend<W>::default() -> Self`
+- `pub fn hologram_compute::cpu::CpuBackend<W>::dispatch(&mut self, &hologram_compute::KernelCall, &mut Self::WS) -> core::result::Result<(), hologram_compute::error::BackendError>`
+- `pub fn hologram_compute::cpu::CpuBackend<W>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::cpu::dtype::read_bf16(&[u8], usize) -> f32`
+- `pub fn hologram_compute::cpu::dtype::read_f16(&[u8], usize) -> f32`
+- `pub fn hologram_compute::cpu::dtype::read_f32(&[u8], usize) -> f32`
+- `pub fn hologram_compute::cpu::dtype::read_float(&[u8], usize, u8) -> f32`
+- `pub fn hologram_compute::cpu::dtype::write_bf16(&mut [u8], usize, f32)`
+- `pub fn hologram_compute::cpu::dtype::write_f16(&mut [u8], usize, f32)`
+- `pub fn hologram_compute::cpu::dtype::write_f32(&mut [u8], usize, f32)`
+- `pub fn hologram_compute::cpu::dtype::write_float(&mut [u8], usize, f32, u8)`
+- `pub fn hologram_compute::cpu::lut::is_lut_dtype(u8) -> bool`
+- `pub fn hologram_compute::cpu::lut::unary_lut<W: hologram_compute::workspace::Workspace>(&hologram_compute::UnaryCall, &mut W, u8) -> core::result::Result<(), hologram_compute::error::BackendError>`
+- `pub fn hologram_compute::cpu::simd::exp_f32_det(f32) -> f32`
+- `pub fn hologram_compute::cpu::simd::matmul_e8cb_omajor(&[f32], &[u8], &[i8], &[f32], &mut [f32], usize, usize, usize)`
+- `pub fn hologram_compute::cpu::simd::matmul_f32_blocked(&[f32], &[f32], &mut [f32], usize, usize, usize, &mut alloc::vec::Vec<f32>)`
+- `pub fn hologram_compute::cpu::simd::matmul_f32_packed(&[f32], &[f32], &mut [f32], usize, usize, usize)`
+- `pub fn hologram_compute::cpu::simd::matmul_i4_pc_omajor(&[f32], &[u8], &[f32], &mut [f32], usize, usize, usize)`
+- `pub fn hologram_compute::cpu::simd::matmul_i8_pc_omajor(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)`
+- `pub fn hologram_compute::cpu::simd::matmul_i8_per_channel(&[f32], &[i8], &[f32], &mut [f32], usize, usize, usize)`
+- `pub fn hologram_compute::cpu::simd::matmul_lowp_gemv(&[f32], &[u8], &mut [f32], usize, usize, usize, bool)`
+- `pub fn hologram_compute::cpu::simd::simd_f32_add(&[f32], &[f32], &mut [f32])`
+- `pub fn hologram_compute::cpu::simd::simd_f32_axpy(&mut [f32], f32, &[f32])`
+- `pub fn hologram_compute::cpu::simd::simd_f32_dot(&[f32], &[f32]) -> f32`
+- `pub fn hologram_compute::cpu::simd::simd_f32_exp_inplace(&mut [f32])`
+- `pub fn hologram_compute::cpu::simd::simd_f32_fmadd(&[f32], &[f32], &mut [f32])`
+- `pub fn hologram_compute::cpu::simd::simd_f32_max(&[f32]) -> f32`
+- `pub fn hologram_compute::cpu::simd::simd_f32_min(&[f32]) -> f32`
+- `pub fn hologram_compute::cpu::simd::simd_f32_mul(&[f32], &[f32], &mut [f32])`
+- `pub fn hologram_compute::cpu::simd::simd_f32_sum(&[f32]) -> f32`
+- `pub fn hologram_compute::cpu::simd::widen_lowp_to_f32(&[u8], &mut [f32], bool)`
+- `pub fn hologram_compute::error::BackendError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::kernel_call::buffers(&hologram_compute::KernelCall) -> alloc::vec::Vec<hologram_compute::workspace::BufferRef>`
+- `pub fn hologram_compute::kernel_call::call_dtype(&hologram_compute::KernelCall) -> u8`
+- `pub fn hologram_compute::layout::pack_b_panels(&[f32], usize, usize) -> alloc::vec::Vec<f32>`
+- `pub fn hologram_compute::layout::pack_b_panels_bytes(&[u8], usize, usize, usize) -> alloc::vec::Vec<u8>`
+- `pub fn hologram_compute::layout::packed_len(usize, usize) -> usize`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::clone(&self) -> hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::default() -> hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::prism_axes::HologramF32MatmulSquare<DIM>::matmul(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::clone(&self) -> hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::default() -> hologram_compute::prism_axes::HologramF32VectorActivation<N>`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::relu(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramF32VectorActivation<N>::sigmoid_q(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::body_arena() -> &'static [uor_foundation::enforcement::Term<'static, INLINE_BYTES>]`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::clone(&self) -> hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::default() -> hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::dispatch_kernel(u32, &[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::prism_axes::HologramTensorMatmulF32::matmul(&[u8], &mut [u8]) -> core::result::Result<usize, uor_foundation::enforcement::ShapeViolation>`
+- `pub fn hologram_compute::quant_tier::QuantTier::clone(&self) -> hologram_compute::quant_tier::QuantTier`
+- `pub fn hologram_compute::quant_tier::QuantTier::eq(&self, &hologram_compute::quant_tier::QuantTier) -> bool`
+- `pub fn hologram_compute::quant_tier::QuantTier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::quant_tier::QuantTier::omajor_repack(&self, &[u8], usize, usize) -> core::option::Option<alloc::vec::Vec<u8>>`
+- `pub fn hologram_compute::quant_tier::quant_tier(hologram_types::dtype_id::DTypeId) -> core::option::Option<&'static hologram_compute::quant_tier::QuantTier>`
+- `pub fn hologram_compute::workspace::BufferRef::clone(&self) -> hologram_compute::workspace::BufferRef`
+- `pub fn hologram_compute::workspace::BufferRef::eq(&self, &hologram_compute::workspace::BufferRef) -> bool`
+- `pub fn hologram_compute::workspace::BufferRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_compute::workspace::BufferRef::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_compute::workspace::Workspace::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]`
+- `pub fn hologram_compute::workspace::Workspace::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>`
+- `pub fn hologram_compute::workspace::Workspace::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]`
+- `pub fn hologram_exec::WarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>`
+- `pub fn hologram_exec::WarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::buffer::BufferArena::allocated_bytes(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::bind_fresh(&mut self, usize, usize) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::bind_resident(&mut self, usize, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::bind_view(&mut self, usize, usize, usize, usize)`
+- `pub fn hologram_exec::buffer::BufferArena::bindable_input(&self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::capacity(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::default() -> hologram_exec::buffer::BufferArena`
+- `pub fn hologram_exec::buffer::BufferArena::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::buffer::BufferArena::lazy_resident_bytes(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::lease(&mut self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::leased_bytes(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::leased_len(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::new() -> Self`
+- `pub fn hologram_exec::buffer::BufferArena::page_and_bind<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, usize, &hologram_archive::address::ContentLabel, &P) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::page_and_bind_group<P: hologram_archive::weight::WeightProvider + ?core::marker::Sized>(&mut self, &[(usize, hologram_archive::address::ContentLabel)], &P) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::pin_bytes(&mut self, hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::buffer::BufferArena::pin_lazy(&mut self, hologram_archive::address::ContentLabel, hologram_archive::weight::WeightFingerprint, usize)`
+- `pub fn hologram_exec::buffer::BufferArena::pinned_bytes(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::read(&self, hologram_compute::workspace::BufferRef) -> &[u8]`
+- `pub fn hologram_exec::buffer::BufferArena::read_slot(&self, usize) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::buffer::BufferArena::rebind_reset(&mut self, usize)`
+- `pub fn hologram_exec::buffer::BufferArena::release(&mut self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::resident(&self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::buffer::BufferArena::resident_len(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::buffer::BufferArena::retain(&mut self, usize, hologram_archive::address::ContentLabel)`
+- `pub fn hologram_exec::buffer::BufferArena::set_lazy_budget(&mut self, usize)`
+- `pub fn hologram_exec::buffer::BufferArena::slot_count(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::split_borrow<'a>(&'a mut self, &[hologram_compute::workspace::BufferRef], hologram_compute::workspace::BufferRef) -> core::option::Option<(hologram_compute::workspace::SplitReads<'a>, &'a mut [u8])>`
+- `pub fn hologram_exec::buffer::BufferArena::store_unbound(&mut self, hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::buffer::BufferArena::transient_bytes(&self) -> usize`
+- `pub fn hologram_exec::buffer::BufferArena::with_capacity(usize, alloc::vec::Vec<hologram_exec::buffer::SlotSpan>) -> Self`
+- `pub fn hologram_exec::buffer::BufferArena::write(&mut self, hologram_compute::workspace::BufferRef) -> &mut [u8]`
+- `pub fn hologram_exec::buffer::BufferArena::write_slot(&mut self, usize) -> core::option::Option<&mut [u8]>`
+- `pub fn hologram_exec::buffer::SlotSpan::clone(&self) -> hologram_exec::buffer::SlotSpan`
+- `pub fn hologram_exec::buffer::SlotSpan::default() -> hologram_exec::buffer::SlotSpan`
+- `pub fn hologram_exec::buffer::SlotSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::error::ExecError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::error::ExecError::from(hologram_archive::error::ArchiveError) -> Self`
+- `pub fn hologram_exec::error::ExecError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>`
+- `pub fn hologram_exec::fold_archive<B: hologram_exec::session::SessionBackend>(&[u8], B) -> core::result::Result<alloc::vec::Vec<u8>, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::refinement::CompiledRefinement<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::CompiledRefinement<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::CompiledRefinement<B>::into_session(self) -> hologram_exec::session::InferenceSession<B>`
+- `pub fn hologram_exec::refinement::CompiledRefinement<B>::new(hologram_exec::session::InferenceSession<B>, hologram_exec::refinement::RefinementPlan) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::CompiledRefinement<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::refinement::ConvergenceKind::clone(&self) -> hologram_exec::refinement::ConvergenceKind`
+- `pub fn hologram_exec::refinement::ConvergenceKind::eq(&self, &hologram_exec::refinement::ConvergenceKind) -> bool`
+- `pub fn hologram_exec::refinement::ConvergenceKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementError::from(hologram_exec::error::ExecError) -> Self`
+- `pub fn hologram_exec::refinement::RefinementError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>`
+- `pub fn hologram_exec::refinement::RefinementPlan::bind<'a, B: hologram_exec::session::SessionBackend>(&'a self, &'a mut hologram_exec::session::InferenceSession<B>) -> core::result::Result<hologram_exec::refinement::RefinementRunner<'a, B>, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementPlan::builder(u8) -> hologram_exec::refinement::RefinementPlanBuilder`
+- `pub fn hologram_exec::refinement::RefinementPlan::clone(&self) -> hologram_exec::refinement::RefinementPlan`
+- `pub fn hologram_exec::refinement::RefinementPlan::execute<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementPlan::execute_addressed<B: hologram_exec::session::SessionBackend>(&self, &mut hologram_exec::session::InferenceSession<B>, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementPlan::state_contract(&self) -> core::option::Option<&hologram_exec::refinement::RefinementStateContract>`
+- `pub fn hologram_exec::refinement::RefinementPlan::validators(&self) -> &[hologram_exec::refinement::ValidatorKind]`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::build(self) -> core::result::Result<hologram_exec::refinement::RefinementPlan, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::clone(&self) -> hologram_exec::refinement::RefinementPlanBuilder`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::new(u8) -> Self`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::state_contract(self, hologram_exec::refinement::RefinementStateContract) -> Self`
+- `pub fn hologram_exec::refinement::RefinementPlanBuilder::validator(self, hologram_exec::refinement::ValidatorKind) -> Self`
+- `pub fn hologram_exec::refinement::RefinementReport::clone(&self) -> hologram_exec::refinement::RefinementReport`
+- `pub fn hologram_exec::refinement::RefinementReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementRunner<'_, B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<hologram_exec::refinement::RefinementReport, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementRunner<'_, B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::refinement::RefinementRunner<'_, B>::session(&self) -> &hologram_exec::session::InferenceSession<B>`
+- `pub fn hologram_exec::refinement::RefinementStateContract::clone(&self) -> hologram_exec::refinement::RefinementStateContract`
+- `pub fn hologram_exec::refinement::RefinementStateContract::eq(&self, &hologram_exec::refinement::RefinementStateContract) -> bool`
+- `pub fn hologram_exec::refinement::RefinementStateContract::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementStateContract::from_session<B: hologram_exec::session::SessionBackend>(&hologram_exec::session::InferenceSession<B>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementStateContract::new(alloc::vec::Vec<hologram_exec::refinement::RefinementStatePort>) -> core::result::Result<Self, hologram_exec::refinement::RefinementError>`
+- `pub fn hologram_exec::refinement::RefinementStateContract::port_count(&self) -> usize`
+- `pub fn hologram_exec::refinement::RefinementStateContract::ports(&self) -> &[hologram_exec::refinement::RefinementStatePort]`
+- `pub fn hologram_exec::refinement::RefinementStatePort::clone(&self) -> hologram_exec::refinement::RefinementStatePort`
+- `pub fn hologram_exec::refinement::RefinementStatePort::eq(&self, &hologram_exec::refinement::RefinementStatePort) -> bool`
+- `pub fn hologram_exec::refinement::RefinementStatePort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RefinementStatus::clone(&self) -> hologram_exec::refinement::RefinementStatus`
+- `pub fn hologram_exec::refinement::RefinementStatus::eq(&self, &hologram_exec::refinement::RefinementStatus) -> bool`
+- `pub fn hologram_exec::refinement::RefinementStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::RepairPolicy::clone(&self) -> hologram_exec::refinement::RepairPolicy`
+- `pub fn hologram_exec::refinement::RepairPolicy::default() -> hologram_exec::refinement::RepairPolicy`
+- `pub fn hologram_exec::refinement::RepairPolicy::eq(&self, &hologram_exec::refinement::RepairPolicy) -> bool`
+- `pub fn hologram_exec::refinement::RepairPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::ValidatorCost::clone(&self) -> hologram_exec::refinement::ValidatorCost`
+- `pub fn hologram_exec::refinement::ValidatorCost::eq(&self, &hologram_exec::refinement::ValidatorCost) -> bool`
+- `pub fn hologram_exec::refinement::ValidatorCost::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::ValidatorKind::clone(&self) -> hologram_exec::refinement::ValidatorKind`
+- `pub fn hologram_exec::refinement::ValidatorKind::eq(&self, &hologram_exec::refinement::ValidatorKind) -> bool`
+- `pub fn hologram_exec::refinement::ValidatorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::refinement::ValidatorOutcome::clone(&self) -> hologram_exec::refinement::ValidatorOutcome`
+- `pub fn hologram_exec::refinement::ValidatorOutcome::eq(&self, &hologram_exec::refinement::ValidatorOutcome) -> bool`
+- `pub fn hologram_exec::refinement::ValidatorOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_exec::session::InferenceSession<B>::add_activation_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::archive_fingerprint(&self) -> [u8; 32]`
+- `pub fn hologram_exec::session::InferenceSession<B>::broadcast_binary_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::content_store_len(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::dequant_activation_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::dequant_epilogue_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::dequant_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::execute(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::execute_addressed(&mut self, &[hologram_archive::address::ContentLabel]) -> core::result::Result<alloc::vec::Vec<hologram_archive::address::ContentLabel>, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::execute_attested(&mut self, &[hologram_exec::buffer::InputBuffer<'_>]) -> core::result::Result<hologram_exec::prism_route::AttestedExecution, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::extension(&self, &str) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::session::InferenceSession<B>::extension_keys(&self) -> impl core::iter::traits::iterator::Iterator<Item = &str>`
+- `pub fn hologram_exec::session::InferenceSession<B>::fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::input_byte_len(&self, usize) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::input_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::input_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>`
+- `pub fn hologram_exec::session::InferenceSession<B>::input_ports(&self) -> &[hologram_archive::writer::PortDescriptor]`
+- `pub fn hologram_exec::session::InferenceSession<B>::intern_input(&mut self, &[u8]) -> hologram_archive::address::ContentLabel`
+- `pub fn hologram_exec::session::InferenceSession<B>::kernel_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::last_dispatched(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::last_skipped(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::leased_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::load(&[u8], B) -> core::result::Result<Self, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::load_paged(&[u8], B, alloc::sync::Arc<(dyn hologram_archive::weight::WeightProvider + core::marker::Send + core::marker::Sync)>, usize) -> core::result::Result<Self, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::materialize_cone(&mut self) -> core::result::Result<alloc::vec::Vec<hologram_archive::warm_codec::WarmEntry>, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::output_byte_len(&self, usize) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::output_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::output_port_by_name(&self, &str) -> core::option::Option<(usize, &hologram_archive::writer::PortDescriptor)>`
+- `pub fn hologram_exec::session::InferenceSession<B>::output_ports(&self) -> &[hologram_archive::writer::PortDescriptor]`
+- `pub fn hologram_exec::session::InferenceSession<B>::paged_weight_bytes(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::persist_cone(&mut self, &mut dyn hologram_exec::warm::WarmStore) -> core::result::Result<usize, hologram_exec::error::ExecError>`
+- `pub fn hologram_exec::session::InferenceSession<B>::pool_allocated_bytes(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::release_label(&mut self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::session::InferenceSession<B>::resident_bytes(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::resident_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::residual_fused_count(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::resolve(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<&[u8]>`
+- `pub fn hologram_exec::session::InferenceSession<B>::retain_label(&mut self, &hologram_archive::address::ContentLabel) -> bool`
+- `pub fn hologram_exec::session::InferenceSession<B>::schedule_levels(&self) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::warm_from_store(&mut self, &dyn hologram_exec::warm::WarmStore) -> usize`
+- `pub fn hologram_exec::session::InferenceSession<B>::warm_lattice(&self) -> alloc::vec::Vec<(u32, hologram_archive::address::ContentLabel)>`
+- `pub fn hologram_exec::session::InferenceSession<B>::workspace(&self) -> &hologram_exec::buffer::BufferArena`
+- `pub fn hologram_exec::session::InferenceSession<B>::workspace_mut(&mut self) -> &mut hologram_exec::buffer::BufferArena`
+- `pub fn hologram_exec::warm::FileWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>`
+- `pub fn hologram_exec::warm::FileWarmStore::open(impl core::convert::Into<std::path::PathBuf>) -> core::io::error::Result<Self>`
+- `pub fn hologram_exec::warm::FileWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::warm::MemWarmStore::default() -> hologram_exec::warm::MemWarmStore`
+- `pub fn hologram_exec::warm::MemWarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>`
+- `pub fn hologram_exec::warm::MemWarmStore::is_empty(&self) -> bool`
+- `pub fn hologram_exec::warm::MemWarmStore::len(&self) -> usize`
+- `pub fn hologram_exec::warm::MemWarmStore::new() -> Self`
+- `pub fn hologram_exec::warm::MemWarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::warm::WarmStore::get(&self, &hologram_archive::address::ContentLabel) -> core::option::Option<alloc::vec::Vec<u8>>`
+- `pub fn hologram_exec::warm::WarmStore::put(&mut self, &hologram_archive::address::ContentLabel, &[u8])`
+- `pub fn hologram_exec::warm::fold_archive<B: hologram_exec::session::SessionBackend>(&[u8], B) -> core::result::Result<alloc::vec::Vec<u8>, hologram_exec::error::ExecError>`
+- `pub fn hologram_ffi::HologramConstDesc::clone(&self) -> hologram_ffi::HologramConstDesc`
+- `pub fn hologram_ffi::HologramExternalTensorDesc::clone(&self) -> hologram_ffi::HologramExternalTensorDesc`
+- `pub fn hologram_ffi::HologramShape::clone(&self) -> hologram_ffi::HologramShape`
+- `pub fn hologram_ffi::HologramSourceOp::clone(&self) -> hologram_ffi::HologramSourceOp`
+- `pub fn hologram_ffi::HologramString::clone(&self) -> hologram_ffi::HologramString`
+- `pub fn hologram_ffi::HologramTensorDesc::clone(&self) -> hologram_ffi::HologramTensorDesc`
+- `pub fn hologram_ffi::sdk::SdkDType::clone(&self) -> hologram_ffi::sdk::SdkDType`
+- `pub fn hologram_ffi::sdk::SdkDType::eq(&self, &hologram_ffi::sdk::SdkDType) -> bool`
+- `pub fn hologram_ffi::sdk::SdkDType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ffi::sdk::SdkOp::clone(&self) -> hologram_ffi::sdk::SdkOp`
+- `pub fn hologram_ffi::sdk::SdkOp::eq(&self, &hologram_ffi::sdk::SdkOp) -> bool`
+- `pub fn hologram_ffi::sdk::SdkOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ffi::sdk::generate_python() -> alloc::string::String`
+- `pub fn hologram_ffi::sdk::generate_typescript() -> alloc::string::String`
+- `pub fn hologram_ffi::sdk::ops() -> impl core::iter::traits::iterator::Iterator<Item = hologram_ffi::sdk::SdkOp>`
+- `pub fn hologram_graph::append_backward(&mut hologram_graph::graph::Graph, hologram_graph::node::NodeId) -> core::result::Result<alloc::vec::Vec<hologram_graph::node::NodeId>, hologram_graph::backward::BackwardError>`
+- `pub fn hologram_graph::backward::BackwardError::clone(&self) -> hologram_graph::backward::BackwardError`
+- `pub fn hologram_graph::backward::BackwardError::eq(&self, &hologram_graph::backward::BackwardError) -> bool`
+- `pub fn hologram_graph::backward::BackwardError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::backward::append_backward(&mut hologram_graph::graph::Graph, hologram_graph::node::NodeId) -> core::result::Result<alloc::vec::Vec<hologram_graph::node::NodeId>, hologram_graph::backward::BackwardError>`
+- `pub fn hologram_graph::constant::ConstantEntry::clone(&self) -> hologram_graph::constant::ConstantEntry`
+- `pub fn hologram_graph::constant::ConstantEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::constant::ConstantStore::clone(&self) -> hologram_graph::constant::ConstantStore`
+- `pub fn hologram_graph::constant::ConstantStore::default() -> hologram_graph::constant::ConstantStore`
+- `pub fn hologram_graph::constant::ConstantStore::external(&self, hologram_graph::node::ConstantId) -> core::option::Option<[u8; 32]>`
+- `pub fn hologram_graph::constant::ConstantStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::constant::ConstantStore::get(&self, hologram_graph::node::ConstantId) -> core::option::Option<&hologram_graph::constant::ConstantEntry>`
+- `pub fn hologram_graph::constant::ConstantStore::insert(&mut self, hologram_graph::constant::ConstantEntry) -> hologram_graph::node::ConstantId`
+- `pub fn hologram_graph::constant::ConstantStore::insert_external(&mut self, hologram_types::dtype_id::DTypeId, hologram_graph::registry::ShapeId, [u8; 32]) -> hologram_graph::node::ConstantId`
+- `pub fn hologram_graph::constant::ConstantStore::is_empty(&self) -> bool`
+- `pub fn hologram_graph::constant::ConstantStore::len(&self) -> usize`
+- `pub fn hologram_graph::constant::ConstantStore::new() -> Self`
+- `pub fn hologram_graph::graph::Graph::add_extension(&mut self, impl core::convert::Into<alloc::string::String>, alloc::vec::Vec<u8>)`
+- `pub fn hologram_graph::graph::Graph::add_input(&mut self, hologram_graph::node::NodeId)`
+- `pub fn hologram_graph::graph::Graph::add_named_input(&mut self, hologram_graph::node::NodeId, impl core::convert::Into<alloc::string::String>)`
+- `pub fn hologram_graph::graph::Graph::add_named_output(&mut self, hologram_graph::node::NodeId, impl core::convert::Into<alloc::string::String>)`
+- `pub fn hologram_graph::graph::Graph::add_node(&mut self, hologram_graph::node::Node) -> hologram_graph::node::NodeId`
+- `pub fn hologram_graph::graph::Graph::add_output(&mut self, hologram_graph::node::NodeId)`
+- `pub fn hologram_graph::graph::Graph::attention_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::AttentionAttrs>`
+- `pub fn hologram_graph::graph::Graph::compute_schedule(&mut self)`
+- `pub fn hologram_graph::graph::Graph::constants(&self) -> &hologram_graph::constant::ConstantStore`
+- `pub fn hologram_graph::graph::Graph::constants_mut(&mut self) -> &mut hologram_graph::constant::ConstantStore`
+- `pub fn hologram_graph::graph::Graph::conv_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::ConvAttrs>`
+- `pub fn hologram_graph::graph::Graph::default() -> hologram_graph::graph::Graph`
+- `pub fn hologram_graph::graph::Graph::desugar_composites(&mut self) -> usize`
+- `pub fn hologram_graph::graph::Graph::elide_invariants(&mut self) -> usize`
+- `pub fn hologram_graph::graph::Graph::extensions(&self) -> &[(alloc::string::String, alloc::vec::Vec<u8>)]`
+- `pub fn hologram_graph::graph::Graph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::graph::Graph::gather_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::GatherAttrs>`
+- `pub fn hologram_graph::graph::Graph::gemm_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::GemmAttrs>`
+- `pub fn hologram_graph::graph::Graph::get(&self, hologram_graph::node::NodeId) -> core::option::Option<&hologram_graph::node::Node>`
+- `pub fn hologram_graph::graph::Graph::get_mut(&mut self, hologram_graph::node::NodeId) -> core::option::Option<&mut hologram_graph::node::Node>`
+- `pub fn hologram_graph::graph::Graph::input_name(&self, usize) -> &str`
+- `pub fn hologram_graph::graph::Graph::inputs(&self) -> &[hologram_graph::node::NodeId]`
+- `pub fn hologram_graph::graph::Graph::lrn_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::LrnAttrs>`
+- `pub fn hologram_graph::graph::Graph::new() -> Self`
+- `pub fn hologram_graph::graph::Graph::node_count(&self) -> usize`
+- `pub fn hologram_graph::graph::Graph::nodes(&self) -> &[hologram_graph::node::Node]`
+- `pub fn hologram_graph::graph::Graph::norm_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::NormAttrs>`
+- `pub fn hologram_graph::graph::Graph::output_name(&self, usize) -> &str`
+- `pub fn hologram_graph::graph::Graph::outputs(&self) -> &[hologram_graph::node::NodeId]`
+- `pub fn hologram_graph::graph::Graph::quant_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::QuantAttrs>`
+- `pub fn hologram_graph::graph::Graph::reduce_attrs(&self, hologram_graph::node::NodeId) -> core::option::Option<hologram_graph::node::ReduceAttrs>`
+- `pub fn hologram_graph::graph::Graph::schedule(&self) -> core::option::Option<&hologram_graph::schedule::Schedule>`
+- `pub fn hologram_graph::graph::Graph::set_attention_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::AttentionAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_conv_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::ConvAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_gather_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GatherAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_gemm_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::GemmAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_lrn_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::LrnAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_norm_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::NormAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_quant_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::QuantAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_reduce_attrs(&mut self, hologram_graph::node::NodeId, hologram_graph::node::ReduceAttrs)`
+- `pub fn hologram_graph::graph::Graph::set_schedule(&mut self, hologram_graph::schedule::Schedule)`
+- `pub fn hologram_graph::graph::Graph::shape_registry(&self) -> &hologram_graph::registry::ShapeRegistry`
+- `pub fn hologram_graph::graph::Graph::shape_registry_mut(&mut self) -> &mut hologram_graph::registry::ShapeRegistry`
+- `pub fn hologram_graph::node::AttentionAttrs::clone(&self) -> hologram_graph::node::AttentionAttrs`
+- `pub fn hologram_graph::node::AttentionAttrs::default() -> hologram_graph::node::AttentionAttrs`
+- `pub fn hologram_graph::node::AttentionAttrs::eq(&self, &hologram_graph::node::AttentionAttrs) -> bool`
+- `pub fn hologram_graph::node::AttentionAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::AttentionAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::ConstantId::clone(&self) -> hologram_graph::node::ConstantId`
+- `pub fn hologram_graph::node::ConstantId::cmp(&self, &hologram_graph::node::ConstantId) -> core::cmp::Ordering`
+- `pub fn hologram_graph::node::ConstantId::eq(&self, &hologram_graph::node::ConstantId) -> bool`
+- `pub fn hologram_graph::node::ConstantId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::ConstantId::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::ConstantId::partial_cmp(&self, &hologram_graph::node::ConstantId) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_graph::node::ConvAttrs::clone(&self) -> hologram_graph::node::ConvAttrs`
+- `pub fn hologram_graph::node::ConvAttrs::default() -> Self`
+- `pub fn hologram_graph::node::ConvAttrs::eq(&self, &hologram_graph::node::ConvAttrs) -> bool`
+- `pub fn hologram_graph::node::ConvAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::ConvAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::GatherAttrs::clone(&self) -> hologram_graph::node::GatherAttrs`
+- `pub fn hologram_graph::node::GatherAttrs::default() -> hologram_graph::node::GatherAttrs`
+- `pub fn hologram_graph::node::GatherAttrs::eq(&self, &hologram_graph::node::GatherAttrs) -> bool`
+- `pub fn hologram_graph::node::GatherAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::GatherAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::GemmAttrs::clone(&self) -> hologram_graph::node::GemmAttrs`
+- `pub fn hologram_graph::node::GemmAttrs::default() -> Self`
+- `pub fn hologram_graph::node::GemmAttrs::eq(&self, &hologram_graph::node::GemmAttrs) -> bool`
+- `pub fn hologram_graph::node::GemmAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::GemmAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::GraphOp::clone(&self) -> hologram_graph::node::GraphOp`
+- `pub fn hologram_graph::node::GraphOp::eq(&self, &hologram_graph::node::GraphOp) -> bool`
+- `pub fn hologram_graph::node::GraphOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::GraphOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::InputSource::clone(&self) -> hologram_graph::node::InputSource`
+- `pub fn hologram_graph::node::InputSource::eq(&self, &hologram_graph::node::InputSource) -> bool`
+- `pub fn hologram_graph::node::InputSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::InputSource::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::LrnAttrs::clone(&self) -> hologram_graph::node::LrnAttrs`
+- `pub fn hologram_graph::node::LrnAttrs::default() -> Self`
+- `pub fn hologram_graph::node::LrnAttrs::eq(&self, &hologram_graph::node::LrnAttrs) -> bool`
+- `pub fn hologram_graph::node::LrnAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::LrnAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::Node::clone(&self) -> hologram_graph::node::Node`
+- `pub fn hologram_graph::node::Node::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::NodeId::clone(&self) -> hologram_graph::node::NodeId`
+- `pub fn hologram_graph::node::NodeId::cmp(&self, &hologram_graph::node::NodeId) -> core::cmp::Ordering`
+- `pub fn hologram_graph::node::NodeId::eq(&self, &hologram_graph::node::NodeId) -> bool`
+- `pub fn hologram_graph::node::NodeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::NodeId::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::NodeId::partial_cmp(&self, &hologram_graph::node::NodeId) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_graph::node::NormAttrs::clone(&self) -> hologram_graph::node::NormAttrs`
+- `pub fn hologram_graph::node::NormAttrs::default() -> Self`
+- `pub fn hologram_graph::node::NormAttrs::eq(&self, &hologram_graph::node::NormAttrs) -> bool`
+- `pub fn hologram_graph::node::NormAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::NormAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::QuantAttrs::clone(&self) -> hologram_graph::node::QuantAttrs`
+- `pub fn hologram_graph::node::QuantAttrs::default() -> Self`
+- `pub fn hologram_graph::node::QuantAttrs::eq(&self, &hologram_graph::node::QuantAttrs) -> bool`
+- `pub fn hologram_graph::node::QuantAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::QuantAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::node::ReduceAttrs::clone(&self) -> hologram_graph::node::ReduceAttrs`
+- `pub fn hologram_graph::node::ReduceAttrs::default() -> hologram_graph::node::ReduceAttrs`
+- `pub fn hologram_graph::node::ReduceAttrs::eq(&self, &hologram_graph::node::ReduceAttrs) -> bool`
+- `pub fn hologram_graph::node::ReduceAttrs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::node::ReduceAttrs::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::registry::ShapeDescriptor::clone(&self) -> hologram_graph::registry::ShapeDescriptor`
+- `pub fn hologram_graph::registry::ShapeDescriptor::dim(&self, usize) -> core::option::Option<u64>`
+- `pub fn hologram_graph::registry::ShapeDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::registry::ShapeDescriptor::rank1(u64) -> Self`
+- `pub fn hologram_graph::registry::ShapeDescriptor::rank2(u64, u64) -> Self`
+- `pub fn hologram_graph::registry::ShapeDescriptor::rank3(u64, u64, u64) -> Self`
+- `pub fn hologram_graph::registry::ShapeDescriptor::rank4(u64, u64, u64, u64) -> Self`
+- `pub fn hologram_graph::registry::ShapeDescriptor::total_elements(&self) -> u64`
+- `pub fn hologram_graph::registry::ShapeId::clone(&self) -> hologram_graph::registry::ShapeId`
+- `pub fn hologram_graph::registry::ShapeId::cmp(&self, &hologram_graph::registry::ShapeId) -> core::cmp::Ordering`
+- `pub fn hologram_graph::registry::ShapeId::eq(&self, &hologram_graph::registry::ShapeId) -> bool`
+- `pub fn hologram_graph::registry::ShapeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::registry::ShapeId::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_graph::registry::ShapeId::partial_cmp(&self, &hologram_graph::registry::ShapeId) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_graph::registry::ShapeRegistry::clone(&self) -> hologram_graph::registry::ShapeRegistry`
+- `pub fn hologram_graph::registry::ShapeRegistry::default() -> hologram_graph::registry::ShapeRegistry`
+- `pub fn hologram_graph::registry::ShapeRegistry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::registry::ShapeRegistry::get(&self, hologram_graph::registry::ShapeId) -> core::option::Option<&hologram_graph::registry::ShapeDescriptor>`
+- `pub fn hologram_graph::registry::ShapeRegistry::intern(&mut self, hologram_graph::registry::ShapeDescriptor) -> hologram_graph::registry::ShapeId`
+- `pub fn hologram_graph::registry::ShapeRegistry::is_empty(&self) -> bool`
+- `pub fn hologram_graph::registry::ShapeRegistry::len(&self) -> usize`
+- `pub fn hologram_graph::registry::ShapeRegistry::new() -> Self`
+- `pub fn hologram_graph::schedule::Schedule::clone(&self) -> hologram_graph::schedule::Schedule`
+- `pub fn hologram_graph::schedule::Schedule::default() -> hologram_graph::schedule::Schedule`
+- `pub fn hologram_graph::schedule::Schedule::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_graph::schedule::Schedule::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = &smallvec::SmallVec<[hologram_graph::node::NodeId; 16]>>`
+- `pub fn hologram_graph::schedule::Schedule::level_count(&self) -> usize`
+- `pub fn hologram_graph::schedule::Schedule::new() -> Self`
+- `pub fn hologram_ops::ReferenceEvaluator::evaluate<const CAP: usize>(&hologram_ops::emit::HoloArena<CAP>, u32, &Self::Bindings) -> core::result::Result<Self::Value, hologram_ops::reference::EvalError>`
+- `pub fn hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>::default() -> Self`
+- `pub fn hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>::default() -> Self`
+- `pub fn hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::activation_reduce::emit_log_softmax<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::activation_reduce::emit_softmax<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::activations::Gelu::clone(&self) -> hologram_ops::activations::Gelu`
+- `pub fn hologram_ops::activations::Gelu::default() -> hologram_ops::activations::Gelu`
+- `pub fn hologram_ops::activations::Gelu::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::activations::Gelu::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::activations::Gelu::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::activations::Gelu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::activations::Relu::clone(&self) -> hologram_ops::activations::Relu`
+- `pub fn hologram_ops::activations::Relu::default() -> hologram_ops::activations::Relu`
+- `pub fn hologram_ops::activations::Relu::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::activations::Relu::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::activations::Relu::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::activations::Relu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::activations::Sigmoid::clone(&self) -> hologram_ops::activations::Sigmoid`
+- `pub fn hologram_ops::activations::Sigmoid::default() -> hologram_ops::activations::Sigmoid`
+- `pub fn hologram_ops::activations::Sigmoid::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::activations::Sigmoid::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::activations::Sigmoid::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::activations::Sigmoid::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::activations::Silu::clone(&self) -> hologram_ops::activations::Silu`
+- `pub fn hologram_ops::activations::Silu::default() -> hologram_ops::activations::Silu`
+- `pub fn hologram_ops::activations::Silu::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::activations::Silu::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::activations::Silu::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::activations::Silu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::activations::Tanh::clone(&self) -> hologram_ops::activations::Tanh`
+- `pub fn hologram_ops::activations::Tanh::default() -> hologram_ops::activations::Tanh`
+- `pub fn hologram_ops::activations::Tanh::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::activations::Tanh::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::activations::Tanh::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::activations::Tanh::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>::default() -> Self`
+- `pub fn hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>::default() -> Self`
+- `pub fn hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::conv::emit_conv2d<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::conv::emit_conv_transpose_2d<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::AddOp::clone(&self) -> hologram_ops::direct::AddOp`
+- `pub fn hologram_ops::direct::AddOp::default() -> hologram_ops::direct::AddOp`
+- `pub fn hologram_ops::direct::AddOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::AddOp::eq(&self, &hologram_ops::direct::AddOp) -> bool`
+- `pub fn hologram_ops::direct::AddOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::AddOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::AndOp::clone(&self) -> hologram_ops::direct::AndOp`
+- `pub fn hologram_ops::direct::AndOp::default() -> hologram_ops::direct::AndOp`
+- `pub fn hologram_ops::direct::AndOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::AndOp::eq(&self, &hologram_ops::direct::AndOp) -> bool`
+- `pub fn hologram_ops::direct::AndOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::AndOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::BnotOp::clone(&self) -> hologram_ops::direct::BnotOp`
+- `pub fn hologram_ops::direct::BnotOp::default() -> hologram_ops::direct::BnotOp`
+- `pub fn hologram_ops::direct::BnotOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::BnotOp::eq(&self, &hologram_ops::direct::BnotOp) -> bool`
+- `pub fn hologram_ops::direct::BnotOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::BnotOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::MulOp::clone(&self) -> hologram_ops::direct::MulOp`
+- `pub fn hologram_ops::direct::MulOp::default() -> hologram_ops::direct::MulOp`
+- `pub fn hologram_ops::direct::MulOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::MulOp::eq(&self, &hologram_ops::direct::MulOp) -> bool`
+- `pub fn hologram_ops::direct::MulOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::MulOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::NegOp::clone(&self) -> hologram_ops::direct::NegOp`
+- `pub fn hologram_ops::direct::NegOp::default() -> hologram_ops::direct::NegOp`
+- `pub fn hologram_ops::direct::NegOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::NegOp::eq(&self, &hologram_ops::direct::NegOp) -> bool`
+- `pub fn hologram_ops::direct::NegOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::NegOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::OrOp::clone(&self) -> hologram_ops::direct::OrOp`
+- `pub fn hologram_ops::direct::OrOp::default() -> hologram_ops::direct::OrOp`
+- `pub fn hologram_ops::direct::OrOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::OrOp::eq(&self, &hologram_ops::direct::OrOp) -> bool`
+- `pub fn hologram_ops::direct::OrOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::OrOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::PredOp::clone(&self) -> hologram_ops::direct::PredOp`
+- `pub fn hologram_ops::direct::PredOp::default() -> hologram_ops::direct::PredOp`
+- `pub fn hologram_ops::direct::PredOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::PredOp::eq(&self, &hologram_ops::direct::PredOp) -> bool`
+- `pub fn hologram_ops::direct::PredOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::PredOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::SubOp::clone(&self) -> hologram_ops::direct::SubOp`
+- `pub fn hologram_ops::direct::SubOp::default() -> hologram_ops::direct::SubOp`
+- `pub fn hologram_ops::direct::SubOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::SubOp::eq(&self, &hologram_ops::direct::SubOp) -> bool`
+- `pub fn hologram_ops::direct::SubOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::SubOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::SuccOp::clone(&self) -> hologram_ops::direct::SuccOp`
+- `pub fn hologram_ops::direct::SuccOp::default() -> hologram_ops::direct::SuccOp`
+- `pub fn hologram_ops::direct::SuccOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::SuccOp::eq(&self, &hologram_ops::direct::SuccOp) -> bool`
+- `pub fn hologram_ops::direct::SuccOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::SuccOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::direct::XorOp::clone(&self) -> hologram_ops::direct::XorOp`
+- `pub fn hologram_ops::direct::XorOp::default() -> hologram_ops::direct::XorOp`
+- `pub fn hologram_ops::direct::XorOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::direct::XorOp::eq(&self, &hologram_ops::direct::XorOp) -> bool`
+- `pub fn hologram_ops::direct::XorOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::direct::XorOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::dispatch::emit_op_term<const CAP: usize>(hologram_ops::kind::OpKind, &mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::DivOp::clone(&self) -> hologram_ops::elementwise_binary::DivOp`
+- `pub fn hologram_ops::elementwise_binary::DivOp::default() -> hologram_ops::elementwise_binary::DivOp`
+- `pub fn hologram_ops::elementwise_binary::DivOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::DivOp::eq(&self, &hologram_ops::elementwise_binary::DivOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::DivOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::DivOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::clone(&self) -> hologram_ops::elementwise_binary::EqualOp`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::default() -> hologram_ops::elementwise_binary::EqualOp`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::eq(&self, &hologram_ops::elementwise_binary::EqualOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::EqualOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::clone(&self) -> hologram_ops::elementwise_binary::GreaterOp`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::default() -> hologram_ops::elementwise_binary::GreaterOp`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::eq(&self, &hologram_ops::elementwise_binary::GreaterOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::GreaterOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::clone(&self) -> hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::default() -> hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::eq(&self, &hologram_ops::elementwise_binary::GreaterOrEqualOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::GreaterOrEqualOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::LessOp::clone(&self) -> hologram_ops::elementwise_binary::LessOp`
+- `pub fn hologram_ops::elementwise_binary::LessOp::default() -> hologram_ops::elementwise_binary::LessOp`
+- `pub fn hologram_ops::elementwise_binary::LessOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::LessOp::eq(&self, &hologram_ops::elementwise_binary::LessOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::LessOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::LessOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::clone(&self) -> hologram_ops::elementwise_binary::LessOrEqualOp`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::default() -> hologram_ops::elementwise_binary::LessOrEqualOp`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::eq(&self, &hologram_ops::elementwise_binary::LessOrEqualOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::LessOrEqualOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::clone(&self) -> hologram_ops::elementwise_binary::MaxOp`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::default() -> hologram_ops::elementwise_binary::MaxOp`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::eq(&self, &hologram_ops::elementwise_binary::MaxOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::MaxOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::MinOp::clone(&self) -> hologram_ops::elementwise_binary::MinOp`
+- `pub fn hologram_ops::elementwise_binary::MinOp::default() -> hologram_ops::elementwise_binary::MinOp`
+- `pub fn hologram_ops::elementwise_binary::MinOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::MinOp::eq(&self, &hologram_ops::elementwise_binary::MinOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::MinOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::MinOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::ModOp::clone(&self) -> hologram_ops::elementwise_binary::ModOp`
+- `pub fn hologram_ops::elementwise_binary::ModOp::default() -> hologram_ops::elementwise_binary::ModOp`
+- `pub fn hologram_ops::elementwise_binary::ModOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::ModOp::eq(&self, &hologram_ops::elementwise_binary::ModOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::ModOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::ModOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::PowOp::clone(&self) -> hologram_ops::elementwise_binary::PowOp`
+- `pub fn hologram_ops::elementwise_binary::PowOp::default() -> hologram_ops::elementwise_binary::PowOp`
+- `pub fn hologram_ops::elementwise_binary::PowOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::PowOp::eq(&self, &hologram_ops::elementwise_binary::PowOp) -> bool`
+- `pub fn hologram_ops::elementwise_binary::PowOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_binary::PowOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_binary::emit_compare<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_div<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_equal<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_max<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_min<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_mod<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_binary::emit_pow<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::clone(&self) -> hologram_ops::elementwise_unary::AbsOp`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::default() -> hologram_ops::elementwise_unary::AbsOp`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::eq(&self, &hologram_ops::elementwise_unary::AbsOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::AbsOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::clone(&self) -> hologram_ops::elementwise_unary::AcosOp`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::default() -> hologram_ops::elementwise_unary::AcosOp`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::eq(&self, &hologram_ops::elementwise_unary::AcosOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::AcosOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::clone(&self) -> hologram_ops::elementwise_unary::AsinOp`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::default() -> hologram_ops::elementwise_unary::AsinOp`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::eq(&self, &hologram_ops::elementwise_unary::AsinOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::AsinOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::clone(&self) -> hologram_ops::elementwise_unary::AtanOp`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::default() -> hologram_ops::elementwise_unary::AtanOp`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::eq(&self, &hologram_ops::elementwise_unary::AtanOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::AtanOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::clone(&self) -> hologram_ops::elementwise_unary::CeilOp`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::default() -> hologram_ops::elementwise_unary::CeilOp`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::eq(&self, &hologram_ops::elementwise_unary::CeilOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::CeilOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::CosOp::clone(&self) -> hologram_ops::elementwise_unary::CosOp`
+- `pub fn hologram_ops::elementwise_unary::CosOp::default() -> hologram_ops::elementwise_unary::CosOp`
+- `pub fn hologram_ops::elementwise_unary::CosOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::CosOp::eq(&self, &hologram_ops::elementwise_unary::CosOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::CosOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::CosOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::EluOp::clone(&self) -> hologram_ops::elementwise_unary::EluOp`
+- `pub fn hologram_ops::elementwise_unary::EluOp::default() -> hologram_ops::elementwise_unary::EluOp`
+- `pub fn hologram_ops::elementwise_unary::EluOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::EluOp::eq(&self, &hologram_ops::elementwise_unary::EluOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::EluOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::EluOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::clone(&self) -> hologram_ops::elementwise_unary::ErfOp`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::default() -> hologram_ops::elementwise_unary::ErfOp`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::eq(&self, &hologram_ops::elementwise_unary::ErfOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::ErfOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::clone(&self) -> hologram_ops::elementwise_unary::ExpOp`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::default() -> hologram_ops::elementwise_unary::ExpOp`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::eq(&self, &hologram_ops::elementwise_unary::ExpOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::ExpOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::clone(&self) -> hologram_ops::elementwise_unary::FloorOp`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::default() -> hologram_ops::elementwise_unary::FloorOp`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::eq(&self, &hologram_ops::elementwise_unary::FloorOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::FloorOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::clone(&self) -> hologram_ops::elementwise_unary::GeluOp`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::default() -> hologram_ops::elementwise_unary::GeluOp`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::eq(&self, &hologram_ops::elementwise_unary::GeluOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::GeluOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::clone(&self) -> hologram_ops::elementwise_unary::IsNaNOp`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::default() -> hologram_ops::elementwise_unary::IsNaNOp`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::eq(&self, &hologram_ops::elementwise_unary::IsNaNOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::IsNaNOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::clone(&self) -> hologram_ops::elementwise_unary::Log1pOp`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::default() -> hologram_ops::elementwise_unary::Log1pOp`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::eq(&self, &hologram_ops::elementwise_unary::Log1pOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::Log1pOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::LogOp::clone(&self) -> hologram_ops::elementwise_unary::LogOp`
+- `pub fn hologram_ops::elementwise_unary::LogOp::default() -> hologram_ops::elementwise_unary::LogOp`
+- `pub fn hologram_ops::elementwise_unary::LogOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::LogOp::eq(&self, &hologram_ops::elementwise_unary::LogOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::LogOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::LogOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::clone(&self) -> hologram_ops::elementwise_unary::ReciprocalOp`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::default() -> hologram_ops::elementwise_unary::ReciprocalOp`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::eq(&self, &hologram_ops::elementwise_unary::ReciprocalOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::ReciprocalOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::clone(&self) -> hologram_ops::elementwise_unary::ReluOp`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::default() -> hologram_ops::elementwise_unary::ReluOp`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::eq(&self, &hologram_ops::elementwise_unary::ReluOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::ReluOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::clone(&self) -> hologram_ops::elementwise_unary::RoundOp`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::default() -> hologram_ops::elementwise_unary::RoundOp`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::eq(&self, &hologram_ops::elementwise_unary::RoundOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::RoundOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::clone(&self) -> hologram_ops::elementwise_unary::SeluOp`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::default() -> hologram_ops::elementwise_unary::SeluOp`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::eq(&self, &hologram_ops::elementwise_unary::SeluOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SeluOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::clone(&self) -> hologram_ops::elementwise_unary::SigmoidOp`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::default() -> hologram_ops::elementwise_unary::SigmoidOp`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::eq(&self, &hologram_ops::elementwise_unary::SigmoidOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SigmoidOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SignOp::clone(&self) -> hologram_ops::elementwise_unary::SignOp`
+- `pub fn hologram_ops::elementwise_unary::SignOp::default() -> hologram_ops::elementwise_unary::SignOp`
+- `pub fn hologram_ops::elementwise_unary::SignOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SignOp::eq(&self, &hologram_ops::elementwise_unary::SignOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SignOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SignOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::clone(&self) -> hologram_ops::elementwise_unary::SiluOp`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::default() -> hologram_ops::elementwise_unary::SiluOp`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::eq(&self, &hologram_ops::elementwise_unary::SiluOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SiluOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SinOp::clone(&self) -> hologram_ops::elementwise_unary::SinOp`
+- `pub fn hologram_ops::elementwise_unary::SinOp::default() -> hologram_ops::elementwise_unary::SinOp`
+- `pub fn hologram_ops::elementwise_unary::SinOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SinOp::eq(&self, &hologram_ops::elementwise_unary::SinOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SinOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SinOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::clone(&self) -> hologram_ops::elementwise_unary::SqrtOp`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::default() -> hologram_ops::elementwise_unary::SqrtOp`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::eq(&self, &hologram_ops::elementwise_unary::SqrtOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::SqrtOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::TanOp::clone(&self) -> hologram_ops::elementwise_unary::TanOp`
+- `pub fn hologram_ops::elementwise_unary::TanOp::default() -> hologram_ops::elementwise_unary::TanOp`
+- `pub fn hologram_ops::elementwise_unary::TanOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::TanOp::eq(&self, &hologram_ops::elementwise_unary::TanOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::TanOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::TanOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::clone(&self) -> hologram_ops::elementwise_unary::TanhOp`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::default() -> hologram_ops::elementwise_unary::TanhOp`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::eq(&self, &hologram_ops::elementwise_unary::TanhOp) -> bool`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::elementwise_unary::TanhOp::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::elementwise_unary::emit_abs<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_acos<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_asin<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_atan<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_ceil<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_cos<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_elu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_erf<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_exp<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_floor<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_gelu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_is_nan<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_log1p<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_log<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_reciprocal<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_relu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_round<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_selu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_sigmoid<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_sign<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_silu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_sin<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_sqrt<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_tan<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::elementwise_unary::emit_tanh<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_application<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::PrimitiveOp, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_lift<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u32, uor_foundation::enums::WittLevel) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_literal<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u64, uor_foundation::enums::WittLevel) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_match<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_project<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u32, uor_foundation::enums::WittLevel) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_recurse<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit::push_variable<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::emit_op_term<const CAP: usize>(hologram_ops::kind::OpKind, &mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::grounding::ConstantGrounding<D, B>::default() -> Self`
+- `pub fn hologram_ops::grounding::ConstantGrounding<D, B>::program(&self) -> uor_foundation::enforcement::GroundingProgram<Self::Output, Self::Map>`
+- `pub fn hologram_ops::grounding::WeightLoaderGrounding<D, B>::default() -> Self`
+- `pub fn hologram_ops::grounding::WeightLoaderGrounding<D, B>::program(&self) -> uor_foundation::enforcement::GroundingProgram<Self::Output, Self::Map>`
+- `pub fn hologram_ops::kind::OpKind::clone(&self) -> hologram_ops::kind::OpKind`
+- `pub fn hologram_ops::kind::OpKind::eq(&self, &hologram_ops::kind::OpKind) -> bool`
+- `pub fn hologram_ops::kind::OpKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::kind::OpKind::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>::default() -> Self`
+- `pub fn hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::default() -> Self`
+- `pub fn hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>::default() -> Self`
+- `pub fn hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>::default() -> Self`
+- `pub fn hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::layout::TransposeOp<S, Perm, D, B>::default() -> Self`
+- `pub fn hologram_ops::layout::TransposeOp<S, Perm, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::layout::emit_layout_relabel<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::linalg::GemmOp<M, K, N, D, B>::default() -> Self`
+- `pub fn hologram_ops::linalg::GemmOp<M, K, N, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::linalg::MatMulOp<M, K, N, D, B>::default() -> Self`
+- `pub fn hologram_ops::linalg::MatMulOp<M, K, N, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::linalg::emit_gemm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::linalg::emit_matmul<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::lut::ActivationFn::eval_f32(f32) -> f32`
+- `pub fn hologram_ops::lut::ActivationFn::eval_w16(u16) -> u16`
+- `pub fn hologram_ops::lut::ActivationFn::eval_w8(u8) -> u8`
+- `pub fn hologram_ops::lut::build_w16_lut<F: hologram_ops::lut::ActivationFn>() -> alloc::boxed::Box<[u16; 65536]>`
+- `pub fn hologram_ops::lut::build_w8_lut<F: hologram_ops::lut::ActivationFn>() -> [u8; 256]`
+- `pub fn hologram_ops::normalization::AddRmsNormOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::normalization::AddRmsNormOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::GroupNormOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::normalization::GroupNormOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::InstanceNormOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::normalization::InstanceNormOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::LayerNormOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::normalization::LayerNormOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::RmsNormOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::normalization::RmsNormOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::emit_add_rms_norm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::emit_group_norm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::emit_instance_norm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::emit_layer_norm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::normalization::emit_rms_norm<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>::default() -> Self`
+- `pub fn hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>::default() -> Self`
+- `pub fn hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::emit_avg_pool_2d<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::emit_global_avg_pool<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::pooling::emit_max_pool_2d<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::default() -> Self`
+- `pub fn hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::quantization::emit_cast<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::quantization::emit_dequantize<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>::default() -> Self`
+- `pub fn hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>::default() -> Self`
+- `pub fn hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>::default() -> Self`
+- `pub fn hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>::default() -> Self`
+- `pub fn hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>::default() -> Self`
+- `pub fn hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::emit_reduce_max<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::emit_reduce_mean<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::emit_reduce_min<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::emit_reduce_prod<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reduction::emit_reduce_sum<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::reference::EvalError::clone(&self) -> hologram_ops::reference::EvalError`
+- `pub fn hologram_ops::reference::EvalError::eq(&self, &hologram_ops::reference::EvalError) -> bool`
+- `pub fn hologram_ops::reference::EvalError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_ops::reference::ReferenceEvaluator::evaluate<const CAP: usize>(&hologram_ops::emit::HoloArena<CAP>, u32, &Self::Bindings) -> core::result::Result<Self::Value, hologram_ops::reference::EvalError>`
+- `pub fn hologram_ops::reference::ScalarEvaluatorU64::evaluate<const CAP: usize>(&hologram_ops::emit::HoloArena<CAP>, u32, &[u64]) -> core::result::Result<u64, hologram_ops::reference::EvalError>`
+- `pub fn hologram_ops::reference::fetch<const CAP: usize>(&hologram_ops::emit::HoloArena<CAP>, u32) -> core::result::Result<&hologram_ops::emit::HoloTerm, hologram_ops::reference::EvalError>`
+- `pub fn hologram_ops::structured::AttentionOp<Q, K, V, D, B>::default() -> Self`
+- `pub fn hologram_ops::structured::AttentionOp<Q, K, V, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::structured::FusedSwiGluOp<X, W, D, B>::default() -> Self`
+- `pub fn hologram_ops::structured::FusedSwiGluOp<X, W, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::structured::emit_attention<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::structured::emit_fused_swiglu<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::CumSumOp<S, Axis, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::CumSumOp<S, Axis, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::ExpandOp<Sin, Sout, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::ExpandOp<Sin, Sout, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::LrnOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::LrnOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::PadOp<Sin, Pad, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::PadOp<Sin, Pad, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::ResizeOp<Sin, Sout, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::ResizeOp<Sin, Sout, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::RotaryEmbeddingOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::RotaryEmbeddingOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::WhereOp<S, D, B>::default() -> Self`
+- `pub fn hologram_ops::utility::WhereOp<S, D, B>::emit_term<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_clip<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_cumsum<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_layout_relabel<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_lrn<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_resize<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_rotary_embedding<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_ops::utility::emit_where<const CAP: usize>(&mut hologram_ops::emit::HoloArena<CAP>, uor_foundation::enums::WittLevel, u32, u32, u32) -> hologram_ops::emit::EmitResult`
+- `pub fn hologram_types::HologramHostBoundsAvx2::clone(&self) -> hologram_types::HologramHostBoundsAvx2`
+- `pub fn hologram_types::HologramHostBoundsAvx2::default() -> hologram_types::HologramHostBoundsAvx2`
+- `pub fn hologram_types::HologramHostBoundsAvx2::eq(&self, &hologram_types::HologramHostBoundsAvx2) -> bool`
+- `pub fn hologram_types::HologramHostBoundsAvx2::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsAvx2::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::HologramHostBoundsAvx512::clone(&self) -> hologram_types::HologramHostBoundsAvx512`
+- `pub fn hologram_types::HologramHostBoundsAvx512::default() -> hologram_types::HologramHostBoundsAvx512`
+- `pub fn hologram_types::HologramHostBoundsAvx512::eq(&self, &hologram_types::HologramHostBoundsAvx512) -> bool`
+- `pub fn hologram_types::HologramHostBoundsAvx512::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsAvx512::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::HologramHostBoundsCpu::clone(&self) -> hologram_types::HologramHostBoundsCpu`
+- `pub fn hologram_types::HologramHostBoundsCpu::default() -> hologram_types::HologramHostBoundsCpu`
+- `pub fn hologram_types::HologramHostBoundsCpu::eq(&self, &hologram_types::HologramHostBoundsCpu) -> bool`
+- `pub fn hologram_types::HologramHostBoundsCpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsCpu::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::HologramHostBoundsMetal::clone(&self) -> hologram_types::HologramHostBoundsMetal`
+- `pub fn hologram_types::HologramHostBoundsMetal::default() -> hologram_types::HologramHostBoundsMetal`
+- `pub fn hologram_types::HologramHostBoundsMetal::eq(&self, &hologram_types::HologramHostBoundsMetal) -> bool`
+- `pub fn hologram_types::HologramHostBoundsMetal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsMetal::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::HologramHostBoundsNeon::clone(&self) -> hologram_types::HologramHostBoundsNeon`
+- `pub fn hologram_types::HologramHostBoundsNeon::default() -> hologram_types::HologramHostBoundsNeon`
+- `pub fn hologram_types::HologramHostBoundsNeon::eq(&self, &hologram_types::HologramHostBoundsNeon) -> bool`
+- `pub fn hologram_types::HologramHostBoundsNeon::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsNeon::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::HologramHostBoundsWgpu::clone(&self) -> hologram_types::HologramHostBoundsWgpu`
+- `pub fn hologram_types::HologramHostBoundsWgpu::default() -> hologram_types::HologramHostBoundsWgpu`
+- `pub fn hologram_types::HologramHostBoundsWgpu::eq(&self, &hologram_types::HologramHostBoundsWgpu) -> bool`
+- `pub fn hologram_types::HologramHostBoundsWgpu::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::HologramHostBoundsWgpu::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeBf16::clone(&self) -> hologram_types::dtype::DTypeBf16`
+- `pub fn hologram_types::dtype::DTypeBf16::default() -> hologram_types::dtype::DTypeBf16`
+- `pub fn hologram_types::dtype::DTypeBf16::eq(&self, &hologram_types::dtype::DTypeBf16) -> bool`
+- `pub fn hologram_types::dtype::DTypeBf16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeBf16::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeBool::clone(&self) -> hologram_types::dtype::DTypeBool`
+- `pub fn hologram_types::dtype::DTypeBool::default() -> hologram_types::dtype::DTypeBool`
+- `pub fn hologram_types::dtype::DTypeBool::eq(&self, &hologram_types::dtype::DTypeBool) -> bool`
+- `pub fn hologram_types::dtype::DTypeBool::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeBool::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeF16::clone(&self) -> hologram_types::dtype::DTypeF16`
+- `pub fn hologram_types::dtype::DTypeF16::default() -> hologram_types::dtype::DTypeF16`
+- `pub fn hologram_types::dtype::DTypeF16::eq(&self, &hologram_types::dtype::DTypeF16) -> bool`
+- `pub fn hologram_types::dtype::DTypeF16::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeF16::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeF32::clone(&self) -> hologram_types::dtype::DTypeF32`
+- `pub fn hologram_types::dtype::DTypeF32::default() -> hologram_types::dtype::DTypeF32`
+- `pub fn hologram_types::dtype::DTypeF32::eq(&self, &hologram_types::dtype::DTypeF32) -> bool`
+- `pub fn hologram_types::dtype::DTypeF32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeF32::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeF64::clone(&self) -> hologram_types::dtype::DTypeF64`
+- `pub fn hologram_types::dtype::DTypeF64::default() -> hologram_types::dtype::DTypeF64`
+- `pub fn hologram_types::dtype::DTypeF64::eq(&self, &hologram_types::dtype::DTypeF64) -> bool`
+- `pub fn hologram_types::dtype::DTypeF64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeF64::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeI32::clone(&self) -> hologram_types::dtype::DTypeI32`
+- `pub fn hologram_types::dtype::DTypeI32::default() -> hologram_types::dtype::DTypeI32`
+- `pub fn hologram_types::dtype::DTypeI32::eq(&self, &hologram_types::dtype::DTypeI32) -> bool`
+- `pub fn hologram_types::dtype::DTypeI32::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeI32::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeI4::clone(&self) -> hologram_types::dtype::DTypeI4`
+- `pub fn hologram_types::dtype::DTypeI4::default() -> hologram_types::dtype::DTypeI4`
+- `pub fn hologram_types::dtype::DTypeI4::eq(&self, &hologram_types::dtype::DTypeI4) -> bool`
+- `pub fn hologram_types::dtype::DTypeI4::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeI4::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeI64::clone(&self) -> hologram_types::dtype::DTypeI64`
+- `pub fn hologram_types::dtype::DTypeI64::default() -> hologram_types::dtype::DTypeI64`
+- `pub fn hologram_types::dtype::DTypeI64::eq(&self, &hologram_types::dtype::DTypeI64) -> bool`
+- `pub fn hologram_types::dtype::DTypeI64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeI64::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeI8::clone(&self) -> hologram_types::dtype::DTypeI8`
+- `pub fn hologram_types::dtype::DTypeI8::default() -> hologram_types::dtype::DTypeI8`
+- `pub fn hologram_types::dtype::DTypeI8::eq(&self, &hologram_types::dtype::DTypeI8) -> bool`
+- `pub fn hologram_types::dtype::DTypeI8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeI8::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeKind::clone(&self) -> hologram_types::dtype::DTypeKind`
+- `pub fn hologram_types::dtype::DTypeKind::eq(&self, &hologram_types::dtype::DTypeKind) -> bool`
+- `pub fn hologram_types::dtype::DTypeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeKind::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeU64::clone(&self) -> hologram_types::dtype::DTypeU64`
+- `pub fn hologram_types::dtype::DTypeU64::default() -> hologram_types::dtype::DTypeU64`
+- `pub fn hologram_types::dtype::DTypeU64::eq(&self, &hologram_types::dtype::DTypeU64) -> bool`
+- `pub fn hologram_types::dtype::DTypeU64::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeU64::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype::DTypeU8::clone(&self) -> hologram_types::dtype::DTypeU8`
+- `pub fn hologram_types::dtype::DTypeU8::default() -> hologram_types::dtype::DTypeU8`
+- `pub fn hologram_types::dtype::DTypeU8::eq(&self, &hologram_types::dtype::DTypeU8) -> bool`
+- `pub fn hologram_types::dtype::DTypeU8::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype::DTypeU8::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype_id::DTypeId::clone(&self) -> hologram_types::dtype_id::DTypeId`
+- `pub fn hologram_types::dtype_id::DTypeId::cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::cmp::Ordering`
+- `pub fn hologram_types::dtype_id::DTypeId::eq(&self, &hologram_types::dtype_id::DTypeId) -> bool`
+- `pub fn hologram_types::dtype_id::DTypeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::dtype_id::DTypeId::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::dtype_id::DTypeId::partial_cmp(&self, &hologram_types::dtype_id::DTypeId) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_types::memory_tier::MemoryTier::clone(&self) -> hologram_types::memory_tier::MemoryTier`
+- `pub fn hologram_types::memory_tier::MemoryTier::cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::cmp::Ordering`
+- `pub fn hologram_types::memory_tier::MemoryTier::eq(&self, &hologram_types::memory_tier::MemoryTier) -> bool`
+- `pub fn hologram_types::memory_tier::MemoryTier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::memory_tier::MemoryTier::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::memory_tier::MemoryTier::partial_cmp(&self, &hologram_types::memory_tier::MemoryTier) -> core::option::Option<core::cmp::Ordering>`
+- `pub fn hologram_types::shape::Dim<N>::clone(&self) -> hologram_types::shape::Dim<N>`
+- `pub fn hologram_types::shape::Dim<N>::default() -> hologram_types::shape::Dim<N>`
+- `pub fn hologram_types::shape::Dim<N>::eq(&self, &hologram_types::shape::Dim<N>) -> bool`
+- `pub fn hologram_types::shape::Dim<N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::shape::Dim<N>::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::shape::Shape1<D0, SITES>::clone(&self) -> hologram_types::shape::Shape1<D0, SITES>`
+- `pub fn hologram_types::shape::Shape1<D0, SITES>::default() -> Self`
+- `pub fn hologram_types::shape::Shape1<D0, SITES>::eq(&self, &hologram_types::shape::Shape1<D0, SITES>) -> bool`
+- `pub fn hologram_types::shape::Shape1<D0, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::shape::Shape1<D0, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub fn hologram_types::shape::Shape2<D0, D1, SITES>::clone(&self) -> hologram_types::shape::Shape2<D0, D1, SITES>`
+- `pub fn hologram_types::shape::Shape2<D0, D1, SITES>::default() -> Self`
+- `pub fn hologram_types::shape::Shape2<D0, D1, SITES>::eq(&self, &hologram_types::shape::Shape2<D0, D1, SITES>) -> bool`
+- `pub fn hologram_types::shape::Shape2<D0, D1, SITES>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result`
+- `pub fn hologram_types::shape::Shape2<D0, D1, SITES>::hash<__H: core::hash::Hasher>(&self, &mut __H)`
+- `pub hologram_archive::ArchiveError::BadMagic([u8; 4])`
+- `pub hologram_archive::ArchiveError::ChecksumMismatch`
+- `pub hologram_archive::ArchiveError::Io(&'static str)`
+- `pub hologram_archive::ArchiveError::SectionMissing(hologram_archive::format::SectionKind)`
+- `pub hologram_archive::ArchiveError::Truncated`
+- `pub hologram_archive::ArchiveError::Truncated::actual: usize`
+- `pub hologram_archive::ArchiveError::Truncated::needed: usize`
+- `pub hologram_archive::ArchiveError::UnsupportedVersion(u16)`
+- `pub hologram_archive::HoloHeader::flags: u16`
+- `pub hologram_archive::HoloHeader::format_version: u16`
+- `pub hologram_archive::HoloHeader::magic: [u8; 4]`
+- `pub hologram_archive::HoloHeader::section_count: u16`
+- `pub hologram_archive::HoloHeader::sections: alloc::vec::Vec<hologram_archive::format::SectionRef>`
+- `pub hologram_archive::PortDescriptor::dtype: u8`
+- `pub hologram_archive::PortDescriptor::element_count: u64`
+- `pub hologram_archive::PortDescriptor::name: alloc::string::String`
+- `pub hologram_archive::PortDescriptor::shape: alloc::vec::Vec<u64>`
+- `pub hologram_archive::PortDescriptor::slot: u32`
+- `pub hologram_archive::SectionKind::AppManifest = 15`
+- `pub hologram_archive::SectionKind::Certificates = 6`
+- `pub hologram_archive::SectionKind::Constants = 11`
+- `pub hologram_archive::SectionKind::ContentBlob = 16`
+- `pub hologram_archive::SectionKind::DTypeRegistry = 5`
+- `pub hologram_archive::SectionKind::ExecPlan = 12`
+- `pub hologram_archive::SectionKind::Extension = 14`
+- `pub hologram_archive::SectionKind::Inputs = 9`
+- `pub hologram_archive::SectionKind::KernelCalls = 1`
+- `pub hologram_archive::SectionKind::Metadata = 8`
+- `pub hologram_archive::SectionKind::Outputs = 10`
+- `pub hologram_archive::SectionKind::Schedule = 2`
+- `pub hologram_archive::SectionKind::ShapeRegistry = 4`
+- `pub hologram_archive::SectionKind::Trace = 7`
+- `pub hologram_archive::SectionKind::WarmStart = 13`
+- `pub hologram_archive::SectionKind::Weights = 3`
+- `pub hologram_archive::WarmEntry::label: hologram_archive::address::ContentLabel`
+- `pub hologram_archive::WarmEntry::result: alloc::vec::Vec<u8>`
+- `pub hologram_archive::WarmEntry::slot: u32`
+- `pub hologram_archive::certificate_codec::CertificateRecord::fingerprint: [u8; 32]`
+- `pub hologram_archive::certificate_codec::CertificateRecord::width_bytes: u8`
+- `pub hologram_archive::certificate_codec::CertificateRecord::witt_bits: u16`
+- `pub hologram_archive::constant_codec::ConstantEntry::by_reference: bool`
+- `pub hologram_archive::constant_codec::ConstantEntry::bytes: alloc::vec::Vec<u8>`
+- `pub hologram_archive::constant_codec::ConstantEntry::dtype: u8`
+- `pub hologram_archive::constant_codec::ConstantEntry::fingerprint: [u8; 32]`
+- `pub hologram_archive::constant_codec::ConstantEntry::slot: u32`
+- `pub hologram_archive::error::ArchiveError::BadMagic([u8; 4])`
+- `pub hologram_archive::error::ArchiveError::ChecksumMismatch`
+- `pub hologram_archive::error::ArchiveError::Io(&'static str)`
+- `pub hologram_archive::error::ArchiveError::SectionMissing(hologram_archive::format::SectionKind)`
+- `pub hologram_archive::error::ArchiveError::Truncated`
+- `pub hologram_archive::error::ArchiveError::Truncated::actual: usize`
+- `pub hologram_archive::error::ArchiveError::Truncated::needed: usize`
+- `pub hologram_archive::error::ArchiveError::UnsupportedVersion(u16)`
+- `pub hologram_archive::format::HoloHeader::flags: u16`
+- `pub hologram_archive::format::HoloHeader::format_version: u16`
+- `pub hologram_archive::format::HoloHeader::magic: [u8; 4]`
+- `pub hologram_archive::format::HoloHeader::section_count: u16`
+- `pub hologram_archive::format::HoloHeader::sections: alloc::vec::Vec<hologram_archive::format::SectionRef>`
+- `pub hologram_archive::format::SectionKind::AppManifest = 15`
+- `pub hologram_archive::format::SectionKind::Certificates = 6`
+- `pub hologram_archive::format::SectionKind::Constants = 11`
+- `pub hologram_archive::format::SectionKind::ContentBlob = 16`
+- `pub hologram_archive::format::SectionKind::DTypeRegistry = 5`
+- `pub hologram_archive::format::SectionKind::ExecPlan = 12`
+- `pub hologram_archive::format::SectionKind::Extension = 14`
+- `pub hologram_archive::format::SectionKind::Inputs = 9`
+- `pub hologram_archive::format::SectionKind::KernelCalls = 1`
+- `pub hologram_archive::format::SectionKind::Metadata = 8`
+- `pub hologram_archive::format::SectionKind::Outputs = 10`
+- `pub hologram_archive::format::SectionKind::Schedule = 2`
+- `pub hologram_archive::format::SectionKind::ShapeRegistry = 4`
+- `pub hologram_archive::format::SectionKind::Trace = 7`
+- `pub hologram_archive::format::SectionKind::WarmStart = 13`
+- `pub hologram_archive::format::SectionKind::Weights = 3`
+- `pub hologram_archive::format::SectionRef::kind: hologram_archive::format::SectionKind`
+- `pub hologram_archive::format::SectionRef::length: u64`
+- `pub hologram_archive::format::SectionRef::offset: u64`
+- `pub hologram_archive::warm_codec::WarmEntry::label: hologram_archive::address::ContentLabel`
+- `pub hologram_archive::warm_codec::WarmEntry::result: alloc::vec::Vec<u8>`
+- `pub hologram_archive::warm_codec::WarmEntry::slot: u32`
+- `pub hologram_archive::writer::PortDescriptor::dtype: u8`
+- `pub hologram_archive::writer::PortDescriptor::element_count: u64`
+- `pub hologram_archive::writer::PortDescriptor::name: alloc::string::String`
+- `pub hologram_archive::writer::PortDescriptor::shape: alloc::vec::Vec<u64>`
+- `pub hologram_archive::writer::PortDescriptor::slot: u32`
+- `pub hologram_compiler::BackendKind::Avx2`
+- `pub hologram_compiler::BackendKind::Avx512`
+- `pub hologram_compiler::BackendKind::Cpu`
+- `pub hologram_compiler::BackendKind::Metal`
+- `pub hologram_compiler::BackendKind::Neon`
+- `pub hologram_compiler::BackendKind::Wgpu`
+- `pub hologram_compiler::CachedCertificate::record: hologram_archive::certificate_codec::CertificateRecord`
+- `pub hologram_compiler::CompilationOutput::archive: alloc::vec::Vec<u8>`
+- `pub hologram_compiler::CompilationOutput::stats: hologram_compiler::compiler::CompilationStats`
+- `pub hologram_compiler::CompilationStats::cache_hits: u32`
+- `pub hologram_compiler::CompilationStats::cache_misses: u32`
+- `pub hologram_compiler::CompilationStats::schedule_levels: u32`
+- `pub hologram_compiler::CompilationStats::total_nodes: u32`
+- `pub hologram_compiler::CompilationStats::validated_units: u32`
+- `pub hologram_compiler::CompileError::Archive(hologram_archive::error::ArchiveError)`
+- `pub hologram_compiler::CompileError::ArenaOverflow(&'static str)`
+- `pub hologram_compiler::CompileError::CompletenessFailure`
+- `pub hologram_compiler::CompileError::GraphValidation(&'static str)`
+- `pub hologram_compiler::CompileError::ShapeViolation`
+- `pub hologram_compiler::CompileError::ShapeViolation::iri: &'static str`
+- `pub hologram_compiler::CompileError::SourceParse(&'static str)`
+- `pub hologram_compiler::CompileError::UnsupportedOp(hologram_ops::kind::OpKind)`
+- `pub hologram_compiler::Compiler::cache: hologram_compiler::cache::CertificateCache`
+- `pub hologram_compiler::cache::CachedCertificate::record: hologram_archive::certificate_codec::CertificateRecord`
+- `pub hologram_compiler::compiler::BackendKind::Avx2`
+- `pub hologram_compiler::compiler::BackendKind::Avx512`
+- `pub hologram_compiler::compiler::BackendKind::Cpu`
+- `pub hologram_compiler::compiler::BackendKind::Metal`
+- `pub hologram_compiler::compiler::BackendKind::Neon`
+- `pub hologram_compiler::compiler::BackendKind::Wgpu`
+- `pub hologram_compiler::compiler::CompilationOutput::archive: alloc::vec::Vec<u8>`
+- `pub hologram_compiler::compiler::CompilationOutput::stats: hologram_compiler::compiler::CompilationStats`
+- `pub hologram_compiler::compiler::CompilationStats::cache_hits: u32`
+- `pub hologram_compiler::compiler::CompilationStats::cache_misses: u32`
+- `pub hologram_compiler::compiler::CompilationStats::schedule_levels: u32`
+- `pub hologram_compiler::compiler::CompilationStats::total_nodes: u32`
+- `pub hologram_compiler::compiler::CompilationStats::validated_units: u32`
+- `pub hologram_compiler::compiler::Compiler::cache: hologram_compiler::cache::CertificateCache`
+- `pub hologram_compiler::error::CompileError::Archive(hologram_archive::error::ArchiveError)`
+- `pub hologram_compiler::error::CompileError::ArenaOverflow(&'static str)`
+- `pub hologram_compiler::error::CompileError::CompletenessFailure`
+- `pub hologram_compiler::error::CompileError::GraphValidation(&'static str)`
+- `pub hologram_compiler::error::CompileError::ShapeViolation`
+- `pub hologram_compiler::error::CompileError::ShapeViolation::iri: &'static str`
+- `pub hologram_compiler::error::CompileError::SourceParse(&'static str)`
+- `pub hologram_compiler::error::CompileError::UnsupportedOp(hologram_ops::kind::OpKind)`
+- `pub hologram_compiler::lower::LoweredNode::dtype: u8`
+- `pub hologram_compiler::lower::LoweredNode::element_count: u64`
+- `pub hologram_compiler::lower::LoweredNode::inputs: alloc::vec::Vec<hologram_compute::workspace::BufferRef>`
+- `pub hologram_compiler::lower::LoweredNode::kind: hologram_ops::kind::OpKind`
+- `pub hologram_compiler::lower::LoweredNode::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compiler::lower::LoweredNode::quant: hologram_compiler::lower::QuantParams`
+- `pub hologram_compiler::lower::LoweredNode::shape: hologram_compiler::lower::ShapeArgs`
+- `pub hologram_compiler::lower::LoweredNode::witt_bits: u16`
+- `pub hologram_compiler::lower::QuantParams::act_quant: u8`
+- `pub hologram_compiler::lower::QuantParams::channels: u32`
+- `pub hologram_compiler::lower::QuantParams::codebook: hologram_compute::workspace::BufferRef`
+- `pub hologram_compiler::lower::QuantParams::inner: u32`
+- `pub hologram_compiler::lower::QuantParams::quant_dtype: u8`
+- `pub hologram_compiler::lower::QuantParams::scale_bits: u32`
+- `pub hologram_compiler::lower::QuantParams::weight_layout: u8`
+- `pub hologram_compiler::lower::QuantParams::zero_point: i32`
+- `pub hologram_compiler::lower::ShapeArgs::alpha_bits: u32`
+- `pub hologram_compiler::lower::ShapeArgs::batch: u32`
+- `pub hologram_compiler::lower::ShapeArgs::beta_bits: u32`
+- `pub hologram_compiler::lower::ShapeArgs::causal: bool`
+- `pub hologram_compiler::lower::ShapeArgs::channels_in: u32`
+- `pub hologram_compiler::lower::ShapeArgs::channels_out: u32`
+- `pub hologram_compiler::lower::ShapeArgs::decode_valid_form: bool`
+- `pub hologram_compiler::lower::ShapeArgs::feature: u32`
+- `pub hologram_compiler::lower::ShapeArgs::h_in: u32`
+- `pub hologram_compiler::lower::ShapeArgs::h_out: u32`
+- `pub hologram_compiler::lower::ShapeArgs::head_dim: u32`
+- `pub hologram_compiler::lower::ShapeArgs::heads: u32`
+- `pub hologram_compiler::lower::ShapeArgs::k: u32`
+- `pub hologram_compiler::lower::ShapeArgs::k_h: u32`
+- `pub hologram_compiler::lower::ShapeArgs::k_w: u32`
+- `pub hologram_compiler::lower::ShapeArgs::kv_bucket_rows: u32`
+- `pub hologram_compiler::lower::ShapeArgs::kv_heads: u32`
+- `pub hologram_compiler::lower::ShapeArgs::kv_new_rows: u32`
+- `pub hologram_compiler::lower::ShapeArgs::kv_planes: u32`
+- `pub hologram_compiler::lower::ShapeArgs::kv_row_bytes: u32`
+- `pub hologram_compiler::lower::ShapeArgs::m: u32`
+- `pub hologram_compiler::lower::ShapeArgs::n: u32`
+- `pub hologram_compiler::lower::ShapeArgs::new_len: u32`
+- `pub hologram_compiler::lower::ShapeArgs::norm_channels: u32`
+- `pub hologram_compiler::lower::ShapeArgs::num_groups: u32`
+- `pub hologram_compiler::lower::ShapeArgs::pad_h: u32`
+- `pub hologram_compiler::lower::ShapeArgs::pad_w: u32`
+- `pub hologram_compiler::lower::ShapeArgs::past_len: u32`
+- `pub hologram_compiler::lower::ShapeArgs::q_rows: u32`
+- `pub hologram_compiler::lower::ShapeArgs::scale_bits: u32`
+- `pub hologram_compiler::lower::ShapeArgs::seq: u32`
+- `pub hologram_compiler::lower::ShapeArgs::stride_h: u32`
+- `pub hologram_compiler::lower::ShapeArgs::stride_w: u32`
+- `pub hologram_compiler::lower::ShapeArgs::w_in: u32`
+- `pub hologram_compiler::lower::ShapeArgs::w_out: u32`
+- `pub hologram_compiler::pipeline::PerNodeUnit::bindings: &'a [uor_foundation::enforcement::Binding]`
+- `pub hologram_compiler::pipeline::PerNodeUnit::budget: u64`
+- `pub hologram_compiler::pipeline::PerNodeUnit::root_term: &'a [hologram_ops::emit::HoloTerm]`
+- `pub hologram_compiler::pipeline::PerNodeUnit::target_domains: &'a [uor_foundation::enums::VerificationDomain]`
+- `pub hologram_compiler::pipeline::PerNodeUnit::witt_level: uor_foundation::enums::WittLevel`
+- `pub hologram_compiler::source::SourceAttrs::attention: core::option::Option<hologram_graph::node::AttentionAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::conv: core::option::Option<hologram_graph::node::ConvAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::gather: core::option::Option<hologram_graph::node::GatherAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::gemm: core::option::Option<hologram_graph::node::GemmAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::lrn: core::option::Option<hologram_graph::node::LrnAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::norm: core::option::Option<hologram_graph::node::NormAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::quant: core::option::Option<hologram_graph::node::QuantAttrs>`
+- `pub hologram_compiler::source::SourceAttrs::reduce: core::option::Option<hologram_graph::node::ReduceAttrs>`
+- `pub hologram_compiler::source::SourceBinding::expr: hologram_compiler::source::SourceExpr`
+- `pub hologram_compiler::source::SourceBinding::name: core::option::Option<hologram_compiler::source::SourceSymbol>`
+- `pub hologram_compiler::source::SourceBinding::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceConst::literal: hologram_compiler::source::SourceTensorLiteral`
+- `pub hologram_compiler::source::SourceConst::name: hologram_compiler::source::SourceSymbol`
+- `pub hologram_compiler::source::SourceConst::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceConst::ty: hologram_compiler::source::SourceType`
+- `pub hologram_compiler::source::SourceDiagnostic::column: usize`
+- `pub hologram_compiler::source::SourceDiagnostic::kind: &'static str`
+- `pub hologram_compiler::source::SourceDiagnostic::line: usize`
+- `pub hologram_compiler::source::SourceDiagnostic::rejected: alloc::string::String`
+- `pub hologram_compiler::source::SourceExpr::OpCall(alloc::boxed::Box<hologram_compiler::source::SourceOpCall>)`
+- `pub hologram_compiler::source::SourceExpr::Ref(hologram_compiler::source::SourceSymbol)`
+- `pub hologram_compiler::source::SourceExpr::TensorLiteral(hologram_compiler::source::SourceTensorLiteral)`
+- `pub hologram_compiler::source::SourceExternalConst::name: hologram_compiler::source::SourceSymbol`
+- `pub hologram_compiler::source::SourceExternalConst::reference: hologram_compiler::source::SourceExternalTensor`
+- `pub hologram_compiler::source::SourceExternalConst::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceExternalConst::ty: hologram_compiler::source::SourceType`
+- `pub hologram_compiler::source::SourceExternalTensor::byte_len: u64`
+- `pub hologram_compiler::source::SourceExternalTensor::byte_offset: u64`
+- `pub hologram_compiler::source::SourceExternalTensor::content_hash: [u8; 32]`
+- `pub hologram_compiler::source::SourceExternalTensor::location: hologram_compiler::source::SourceExternalTensorLocation`
+- `pub hologram_compiler::source::SourceExternalTensorLocation::File(alloc::string::String)`
+- `pub hologram_compiler::source::SourceGraph::name: core::option::Option<alloc::string::String>`
+- `pub hologram_compiler::source::SourceGraph::program: hologram_compiler::source::SourceProgram`
+- `pub hologram_compiler::source::SourceGraph::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceInput::name: hologram_compiler::source::SourceSymbol`
+- `pub hologram_compiler::source::SourceInput::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceInput::ty: hologram_compiler::source::SourceType`
+- `pub hologram_compiler::source::SourceItem::Binding(hologram_compiler::source::SourceBinding)`
+- `pub hologram_compiler::source::SourceItem::Const(hologram_compiler::source::SourceConst)`
+- `pub hologram_compiler::source::SourceItem::ExternalConst(hologram_compiler::source::SourceExternalConst)`
+- `pub hologram_compiler::source::SourceItem::Input(hologram_compiler::source::SourceInput)`
+- `pub hologram_compiler::source::SourceItem::Output(hologram_compiler::source::SourceOutput)`
+- `pub hologram_compiler::source::SourceLanguage::Hologram`
+- `pub hologram_compiler::source::SourceLanguage::Python`
+- `pub hologram_compiler::source::SourceLanguage::Rust`
+- `pub hologram_compiler::source::SourceLanguage::TypeScript`
+- `pub hologram_compiler::source::SourceOpCall::attrs: hologram_compiler::source::SourceAttrs`
+- `pub hologram_compiler::source::SourceOpCall::inputs: alloc::vec::Vec<hologram_compiler::source::SourceSymbol>`
+- `pub hologram_compiler::source::SourceOpCall::op: hologram_ops::kind::OpKind`
+- `pub hologram_compiler::source::SourceOpCall::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceOpCall::ty: core::option::Option<hologram_compiler::source::SourceType>`
+- `pub hologram_compiler::source::SourceOutput::name: hologram_compiler::source::SourceSymbol`
+- `pub hologram_compiler::source::SourceOutput::port_name: core::option::Option<hologram_compiler::source::SourceSymbol>`
+- `pub hologram_compiler::source::SourceOutput::span: hologram_compiler::source::SourceSpan`
+- `pub hologram_compiler::source::SourceSpan::len: usize`
+- `pub hologram_compiler::source::SourceSpan::start: usize`
+- `pub hologram_compiler::source::SourceTensorLiteral::bytes: alloc::vec::Vec<u8>`
+- `pub hologram_compiler::source::SourceTensorLiteral::value_count: usize`
+- `pub hologram_compiler::source::SourceType::dtype: hologram_types::dtype_id::DTypeId`
+- `pub hologram_compiler::source::SourceType::shape: core::option::Option<hologram_graph::registry::ShapeDescriptor>`
+- `pub hologram_compute::AttentionCall::batch: u32`
+- `pub hologram_compute::AttentionCall::causal: bool`
+- `pub hologram_compute::AttentionCall::dtype: u8`
+- `pub hologram_compute::AttentionCall::head_dim: u32`
+- `pub hologram_compute::AttentionCall::heads: u32`
+- `pub hologram_compute::AttentionCall::k: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::AttentionCall::kv_heads: u32`
+- `pub hologram_compute::AttentionCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::AttentionCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::AttentionCall::scale_bits: u32`
+- `pub hologram_compute::AttentionCall::seq: u32`
+- `pub hologram_compute::AttentionCall::v: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BackendError::Dispatch(&'static str)`
+- `pub hologram_compute::BackendError::Init(&'static str)`
+- `pub hologram_compute::BackendError::ShapeMismatch`
+- `pub hologram_compute::BackendError::ShapeMismatch::actual: alloc::vec::Vec<u64>`
+- `pub hologram_compute::BackendError::ShapeMismatch::expected: alloc::vec::Vec<u64>`
+- `pub hologram_compute::BackendError::SlotOutOfRange(u32)`
+- `pub hologram_compute::BackendError::UnsupportedOp(&'static str)`
+- `pub hologram_compute::BinaryCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BinaryCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BinaryCall::dtype: u8`
+- `pub hologram_compute::BinaryCall::element_count: u64`
+- `pub hologram_compute::BinaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BinaryCall::witt_bits: u16`
+- `pub hologram_compute::BroadcastBinaryCall::dtype: u8`
+- `pub hologram_compute::BroadcastBinaryCall::in_dims: [u32; 8]`
+- `pub hologram_compute::BroadcastBinaryCall::op: u8`
+- `pub hologram_compute::BroadcastBinaryCall::other: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BroadcastBinaryCall::out_dims: [u32; 8]`
+- `pub hologram_compute::BroadcastBinaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BroadcastBinaryCall::rank: u8`
+- `pub hologram_compute::BroadcastBinaryCall::small: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::BroadcastBinaryCall::small_is_lhs: bool`
+- `pub hologram_compute::BufferRef::length: u64`
+- `pub hologram_compute::BufferRef::offset: u64`
+- `pub hologram_compute::BufferRef::slot: u32`
+- `pub hologram_compute::CastCall::dst_dtype: u8`
+- `pub hologram_compute::CastCall::element_count: u64`
+- `pub hologram_compute::CastCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::CastCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::CastCall::src_dtype: u8`
+- `pub hologram_compute::Conv2dCall::batch: u32`
+- `pub hologram_compute::Conv2dCall::channels_in: u32`
+- `pub hologram_compute::Conv2dCall::channels_out: u32`
+- `pub hologram_compute::Conv2dCall::dtype: u8`
+- `pub hologram_compute::Conv2dCall::h_in: u32`
+- `pub hologram_compute::Conv2dCall::h_out: u32`
+- `pub hologram_compute::Conv2dCall::k_h: u32`
+- `pub hologram_compute::Conv2dCall::k_w: u32`
+- `pub hologram_compute::Conv2dCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::Conv2dCall::pad_h: u32`
+- `pub hologram_compute::Conv2dCall::pad_w: u32`
+- `pub hologram_compute::Conv2dCall::stride_h: u32`
+- `pub hologram_compute::Conv2dCall::stride_w: u32`
+- `pub hologram_compute::Conv2dCall::w: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::Conv2dCall::w_in: u32`
+- `pub hologram_compute::Conv2dCall::w_out: u32`
+- `pub hologram_compute::Conv2dCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::batch: u32`
+- `pub hologram_compute::DecodeAttentionCall::dtype: u8`
+- `pub hologram_compute::DecodeAttentionCall::head_dim: u32`
+- `pub hologram_compute::DecodeAttentionCall::heads: u32`
+- `pub hologram_compute::DecodeAttentionCall::k_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::k_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::kv_heads: u32`
+- `pub hologram_compute::DecodeAttentionCall::mask: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::new_len: u32`
+- `pub hologram_compute::DecodeAttentionCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::past_len: u32`
+- `pub hologram_compute::DecodeAttentionCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::q_rows: u32`
+- `pub hologram_compute::DecodeAttentionCall::scale_bits: u32`
+- `pub hologram_compute::DecodeAttentionCall::v_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionCall::v_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::batch: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::dtype: u8`
+- `pub hologram_compute::DecodeAttentionValidCall::head_dim: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::heads: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::k_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::k_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::kv_heads: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::new_len: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::past_len: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::q_rows: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::scale_bits: u32`
+- `pub hologram_compute::DecodeAttentionValidCall::v_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::v_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DecodeAttentionValidCall::valid_len: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantActivationCall::act: u8`
+- `pub hologram_compute::DequantActivationCall::dtype: u8`
+- `pub hologram_compute::DequantActivationCall::element_count: u64`
+- `pub hologram_compute::DequantActivationCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantActivationCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantActivationCall::quant_dtype: u8`
+- `pub hologram_compute::DequantActivationCall::scale_bits: u32`
+- `pub hologram_compute::DequantActivationCall::zero_point: i32`
+- `pub hologram_compute::DequantizeCall::act_quant: u8`
+- `pub hologram_compute::DequantizeCall::channels: u32`
+- `pub hologram_compute::DequantizeCall::codebook: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantizeCall::dtype: u8`
+- `pub hologram_compute::DequantizeCall::element_count: u64`
+- `pub hologram_compute::DequantizeCall::inner: u32`
+- `pub hologram_compute::DequantizeCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantizeCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantizeCall::quant_dtype: u8`
+- `pub hologram_compute::DequantizeCall::scale_bits: u32`
+- `pub hologram_compute::DequantizeCall::scales: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::DequantizeCall::weight_layout: u8`
+- `pub hologram_compute::DequantizeCall::zero_point: i32`
+- `pub hologram_compute::DequantizeCall::zero_points: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ExpandCall::dtype: u8`
+- `pub hologram_compute::ExpandCall::in_dims: [u32; 8]`
+- `pub hologram_compute::ExpandCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ExpandCall::out_dims: [u32; 8]`
+- `pub hologram_compute::ExpandCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ExpandCall::rank: u8`
+- `pub hologram_compute::GatherCall::axis_dim: u64`
+- `pub hologram_compute::GatherCall::data: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GatherCall::dtype: u8`
+- `pub hologram_compute::GatherCall::idx_dtype: u8`
+- `pub hologram_compute::GatherCall::indices: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GatherCall::inner: u64`
+- `pub hologram_compute::GatherCall::num_indices: u64`
+- `pub hologram_compute::GatherCall::outer: u64`
+- `pub hologram_compute::GatherCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GemmCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GemmCall::alpha_bits: u64`
+- `pub hologram_compute::GemmCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GemmCall::beta_bits: u64`
+- `pub hologram_compute::GemmCall::c: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::GemmCall::dtype: u8`
+- `pub hologram_compute::GemmCall::k: u32`
+- `pub hologram_compute::GemmCall::m: u32`
+- `pub hologram_compute::GemmCall::n: u32`
+- `pub hologram_compute::GemmCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::Im2ColCall::channels: u32`
+- `pub hologram_compute::Im2ColCall::dtype: u8`
+- `pub hologram_compute::Im2ColCall::h_in: u32`
+- `pub hologram_compute::Im2ColCall::h_out: u32`
+- `pub hologram_compute::Im2ColCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::Im2ColCall::k_h: u32`
+- `pub hologram_compute::Im2ColCall::k_w: u32`
+- `pub hologram_compute::Im2ColCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::Im2ColCall::stride_h: u32`
+- `pub hologram_compute::Im2ColCall::stride_w: u32`
+- `pub hologram_compute::Im2ColCall::w_in: u32`
+- `pub hologram_compute::Im2ColCall::w_out: u32`
+- `pub hologram_compute::KernelCall::Abs(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Acos(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Add(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::AddRmsNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::KernelCall::And(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Asin(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Atan(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Attention(hologram_compute::AttentionCall)`
+- `pub hologram_compute::KernelCall::AvgPool2d(hologram_compute::PoolCall)`
+- `pub hologram_compute::KernelCall::Bnot(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::BroadcastBinary(hologram_compute::BroadcastBinaryCall)`
+- `pub hologram_compute::KernelCall::Cast(hologram_compute::CastCall)`
+- `pub hologram_compute::KernelCall::Ceil(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Clip(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Col2Im(hologram_compute::Im2ColCall)`
+- `pub hologram_compute::KernelCall::Concat(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Conv2d(hologram_compute::Conv2dCall)`
+- `pub hologram_compute::KernelCall::ConvTranspose2d(hologram_compute::Conv2dCall)`
+- `pub hologram_compute::KernelCall::Cos(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::CumSum(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::DecodeAttention(hologram_compute::DecodeAttentionCall)`
+- `pub hologram_compute::KernelCall::DecodeAttentionValid(hologram_compute::DecodeAttentionValidCall)`
+- `pub hologram_compute::KernelCall::DequantActivation(hologram_compute::DequantActivationCall)`
+- `pub hologram_compute::KernelCall::Dequantize(hologram_compute::DequantizeCall)`
+- `pub hologram_compute::KernelCall::Div(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Elu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Equal(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Erf(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Exp(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Expand(hologram_compute::ExpandCall)`
+- `pub hologram_compute::KernelCall::Floor(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::FusedSwiGlu(hologram_compute::MatMulCall)`
+- `pub hologram_compute::KernelCall::Gather(hologram_compute::GatherCall)`
+- `pub hologram_compute::KernelCall::Gelu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Gemm(hologram_compute::GemmCall)`
+- `pub hologram_compute::KernelCall::GlobalAvgPool(hologram_compute::PoolCall)`
+- `pub hologram_compute::KernelCall::Greater(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::GreaterOrEqual(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::GroupNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::KernelCall::Im2Col(hologram_compute::Im2ColCall)`
+- `pub hologram_compute::KernelCall::InstanceNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::KernelCall::IsNaN(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::KvCacheWrite(hologram_compute::KvCacheWriteCall)`
+- `pub hologram_compute::KernelCall::LayerNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::KernelCall::Less(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::LessOrEqual(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Log(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Log1p(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::LogSoftmax(hologram_compute::SoftmaxCall)`
+- `pub hologram_compute::KernelCall::Lrn(hologram_compute::LrnCall)`
+- `pub hologram_compute::KernelCall::MatMul(hologram_compute::MatMulCall)`
+- `pub hologram_compute::KernelCall::MatMulActivation(hologram_compute::MatMulActivationCall)`
+- `pub hologram_compute::KernelCall::MatMulAdd(hologram_compute::MatMulAddCall)`
+- `pub hologram_compute::KernelCall::MatMulAddActivation(hologram_compute::MatMulAddActivationCall)`
+- `pub hologram_compute::KernelCall::MatMulDequant(hologram_compute::MatMulDequantCall)`
+- `pub hologram_compute::KernelCall::Max(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::MaxPool2d(hologram_compute::PoolCall)`
+- `pub hologram_compute::KernelCall::Min(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Mod(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Mul(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Neg(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Or(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Pad(hologram_compute::LayoutCall)`
+- `pub hologram_compute::KernelCall::Pow(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Pred(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Reciprocal(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::ReduceMax(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::ReduceMean(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::ReduceMin(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::ReduceProd(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::ReduceSum(hologram_compute::ReduceCall)`
+- `pub hologram_compute::KernelCall::Relu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Reshape(hologram_compute::LayoutCall)`
+- `pub hologram_compute::KernelCall::Resize(hologram_compute::ExpandCall)`
+- `pub hologram_compute::KernelCall::RmsNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::KernelCall::RotaryEmbedding(hologram_compute::RoPECall)`
+- `pub hologram_compute::KernelCall::Round(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Selu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Sigmoid(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Sign(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Silu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Sin(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Slice(hologram_compute::LayoutCall)`
+- `pub hologram_compute::KernelCall::Softmax(hologram_compute::SoftmaxCall)`
+- `pub hologram_compute::KernelCall::Sqrt(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Sub(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KernelCall::Succ(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Tan(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Tanh(hologram_compute::UnaryCall)`
+- `pub hologram_compute::KernelCall::Transpose(hologram_compute::TransposeCall)`
+- `pub hologram_compute::KernelCall::Where(hologram_compute::WhereCall)`
+- `pub hologram_compute::KernelCall::Xor(hologram_compute::BinaryCall)`
+- `pub hologram_compute::KvCacheWriteCall::bucket_rows: u32`
+- `pub hologram_compute::KvCacheWriteCall::cache: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::KvCacheWriteCall::new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::KvCacheWriteCall::new_rows: u32`
+- `pub hologram_compute::KvCacheWriteCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::KvCacheWriteCall::planes: u32`
+- `pub hologram_compute::KvCacheWriteCall::pos: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::KvCacheWriteCall::row_bytes: u32`
+- `pub hologram_compute::LayoutCall::dtype: u8`
+- `pub hologram_compute::LayoutCall::element_count: u64`
+- `pub hologram_compute::LayoutCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::LayoutCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::LrnCall::alpha_bits: u32`
+- `pub hologram_compute::LrnCall::batch: u32`
+- `pub hologram_compute::LrnCall::beta_bits: u32`
+- `pub hologram_compute::LrnCall::bias_bits: u32`
+- `pub hologram_compute::LrnCall::channels: u32`
+- `pub hologram_compute::LrnCall::dtype: u8`
+- `pub hologram_compute::LrnCall::inner: u32`
+- `pub hologram_compute::LrnCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::LrnCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::LrnCall::size: u32`
+- `pub hologram_compute::MatMulActivationCall::act: u8`
+- `pub hologram_compute::MatMulActivationCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::MatMulAddActivationCall::act: u8`
+- `pub hologram_compute::MatMulAddActivationCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::MatMulAddActivationCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulAddCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::MatMulAddCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulCall::b_packed: bool`
+- `pub hologram_compute::MatMulCall::dtype: u8`
+- `pub hologram_compute::MatMulCall::k: u32`
+- `pub hologram_compute::MatMulCall::m: u32`
+- `pub hologram_compute::MatMulCall::n: u32`
+- `pub hologram_compute::MatMulCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::act: u8`
+- `pub hologram_compute::MatMulDequantCall::act_quant: u8`
+- `pub hologram_compute::MatMulDequantCall::bq: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::bq_omajor: bool`
+- `pub hologram_compute::MatMulDequantCall::channels: u32`
+- `pub hologram_compute::MatMulDequantCall::codebook: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::dtype: u8`
+- `pub hologram_compute::MatMulDequantCall::inner: u32`
+- `pub hologram_compute::MatMulDequantCall::k: u32`
+- `pub hologram_compute::MatMulDequantCall::m: u32`
+- `pub hologram_compute::MatMulDequantCall::n: u32`
+- `pub hologram_compute::MatMulDequantCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::quant_dtype: u8`
+- `pub hologram_compute::MatMulDequantCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::scale_bits: u32`
+- `pub hologram_compute::MatMulDequantCall::scales: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::MatMulDequantCall::zero_point: i32`
+- `pub hologram_compute::MatMulDequantCall::zero_points: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::NormCall::batch: u32`
+- `pub hologram_compute::NormCall::beta: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::NormCall::channels: u32`
+- `pub hologram_compute::NormCall::dtype: u8`
+- `pub hologram_compute::NormCall::epsilon_bits: u64`
+- `pub hologram_compute::NormCall::feature: u32`
+- `pub hologram_compute::NormCall::gamma: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::NormCall::num_groups: u32`
+- `pub hologram_compute::NormCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::NormCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::NormCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::OpSignature::opcode: u16`
+- `pub hologram_compute::PoolCall::batch: u32`
+- `pub hologram_compute::PoolCall::channels: u32`
+- `pub hologram_compute::PoolCall::dtype: u8`
+- `pub hologram_compute::PoolCall::h_in: u32`
+- `pub hologram_compute::PoolCall::h_out: u32`
+- `pub hologram_compute::PoolCall::k_h: u32`
+- `pub hologram_compute::PoolCall::k_w: u32`
+- `pub hologram_compute::PoolCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::PoolCall::stride_h: u32`
+- `pub hologram_compute::PoolCall::stride_w: u32`
+- `pub hologram_compute::PoolCall::w_in: u32`
+- `pub hologram_compute::PoolCall::w_out: u32`
+- `pub hologram_compute::PoolCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ReduceCall::axes_mask: u32`
+- `pub hologram_compute::ReduceCall::dims: [u32; 8]`
+- `pub hologram_compute::ReduceCall::dtype: u8`
+- `pub hologram_compute::ReduceCall::element_count: u64`
+- `pub hologram_compute::ReduceCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ReduceCall::keepdims: bool`
+- `pub hologram_compute::ReduceCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::ReduceCall::rank: u8`
+- `pub hologram_compute::RoPECall::cos: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::RoPECall::dtype: u8`
+- `pub hologram_compute::RoPECall::element_count: u64`
+- `pub hologram_compute::RoPECall::head_dim: u32`
+- `pub hologram_compute::RoPECall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::RoPECall::sin: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::RoPECall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::SoftmaxCall::batch: u32`
+- `pub hologram_compute::SoftmaxCall::dtype: u8`
+- `pub hologram_compute::SoftmaxCall::feature: u32`
+- `pub hologram_compute::SoftmaxCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::SoftmaxCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::TransposeCall::dims: [u32; 8]`
+- `pub hologram_compute::TransposeCall::dtype: u8`
+- `pub hologram_compute::TransposeCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::TransposeCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::TransposeCall::perm: [u8; 8]`
+- `pub hologram_compute::TransposeCall::rank: u8`
+- `pub hologram_compute::UnaryCall::dtype: u8`
+- `pub hologram_compute::UnaryCall::element_count: u64`
+- `pub hologram_compute::UnaryCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::UnaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::UnaryCall::witt_bits: u16`
+- `pub hologram_compute::WhereCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::WhereCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::WhereCall::cond: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::WhereCall::dtype: u8`
+- `pub hologram_compute::WhereCall::element_count: u64`
+- `pub hologram_compute::WhereCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::error::BackendError::Dispatch(&'static str)`
+- `pub hologram_compute::error::BackendError::Init(&'static str)`
+- `pub hologram_compute::error::BackendError::ShapeMismatch`
+- `pub hologram_compute::error::BackendError::ShapeMismatch::actual: alloc::vec::Vec<u64>`
+- `pub hologram_compute::error::BackendError::ShapeMismatch::expected: alloc::vec::Vec<u64>`
+- `pub hologram_compute::error::BackendError::SlotOutOfRange(u32)`
+- `pub hologram_compute::error::BackendError::UnsupportedOp(&'static str)`
+- `pub hologram_compute::kernel_call::AttentionCall::batch: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::causal: bool`
+- `pub hologram_compute::kernel_call::AttentionCall::dtype: u8`
+- `pub hologram_compute::kernel_call::AttentionCall::head_dim: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::heads: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::k: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::AttentionCall::kv_heads: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::AttentionCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::AttentionCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::seq: u32`
+- `pub hologram_compute::kernel_call::AttentionCall::v: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BinaryCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BinaryCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BinaryCall::dtype: u8`
+- `pub hologram_compute::kernel_call::BinaryCall::element_count: u64`
+- `pub hologram_compute::kernel_call::BinaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BinaryCall::witt_bits: u16`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::dtype: u8`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::in_dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::op: u8`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::other: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::out_dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::rank: u8`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::small: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::BroadcastBinaryCall::small_is_lhs: bool`
+- `pub hologram_compute::kernel_call::CastCall::dst_dtype: u8`
+- `pub hologram_compute::kernel_call::CastCall::element_count: u64`
+- `pub hologram_compute::kernel_call::CastCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::CastCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::CastCall::src_dtype: u8`
+- `pub hologram_compute::kernel_call::Conv2dCall::batch: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::channels_in: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::channels_out: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::dtype: u8`
+- `pub hologram_compute::kernel_call::Conv2dCall::h_in: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::h_out: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::k_h: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::k_w: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::Conv2dCall::pad_h: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::pad_w: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::stride_h: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::stride_w: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::w: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::Conv2dCall::w_in: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::w_out: u32`
+- `pub hologram_compute::kernel_call::Conv2dCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::batch: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::dtype: u8`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::head_dim: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::heads: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::k_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::k_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::kv_heads: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::mask: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::new_len: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::past_len: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::q_rows: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::v_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionCall::v_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::batch: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::dtype: u8`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::head_dim: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::heads: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::k_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::k_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::kv_heads: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::new_len: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::past_len: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::q: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::q_rows: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::v_new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::v_past: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DecodeAttentionValidCall::valid_len: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantActivationCall::act: u8`
+- `pub hologram_compute::kernel_call::DequantActivationCall::dtype: u8`
+- `pub hologram_compute::kernel_call::DequantActivationCall::element_count: u64`
+- `pub hologram_compute::kernel_call::DequantActivationCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantActivationCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantActivationCall::quant_dtype: u8`
+- `pub hologram_compute::kernel_call::DequantActivationCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::DequantActivationCall::zero_point: i32`
+- `pub hologram_compute::kernel_call::DequantizeCall::act_quant: u8`
+- `pub hologram_compute::kernel_call::DequantizeCall::channels: u32`
+- `pub hologram_compute::kernel_call::DequantizeCall::codebook: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantizeCall::dtype: u8`
+- `pub hologram_compute::kernel_call::DequantizeCall::element_count: u64`
+- `pub hologram_compute::kernel_call::DequantizeCall::inner: u32`
+- `pub hologram_compute::kernel_call::DequantizeCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantizeCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantizeCall::quant_dtype: u8`
+- `pub hologram_compute::kernel_call::DequantizeCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::DequantizeCall::scales: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::DequantizeCall::weight_layout: u8`
+- `pub hologram_compute::kernel_call::DequantizeCall::zero_point: i32`
+- `pub hologram_compute::kernel_call::DequantizeCall::zero_points: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ExpandCall::dtype: u8`
+- `pub hologram_compute::kernel_call::ExpandCall::in_dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::ExpandCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ExpandCall::out_dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::ExpandCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ExpandCall::rank: u8`
+- `pub hologram_compute::kernel_call::GatherCall::axis_dim: u64`
+- `pub hologram_compute::kernel_call::GatherCall::data: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GatherCall::dtype: u8`
+- `pub hologram_compute::kernel_call::GatherCall::idx_dtype: u8`
+- `pub hologram_compute::kernel_call::GatherCall::indices: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GatherCall::inner: u64`
+- `pub hologram_compute::kernel_call::GatherCall::num_indices: u64`
+- `pub hologram_compute::kernel_call::GatherCall::outer: u64`
+- `pub hologram_compute::kernel_call::GatherCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GemmCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GemmCall::alpha_bits: u64`
+- `pub hologram_compute::kernel_call::GemmCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GemmCall::beta_bits: u64`
+- `pub hologram_compute::kernel_call::GemmCall::c: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::GemmCall::dtype: u8`
+- `pub hologram_compute::kernel_call::GemmCall::k: u32`
+- `pub hologram_compute::kernel_call::GemmCall::m: u32`
+- `pub hologram_compute::kernel_call::GemmCall::n: u32`
+- `pub hologram_compute::kernel_call::GemmCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::Im2ColCall::channels: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::dtype: u8`
+- `pub hologram_compute::kernel_call::Im2ColCall::h_in: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::h_out: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::Im2ColCall::k_h: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::k_w: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::Im2ColCall::stride_h: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::stride_w: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::w_in: u32`
+- `pub hologram_compute::kernel_call::Im2ColCall::w_out: u32`
+- `pub hologram_compute::kernel_call::KernelCall::Abs(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Acos(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Add(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::AddRmsNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::kernel_call::KernelCall::And(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Asin(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Atan(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Attention(hologram_compute::AttentionCall)`
+- `pub hologram_compute::kernel_call::KernelCall::AvgPool2d(hologram_compute::PoolCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Bnot(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::BroadcastBinary(hologram_compute::BroadcastBinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Cast(hologram_compute::CastCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Ceil(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Clip(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Col2Im(hologram_compute::Im2ColCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Concat(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Conv2d(hologram_compute::Conv2dCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ConvTranspose2d(hologram_compute::Conv2dCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Cos(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::CumSum(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::DecodeAttention(hologram_compute::DecodeAttentionCall)`
+- `pub hologram_compute::kernel_call::KernelCall::DecodeAttentionValid(hologram_compute::DecodeAttentionValidCall)`
+- `pub hologram_compute::kernel_call::KernelCall::DequantActivation(hologram_compute::DequantActivationCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Dequantize(hologram_compute::DequantizeCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Div(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Elu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Equal(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Erf(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Exp(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Expand(hologram_compute::ExpandCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Floor(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::FusedSwiGlu(hologram_compute::MatMulCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Gather(hologram_compute::GatherCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Gelu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Gemm(hologram_compute::GemmCall)`
+- `pub hologram_compute::kernel_call::KernelCall::GlobalAvgPool(hologram_compute::PoolCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Greater(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::GreaterOrEqual(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::GroupNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Im2Col(hologram_compute::Im2ColCall)`
+- `pub hologram_compute::kernel_call::KernelCall::InstanceNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::kernel_call::KernelCall::IsNaN(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::KvCacheWrite(hologram_compute::KvCacheWriteCall)`
+- `pub hologram_compute::kernel_call::KernelCall::LayerNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Less(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::LessOrEqual(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Log(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Log1p(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::LogSoftmax(hologram_compute::SoftmaxCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Lrn(hologram_compute::LrnCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MatMul(hologram_compute::MatMulCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MatMulActivation(hologram_compute::MatMulActivationCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MatMulAdd(hologram_compute::MatMulAddCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MatMulAddActivation(hologram_compute::MatMulAddActivationCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MatMulDequant(hologram_compute::MatMulDequantCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Max(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::MaxPool2d(hologram_compute::PoolCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Min(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Mod(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Mul(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Neg(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Or(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Pad(hologram_compute::LayoutCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Pow(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Pred(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Reciprocal(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ReduceMax(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ReduceMean(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ReduceMin(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ReduceProd(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::ReduceSum(hologram_compute::ReduceCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Relu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Reshape(hologram_compute::LayoutCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Resize(hologram_compute::ExpandCall)`
+- `pub hologram_compute::kernel_call::KernelCall::RmsNorm(hologram_compute::NormCall)`
+- `pub hologram_compute::kernel_call::KernelCall::RotaryEmbedding(hologram_compute::RoPECall)`
+- `pub hologram_compute::kernel_call::KernelCall::Round(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Selu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Sigmoid(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Sign(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Silu(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Sin(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Slice(hologram_compute::LayoutCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Softmax(hologram_compute::SoftmaxCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Sqrt(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Sub(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Succ(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Tan(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Tanh(hologram_compute::UnaryCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Transpose(hologram_compute::TransposeCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Where(hologram_compute::WhereCall)`
+- `pub hologram_compute::kernel_call::KernelCall::Xor(hologram_compute::BinaryCall)`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::bucket_rows: u32`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::cache: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::new: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::new_rows: u32`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::planes: u32`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::pos: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::KvCacheWriteCall::row_bytes: u32`
+- `pub hologram_compute::kernel_call::LayoutCall::dtype: u8`
+- `pub hologram_compute::kernel_call::LayoutCall::element_count: u64`
+- `pub hologram_compute::kernel_call::LayoutCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::LayoutCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::LrnCall::alpha_bits: u32`
+- `pub hologram_compute::kernel_call::LrnCall::batch: u32`
+- `pub hologram_compute::kernel_call::LrnCall::beta_bits: u32`
+- `pub hologram_compute::kernel_call::LrnCall::bias_bits: u32`
+- `pub hologram_compute::kernel_call::LrnCall::channels: u32`
+- `pub hologram_compute::kernel_call::LrnCall::dtype: u8`
+- `pub hologram_compute::kernel_call::LrnCall::inner: u32`
+- `pub hologram_compute::kernel_call::LrnCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::LrnCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::LrnCall::size: u32`
+- `pub hologram_compute::kernel_call::MatMulActivationCall::act: u8`
+- `pub hologram_compute::kernel_call::MatMulActivationCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::kernel_call::MatMulAddActivationCall::act: u8`
+- `pub hologram_compute::kernel_call::MatMulAddActivationCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::kernel_call::MatMulAddActivationCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulAddCall::mm: hologram_compute::MatMulCall`
+- `pub hologram_compute::kernel_call::MatMulAddCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulCall::b_packed: bool`
+- `pub hologram_compute::kernel_call::MatMulCall::dtype: u8`
+- `pub hologram_compute::kernel_call::MatMulCall::k: u32`
+- `pub hologram_compute::kernel_call::MatMulCall::m: u32`
+- `pub hologram_compute::kernel_call::MatMulCall::n: u32`
+- `pub hologram_compute::kernel_call::MatMulCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::act: u8`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::act_quant: u8`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::bq: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::bq_omajor: bool`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::channels: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::codebook: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::dtype: u8`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::inner: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::k: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::m: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::n: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::quant_dtype: u8`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::scale_bits: u32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::scales: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::zero_point: i32`
+- `pub hologram_compute::kernel_call::MatMulDequantCall::zero_points: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::NormCall::batch: u32`
+- `pub hologram_compute::kernel_call::NormCall::beta: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::NormCall::channels: u32`
+- `pub hologram_compute::kernel_call::NormCall::dtype: u8`
+- `pub hologram_compute::kernel_call::NormCall::epsilon_bits: u64`
+- `pub hologram_compute::kernel_call::NormCall::feature: u32`
+- `pub hologram_compute::kernel_call::NormCall::gamma: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::NormCall::num_groups: u32`
+- `pub hologram_compute::kernel_call::NormCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::NormCall::residual: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::NormCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::OpSignature::opcode: u16`
+- `pub hologram_compute::kernel_call::PoolCall::batch: u32`
+- `pub hologram_compute::kernel_call::PoolCall::channels: u32`
+- `pub hologram_compute::kernel_call::PoolCall::dtype: u8`
+- `pub hologram_compute::kernel_call::PoolCall::h_in: u32`
+- `pub hologram_compute::kernel_call::PoolCall::h_out: u32`
+- `pub hologram_compute::kernel_call::PoolCall::k_h: u32`
+- `pub hologram_compute::kernel_call::PoolCall::k_w: u32`
+- `pub hologram_compute::kernel_call::PoolCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::PoolCall::stride_h: u32`
+- `pub hologram_compute::kernel_call::PoolCall::stride_w: u32`
+- `pub hologram_compute::kernel_call::PoolCall::w_in: u32`
+- `pub hologram_compute::kernel_call::PoolCall::w_out: u32`
+- `pub hologram_compute::kernel_call::PoolCall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ReduceCall::axes_mask: u32`
+- `pub hologram_compute::kernel_call::ReduceCall::dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::ReduceCall::dtype: u8`
+- `pub hologram_compute::kernel_call::ReduceCall::element_count: u64`
+- `pub hologram_compute::kernel_call::ReduceCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ReduceCall::keepdims: bool`
+- `pub hologram_compute::kernel_call::ReduceCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::ReduceCall::rank: u8`
+- `pub hologram_compute::kernel_call::RoPECall::cos: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::RoPECall::dtype: u8`
+- `pub hologram_compute::kernel_call::RoPECall::element_count: u64`
+- `pub hologram_compute::kernel_call::RoPECall::head_dim: u32`
+- `pub hologram_compute::kernel_call::RoPECall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::RoPECall::sin: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::RoPECall::x: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::SoftmaxCall::batch: u32`
+- `pub hologram_compute::kernel_call::SoftmaxCall::dtype: u8`
+- `pub hologram_compute::kernel_call::SoftmaxCall::feature: u32`
+- `pub hologram_compute::kernel_call::SoftmaxCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::SoftmaxCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::TransposeCall::dims: [u32; 8]`
+- `pub hologram_compute::kernel_call::TransposeCall::dtype: u8`
+- `pub hologram_compute::kernel_call::TransposeCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::TransposeCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::TransposeCall::perm: [u8; 8]`
+- `pub hologram_compute::kernel_call::TransposeCall::rank: u8`
+- `pub hologram_compute::kernel_call::UnaryCall::dtype: u8`
+- `pub hologram_compute::kernel_call::UnaryCall::element_count: u64`
+- `pub hologram_compute::kernel_call::UnaryCall::input: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::UnaryCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::UnaryCall::witt_bits: u16`
+- `pub hologram_compute::kernel_call::WhereCall::a: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::WhereCall::b: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::WhereCall::cond: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::kernel_call::WhereCall::dtype: u8`
+- `pub hologram_compute::kernel_call::WhereCall::element_count: u64`
+- `pub hologram_compute::kernel_call::WhereCall::output: hologram_compute::workspace::BufferRef`
+- `pub hologram_compute::quant_tier::QuantTier::bits_per_weight: u32`
+- `pub hologram_compute::quant_tier::QuantTier::dtype: hologram_types::dtype_id::DTypeId`
+- `pub hologram_compute::quant_tier::QuantTier::group_dim: u32`
+- `pub hologram_compute::quant_tier::QuantTier::needs_codebook: bool`
+- `pub hologram_compute::quant_tier::QuantTier::omajor_fusable: bool`
+- `pub hologram_compute::quant_tier::QuantTier::scalar_decodable: bool`
+- `pub hologram_compute::workspace::BufferRef::length: u64`
+- `pub hologram_compute::workspace::BufferRef::offset: u64`
+- `pub hologram_compute::workspace::BufferRef::slot: u32`
+- `pub hologram_exec::AttestedExecution::archive_fingerprint: [u8; 32]`
+- `pub hologram_exec::AttestedExecution::outputs: alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>`
+- `pub hologram_exec::AttestedExecution::prism_attestation: uor_foundation::enforcement::Grounded<'static, prism_crypto::shapes::Digest<32>, HOLOGRAM_INLINE_BYTES, FP_MAX>`
+- `pub hologram_exec::ConvergenceKind::ByteStable`
+- `pub hologram_exec::ConvergenceKind::LabelStable`
+- `pub hologram_exec::ConvergenceKind::ValidatorAccepted`
+- `pub hologram_exec::ExecError::Archive(hologram_archive::error::ArchiveError)`
+- `pub hologram_exec::ExecError::Backend`
+- `pub hologram_exec::ExecError::InputMismatch`
+- `pub hologram_exec::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)`
+- `pub hologram_exec::ExecError::WorkspaceExhausted`
+- `pub hologram_exec::InputBuffer::bytes: &'a [u8]`
+- `pub hologram_exec::OutputBuffer::bytes: alloc::vec::Vec<u8>`
+- `pub hologram_exec::RefinementError::Execute(hologram_exec::error::ExecError)`
+- `pub hologram_exec::RefinementError::MissingStateBytes`
+- `pub hologram_exec::RefinementError::MissingValidator`
+- `pub hologram_exec::RefinementError::StateArityMismatch`
+- `pub hologram_exec::RefinementError::StateContractMismatch`
+- `pub hologram_exec::RefinementError::TooManyValidators`
+- `pub hologram_exec::RefinementError::ZeroPassBudget`
+- `pub hologram_exec::RefinementReport::dispatched: usize`
+- `pub hologram_exec::RefinementReport::final_labels: alloc::vec::Vec<hologram_archive::address::ContentLabel>`
+- `pub hologram_exec::RefinementReport::passes: u8`
+- `pub hologram_exec::RefinementReport::repairs: u8`
+- `pub hologram_exec::RefinementReport::resident_bytes: usize`
+- `pub hologram_exec::RefinementReport::resident_values: usize`
+- `pub hologram_exec::RefinementReport::skipped: usize`
+- `pub hologram_exec::RefinementReport::status: hologram_exec::refinement::RefinementStatus`
+- `pub hologram_exec::RefinementReport::validator_outcomes: smallvec::SmallVec<[hologram_exec::refinement::ValidatorOutcome; 4]>`
+- `pub hologram_exec::RefinementStatePort::byte_len: usize`
+- `pub hologram_exec::RefinementStatePort::dtype: u8`
+- `pub hologram_exec::RefinementStatePort::element_count: u64`
+- `pub hologram_exec::RefinementStatePort::shape: alloc::vec::Vec<u64>`
+- `pub hologram_exec::RefinementStatus::Converged(hologram_exec::refinement::ConvergenceKind)`
+- `pub hologram_exec::RefinementStatus::PassBoundReached`
+- `pub hologram_exec::RefinementStatus::RepairBoundReached`
+- `pub hologram_exec::RefinementStatus::Repaired(hologram_exec::refinement::ConvergenceKind)`
+- `pub hologram_exec::RepairPolicy::None`
+- `pub hologram_exec::RepairPolicy::RetryPass`
+- `pub hologram_exec::RepairPolicy::RetryPass::extra_passes: u8`
+- `pub hologram_exec::SlotSpan::length: u64`
+- `pub hologram_exec::SlotSpan::offset: u64`
+- `pub hologram_exec::ValidatorCost::CompiledPlan`
+- `pub hologram_exec::ValidatorCost::Constant`
+- `pub hologram_exec::ValidatorCost::StateBytes`
+- `pub hologram_exec::ValidatorCost::StatePorts`
+- `pub hologram_exec::ValidatorKind::StableBytes`
+- `pub hologram_exec::ValidatorKind::StableLabels`
+- `pub hologram_exec::ValidatorOutcome::accepted: bool`
+- `pub hologram_exec::ValidatorOutcome::cost: hologram_exec::refinement::ValidatorCost`
+- `pub hologram_exec::ValidatorOutcome::validator: hologram_exec::refinement::ValidatorKind`
+- `pub hologram_exec::buffer::InputBuffer::bytes: &'a [u8]`
+- `pub hologram_exec::buffer::OutputBuffer::bytes: alloc::vec::Vec<u8>`
+- `pub hologram_exec::buffer::SlotSpan::length: u64`
+- `pub hologram_exec::buffer::SlotSpan::offset: u64`
+- `pub hologram_exec::error::ExecError::Archive(hologram_archive::error::ArchiveError)`
+- `pub hologram_exec::error::ExecError::Backend`
+- `pub hologram_exec::error::ExecError::InputMismatch`
+- `pub hologram_exec::error::ExecError::Pipeline(uor_foundation::enforcement::PipelineFailure)`
+- `pub hologram_exec::error::ExecError::WorkspaceExhausted`
+- `pub hologram_exec::prism_route::AttestedExecution::archive_fingerprint: [u8; 32]`
+- `pub hologram_exec::prism_route::AttestedExecution::outputs: alloc::vec::Vec<hologram_exec::buffer::OutputBuffer>`
+- `pub hologram_exec::prism_route::AttestedExecution::prism_attestation: uor_foundation::enforcement::Grounded<'static, prism_crypto::shapes::Digest<32>, HOLOGRAM_INLINE_BYTES, FP_MAX>`
+- `pub hologram_exec::refinement::ConvergenceKind::ByteStable`
+- `pub hologram_exec::refinement::ConvergenceKind::LabelStable`
+- `pub hologram_exec::refinement::ConvergenceKind::ValidatorAccepted`
+- `pub hologram_exec::refinement::RefinementError::Execute(hologram_exec::error::ExecError)`
+- `pub hologram_exec::refinement::RefinementError::MissingStateBytes`
+- `pub hologram_exec::refinement::RefinementError::MissingValidator`
+- `pub hologram_exec::refinement::RefinementError::StateArityMismatch`
+- `pub hologram_exec::refinement::RefinementError::StateContractMismatch`
+- `pub hologram_exec::refinement::RefinementError::TooManyValidators`
+- `pub hologram_exec::refinement::RefinementError::ZeroPassBudget`
+- `pub hologram_exec::refinement::RefinementReport::dispatched: usize`
+- `pub hologram_exec::refinement::RefinementReport::final_labels: alloc::vec::Vec<hologram_archive::address::ContentLabel>`
+- `pub hologram_exec::refinement::RefinementReport::passes: u8`
+- `pub hologram_exec::refinement::RefinementReport::repairs: u8`
+- `pub hologram_exec::refinement::RefinementReport::resident_bytes: usize`
+- `pub hologram_exec::refinement::RefinementReport::resident_values: usize`
+- `pub hologram_exec::refinement::RefinementReport::skipped: usize`
+- `pub hologram_exec::refinement::RefinementReport::status: hologram_exec::refinement::RefinementStatus`
+- `pub hologram_exec::refinement::RefinementReport::validator_outcomes: smallvec::SmallVec<[hologram_exec::refinement::ValidatorOutcome; 4]>`
+- `pub hologram_exec::refinement::RefinementStatePort::byte_len: usize`
+- `pub hologram_exec::refinement::RefinementStatePort::dtype: u8`
+- `pub hologram_exec::refinement::RefinementStatePort::element_count: u64`
+- `pub hologram_exec::refinement::RefinementStatePort::shape: alloc::vec::Vec<u64>`
+- `pub hologram_exec::refinement::RefinementStatus::Converged(hologram_exec::refinement::ConvergenceKind)`
+- `pub hologram_exec::refinement::RefinementStatus::PassBoundReached`
+- `pub hologram_exec::refinement::RefinementStatus::RepairBoundReached`
+- `pub hologram_exec::refinement::RefinementStatus::Repaired(hologram_exec::refinement::ConvergenceKind)`
+- `pub hologram_exec::refinement::RepairPolicy::None`
+- `pub hologram_exec::refinement::RepairPolicy::RetryPass`
+- `pub hologram_exec::refinement::RepairPolicy::RetryPass::extra_passes: u8`
+- `pub hologram_exec::refinement::ValidatorCost::CompiledPlan`
+- `pub hologram_exec::refinement::ValidatorCost::Constant`
+- `pub hologram_exec::refinement::ValidatorCost::StateBytes`
+- `pub hologram_exec::refinement::ValidatorCost::StatePorts`
+- `pub hologram_exec::refinement::ValidatorKind::StableBytes`
+- `pub hologram_exec::refinement::ValidatorKind::StableLabels`
+- `pub hologram_exec::refinement::ValidatorOutcome::accepted: bool`
+- `pub hologram_exec::refinement::ValidatorOutcome::cost: hologram_exec::refinement::ValidatorCost`
+- `pub hologram_exec::refinement::ValidatorOutcome::validator: hologram_exec::refinement::ValidatorKind`
+- `pub hologram_ffi::HologramConstDesc::byte_len: usize`
+- `pub hologram_ffi::HologramConstDesc::bytes: *const std::os::raw::c_uchar`
+- `pub hologram_ffi::HologramConstDesc::tensor: hologram_ffi::HologramTensorDesc`
+- `pub hologram_ffi::HologramExternalTensorDesc::byte_len: u64`
+- `pub hologram_ffi::HologramExternalTensorDesc::byte_offset: u64`
+- `pub hologram_ffi::HologramExternalTensorDesc::content_hash: [std::os::raw::c_uchar; 32]`
+- `pub hologram_ffi::HologramExternalTensorDesc::path: hologram_ffi::HologramString`
+- `pub hologram_ffi::HologramExternalTensorDesc::tensor: hologram_ffi::HologramTensorDesc`
+- `pub hologram_ffi::HologramShape::dims: *const u64`
+- `pub hologram_ffi::HologramShape::rank: usize`
+- `pub hologram_ffi::HologramSourceOp::input_count: usize`
+- `pub hologram_ffi::HologramSourceOp::inputs: *const hologram_ffi::HologramString`
+- `pub hologram_ffi::HologramSourceOp::op: hologram_ffi::HologramString`
+- `pub hologram_ffi::HologramSourceOp::output: hologram_ffi::HologramString`
+- `pub hologram_ffi::HologramSourceOp::shape: hologram_ffi::HologramShape`
+- `pub hologram_ffi::HologramString::len: usize`
+- `pub hologram_ffi::HologramString::ptr: *const std::os::raw::c_uchar`
+- `pub hologram_ffi::HologramTensorDesc::dtype_id: u8`
+- `pub hologram_ffi::HologramTensorDesc::name: hologram_ffi::HologramString`
+- `pub hologram_ffi::HologramTensorDesc::shape: hologram_ffi::HologramShape`
+- `pub hologram_ffi::sdk::SdkDType::id: u8`
+- `pub hologram_ffi::sdk::SdkDType::name: &'static str`
+- `pub hologram_ffi::sdk::SdkOp::arity: u8`
+- `pub hologram_ffi::sdk::SdkOp::attrs: &'static [&'static str]`
+- `pub hologram_ffi::sdk::SdkOp::doc: &'static str`
+- `pub hologram_ffi::sdk::SdkOp::dtype_policy: &'static str`
+- `pub hologram_ffi::sdk::SdkOp::kind: hologram_ops::kind::OpKind`
+- `pub hologram_ffi::sdk::SdkOp::name: &'static str`
+- `pub hologram_ffi::sdk::SdkOp::shape_policy: &'static str`
+- `pub hologram_graph::AttentionAttrs::causal: bool`
+- `pub hologram_graph::AttentionAttrs::scale_bits: u32`
+- `pub hologram_graph::BackwardError::NoGradient(hologram_ops::kind::OpKind)`
+- `pub hologram_graph::BackwardError::OutputMissing(hologram_graph::node::NodeId)`
+- `pub hologram_graph::ConvAttrs::k_h: u32`
+- `pub hologram_graph::ConvAttrs::k_w: u32`
+- `pub hologram_graph::ConvAttrs::pad_h: u32`
+- `pub hologram_graph::ConvAttrs::pad_w: u32`
+- `pub hologram_graph::ConvAttrs::stride_h: u32`
+- `pub hologram_graph::ConvAttrs::stride_w: u32`
+- `pub hologram_graph::GatherAttrs::axis: i32`
+- `pub hologram_graph::GemmAttrs::alpha_bits: u32`
+- `pub hologram_graph::GemmAttrs::beta_bits: u32`
+- `pub hologram_graph::GraphOp::Constant(hologram_graph::node::ConstantId)`
+- `pub hologram_graph::GraphOp::Input`
+- `pub hologram_graph::GraphOp::Op(hologram_ops::kind::OpKind)`
+- `pub hologram_graph::GraphOp::Output`
+- `pub hologram_graph::InputSource::Constant(hologram_graph::node::ConstantId)`
+- `pub hologram_graph::InputSource::GraphInput(u32)`
+- `pub hologram_graph::InputSource::Node(hologram_graph::node::NodeId)`
+- `pub hologram_graph::LrnAttrs::alpha_bits: u32`
+- `pub hologram_graph::LrnAttrs::beta_bits: u32`
+- `pub hologram_graph::LrnAttrs::bias_bits: u32`
+- `pub hologram_graph::LrnAttrs::size: u32`
+- `pub hologram_graph::Node::inputs: smallvec::SmallVec<[hologram_graph::node::InputSource; 4]>`
+- `pub hologram_graph::Node::op: hologram_graph::node::GraphOp`
+- `pub hologram_graph::Node::output_dtype: hologram_types::dtype_id::DTypeId`
+- `pub hologram_graph::Node::output_shape: hologram_graph::registry::ShapeId`
+- `pub hologram_graph::NormAttrs::num_groups: u32`
+- `pub hologram_graph::QuantAttrs::act_quant: u8`
+- `pub hologram_graph::QuantAttrs::axis: i32`
+- `pub hologram_graph::QuantAttrs::quant_dtype: u8`
+- `pub hologram_graph::QuantAttrs::scale_bits: u32`
+- `pub hologram_graph::QuantAttrs::weight_layout: u8`
+- `pub hologram_graph::QuantAttrs::zero_point: i32`
+- `pub hologram_graph::ReduceAttrs::axes_mask: u32`
+- `pub hologram_graph::ReduceAttrs::keepdims: bool`
+- `pub hologram_graph::Schedule::levels: alloc::vec::Vec<smallvec::SmallVec<[hologram_graph::node::NodeId; 16]>>`
+- `pub hologram_graph::ShapeDescriptor::dims: [u64; 8]`
+- `pub hologram_graph::ShapeDescriptor::dims_overflow: core::option::Option<alloc::boxed::Box<[u64]>>`
+- `pub hologram_graph::ShapeDescriptor::rank: u8`
+- `pub hologram_graph::backward::BackwardError::NoGradient(hologram_ops::kind::OpKind)`
+- `pub hologram_graph::backward::BackwardError::OutputMissing(hologram_graph::node::NodeId)`
+- `pub hologram_graph::constant::ConstantEntry::bytes: alloc::vec::Vec<u8>`
+- `pub hologram_graph::constant::ConstantEntry::dtype: hologram_types::dtype_id::DTypeId`
+- `pub hologram_graph::constant::ConstantEntry::shape: hologram_graph::registry::ShapeId`
+- `pub hologram_graph::node::AttentionAttrs::causal: bool`
+- `pub hologram_graph::node::AttentionAttrs::scale_bits: u32`
+- `pub hologram_graph::node::ConvAttrs::k_h: u32`
+- `pub hologram_graph::node::ConvAttrs::k_w: u32`
+- `pub hologram_graph::node::ConvAttrs::pad_h: u32`
+- `pub hologram_graph::node::ConvAttrs::pad_w: u32`
+- `pub hologram_graph::node::ConvAttrs::stride_h: u32`
+- `pub hologram_graph::node::ConvAttrs::stride_w: u32`
+- `pub hologram_graph::node::GatherAttrs::axis: i32`
+- `pub hologram_graph::node::GemmAttrs::alpha_bits: u32`
+- `pub hologram_graph::node::GemmAttrs::beta_bits: u32`
+- `pub hologram_graph::node::GraphOp::Constant(hologram_graph::node::ConstantId)`
+- `pub hologram_graph::node::GraphOp::Input`
+- `pub hologram_graph::node::GraphOp::Op(hologram_ops::kind::OpKind)`
+- `pub hologram_graph::node::GraphOp::Output`
+- `pub hologram_graph::node::InputSource::Constant(hologram_graph::node::ConstantId)`
+- `pub hologram_graph::node::InputSource::GraphInput(u32)`
+- `pub hologram_graph::node::InputSource::Node(hologram_graph::node::NodeId)`
+- `pub hologram_graph::node::LrnAttrs::alpha_bits: u32`
+- `pub hologram_graph::node::LrnAttrs::beta_bits: u32`
+- `pub hologram_graph::node::LrnAttrs::bias_bits: u32`
+- `pub hologram_graph::node::LrnAttrs::size: u32`
+- `pub hologram_graph::node::Node::inputs: smallvec::SmallVec<[hologram_graph::node::InputSource; 4]>`
+- `pub hologram_graph::node::Node::op: hologram_graph::node::GraphOp`
+- `pub hologram_graph::node::Node::output_dtype: hologram_types::dtype_id::DTypeId`
+- `pub hologram_graph::node::Node::output_shape: hologram_graph::registry::ShapeId`
+- `pub hologram_graph::node::NormAttrs::num_groups: u32`
+- `pub hologram_graph::node::QuantAttrs::act_quant: u8`
+- `pub hologram_graph::node::QuantAttrs::axis: i32`
+- `pub hologram_graph::node::QuantAttrs::quant_dtype: u8`
+- `pub hologram_graph::node::QuantAttrs::scale_bits: u32`
+- `pub hologram_graph::node::QuantAttrs::weight_layout: u8`
+- `pub hologram_graph::node::QuantAttrs::zero_point: i32`
+- `pub hologram_graph::node::ReduceAttrs::axes_mask: u32`
+- `pub hologram_graph::node::ReduceAttrs::keepdims: bool`
+- `pub hologram_graph::registry::ShapeDescriptor::dims: [u64; 8]`
+- `pub hologram_graph::registry::ShapeDescriptor::dims_overflow: core::option::Option<alloc::boxed::Box<[u64]>>`
+- `pub hologram_graph::registry::ShapeDescriptor::rank: u8`
+- `pub hologram_graph::schedule::Schedule::levels: alloc::vec::Vec<smallvec::SmallVec<[hologram_graph::node::NodeId; 16]>>`
+- `pub hologram_ops::EvalError::ArityMismatch`
+- `pub hologram_ops::EvalError::InvalidIndex`
+- `pub hologram_ops::EvalError::LevelMismatch`
+- `pub hologram_ops::EvalError::NonTerminating`
+- `pub hologram_ops::EvalError::UnresolvedBinding`
+- `pub hologram_ops::OpKind::Abs`
+- `pub hologram_ops::OpKind::Acos`
+- `pub hologram_ops::OpKind::Add`
+- `pub hologram_ops::OpKind::AddRmsNorm`
+- `pub hologram_ops::OpKind::And`
+- `pub hologram_ops::OpKind::Asin`
+- `pub hologram_ops::OpKind::Atan`
+- `pub hologram_ops::OpKind::Attention`
+- `pub hologram_ops::OpKind::AvgPool2d`
+- `pub hologram_ops::OpKind::Bnot`
+- `pub hologram_ops::OpKind::Cast`
+- `pub hologram_ops::OpKind::Ceil`
+- `pub hologram_ops::OpKind::Clip`
+- `pub hologram_ops::OpKind::Col2Im`
+- `pub hologram_ops::OpKind::Concat`
+- `pub hologram_ops::OpKind::Conv2d`
+- `pub hologram_ops::OpKind::ConvTranspose2d`
+- `pub hologram_ops::OpKind::Cos`
+- `pub hologram_ops::OpKind::CumSum`
+- `pub hologram_ops::OpKind::Dequantize`
+- `pub hologram_ops::OpKind::Div`
+- `pub hologram_ops::OpKind::Elu`
+- `pub hologram_ops::OpKind::Equal`
+- `pub hologram_ops::OpKind::Erf`
+- `pub hologram_ops::OpKind::Exp`
+- `pub hologram_ops::OpKind::Expand`
+- `pub hologram_ops::OpKind::Floor`
+- `pub hologram_ops::OpKind::FusedSwiGlu`
+- `pub hologram_ops::OpKind::Gather`
+- `pub hologram_ops::OpKind::Gelu`
+- `pub hologram_ops::OpKind::Gemm`
+- `pub hologram_ops::OpKind::GlobalAvgPool`
+- `pub hologram_ops::OpKind::Greater`
+- `pub hologram_ops::OpKind::GreaterOrEqual`
+- `pub hologram_ops::OpKind::GroupNorm`
+- `pub hologram_ops::OpKind::Im2Col`
+- `pub hologram_ops::OpKind::InstanceNorm`
+- `pub hologram_ops::OpKind::IsNaN`
+- `pub hologram_ops::OpKind::KvCacheWrite`
+- `pub hologram_ops::OpKind::LayerNorm`
+- `pub hologram_ops::OpKind::Less`
+- `pub hologram_ops::OpKind::LessOrEqual`
+- `pub hologram_ops::OpKind::Log`
+- `pub hologram_ops::OpKind::Log1p`
+- `pub hologram_ops::OpKind::LogSoftmax`
+- `pub hologram_ops::OpKind::Lrn`
+- `pub hologram_ops::OpKind::MatMul`
+- `pub hologram_ops::OpKind::Max`
+- `pub hologram_ops::OpKind::MaxPool2d`
+- `pub hologram_ops::OpKind::Min`
+- `pub hologram_ops::OpKind::Mod`
+- `pub hologram_ops::OpKind::Mul`
+- `pub hologram_ops::OpKind::Neg`
+- `pub hologram_ops::OpKind::Or`
+- `pub hologram_ops::OpKind::Pad`
+- `pub hologram_ops::OpKind::Pow`
+- `pub hologram_ops::OpKind::Pred`
+- `pub hologram_ops::OpKind::Reciprocal`
+- `pub hologram_ops::OpKind::ReduceMax`
+- `pub hologram_ops::OpKind::ReduceMean`
+- `pub hologram_ops::OpKind::ReduceMin`
+- `pub hologram_ops::OpKind::ReduceProd`
+- `pub hologram_ops::OpKind::ReduceSum`
+- `pub hologram_ops::OpKind::Relu`
+- `pub hologram_ops::OpKind::Reshape`
+- `pub hologram_ops::OpKind::Resize`
+- `pub hologram_ops::OpKind::RmsNorm`
+- `pub hologram_ops::OpKind::RotaryEmbedding`
+- `pub hologram_ops::OpKind::Round`
+- `pub hologram_ops::OpKind::Selu`
+- `pub hologram_ops::OpKind::Sigmoid`
+- `pub hologram_ops::OpKind::Sign`
+- `pub hologram_ops::OpKind::Silu`
+- `pub hologram_ops::OpKind::Sin`
+- `pub hologram_ops::OpKind::Slice`
+- `pub hologram_ops::OpKind::Softmax`
+- `pub hologram_ops::OpKind::Sqrt`
+- `pub hologram_ops::OpKind::Sub`
+- `pub hologram_ops::OpKind::Succ`
+- `pub hologram_ops::OpKind::Tan`
+- `pub hologram_ops::OpKind::Tanh`
+- `pub hologram_ops::OpKind::Transpose`
+- `pub hologram_ops::OpKind::Where`
+- `pub hologram_ops::OpKind::Xor`
+- `pub hologram_ops::kind::OpKind::Abs`
+- `pub hologram_ops::kind::OpKind::Acos`
+- `pub hologram_ops::kind::OpKind::Add`
+- `pub hologram_ops::kind::OpKind::AddRmsNorm`
+- `pub hologram_ops::kind::OpKind::And`
+- `pub hologram_ops::kind::OpKind::Asin`
+- `pub hologram_ops::kind::OpKind::Atan`
+- `pub hologram_ops::kind::OpKind::Attention`
+- `pub hologram_ops::kind::OpKind::AvgPool2d`
+- `pub hologram_ops::kind::OpKind::Bnot`
+- `pub hologram_ops::kind::OpKind::Cast`
+- `pub hologram_ops::kind::OpKind::Ceil`
+- `pub hologram_ops::kind::OpKind::Clip`
+- `pub hologram_ops::kind::OpKind::Col2Im`
+- `pub hologram_ops::kind::OpKind::Concat`
+- `pub hologram_ops::kind::OpKind::Conv2d`
+- `pub hologram_ops::kind::OpKind::ConvTranspose2d`
+- `pub hologram_ops::kind::OpKind::Cos`
+- `pub hologram_ops::kind::OpKind::CumSum`
+- `pub hologram_ops::kind::OpKind::Dequantize`
+- `pub hologram_ops::kind::OpKind::Div`
+- `pub hologram_ops::kind::OpKind::Elu`
+- `pub hologram_ops::kind::OpKind::Equal`
+- `pub hologram_ops::kind::OpKind::Erf`
+- `pub hologram_ops::kind::OpKind::Exp`
+- `pub hologram_ops::kind::OpKind::Expand`
+- `pub hologram_ops::kind::OpKind::Floor`
+- `pub hologram_ops::kind::OpKind::FusedSwiGlu`
+- `pub hologram_ops::kind::OpKind::Gather`
+- `pub hologram_ops::kind::OpKind::Gelu`
+- `pub hologram_ops::kind::OpKind::Gemm`
+- `pub hologram_ops::kind::OpKind::GlobalAvgPool`
+- `pub hologram_ops::kind::OpKind::Greater`
+- `pub hologram_ops::kind::OpKind::GreaterOrEqual`
+- `pub hologram_ops::kind::OpKind::GroupNorm`
+- `pub hologram_ops::kind::OpKind::Im2Col`
+- `pub hologram_ops::kind::OpKind::InstanceNorm`
+- `pub hologram_ops::kind::OpKind::IsNaN`
+- `pub hologram_ops::kind::OpKind::KvCacheWrite`
+- `pub hologram_ops::kind::OpKind::LayerNorm`
+- `pub hologram_ops::kind::OpKind::Less`
+- `pub hologram_ops::kind::OpKind::LessOrEqual`
+- `pub hologram_ops::kind::OpKind::Log`
+- `pub hologram_ops::kind::OpKind::Log1p`
+- `pub hologram_ops::kind::OpKind::LogSoftmax`
+- `pub hologram_ops::kind::OpKind::Lrn`
+- `pub hologram_ops::kind::OpKind::MatMul`
+- `pub hologram_ops::kind::OpKind::Max`
+- `pub hologram_ops::kind::OpKind::MaxPool2d`
+- `pub hologram_ops::kind::OpKind::Min`
+- `pub hologram_ops::kind::OpKind::Mod`
+- `pub hologram_ops::kind::OpKind::Mul`
+- `pub hologram_ops::kind::OpKind::Neg`
+- `pub hologram_ops::kind::OpKind::Or`
+- `pub hologram_ops::kind::OpKind::Pad`
+- `pub hologram_ops::kind::OpKind::Pow`
+- `pub hologram_ops::kind::OpKind::Pred`
+- `pub hologram_ops::kind::OpKind::Reciprocal`
+- `pub hologram_ops::kind::OpKind::ReduceMax`
+- `pub hologram_ops::kind::OpKind::ReduceMean`
+- `pub hologram_ops::kind::OpKind::ReduceMin`
+- `pub hologram_ops::kind::OpKind::ReduceProd`
+- `pub hologram_ops::kind::OpKind::ReduceSum`
+- `pub hologram_ops::kind::OpKind::Relu`
+- `pub hologram_ops::kind::OpKind::Reshape`
+- `pub hologram_ops::kind::OpKind::Resize`
+- `pub hologram_ops::kind::OpKind::RmsNorm`
+- `pub hologram_ops::kind::OpKind::RotaryEmbedding`
+- `pub hologram_ops::kind::OpKind::Round`
+- `pub hologram_ops::kind::OpKind::Selu`
+- `pub hologram_ops::kind::OpKind::Sigmoid`
+- `pub hologram_ops::kind::OpKind::Sign`
+- `pub hologram_ops::kind::OpKind::Silu`
+- `pub hologram_ops::kind::OpKind::Sin`
+- `pub hologram_ops::kind::OpKind::Slice`
+- `pub hologram_ops::kind::OpKind::Softmax`
+- `pub hologram_ops::kind::OpKind::Sqrt`
+- `pub hologram_ops::kind::OpKind::Sub`
+- `pub hologram_ops::kind::OpKind::Succ`
+- `pub hologram_ops::kind::OpKind::Tan`
+- `pub hologram_ops::kind::OpKind::Tanh`
+- `pub hologram_ops::kind::OpKind::Transpose`
+- `pub hologram_ops::kind::OpKind::Where`
+- `pub hologram_ops::kind::OpKind::Xor`
+- `pub hologram_ops::reference::EvalError::ArityMismatch`
+- `pub hologram_ops::reference::EvalError::InvalidIndex`
+- `pub hologram_ops::reference::EvalError::LevelMismatch`
+- `pub hologram_ops::reference::EvalError::NonTerminating`
+- `pub hologram_ops::reference::EvalError::UnresolvedBinding`
+- `pub hologram_types::DTypeKind::Bfloat`
+- `pub hologram_types::DTypeKind::Bool`
+- `pub hologram_types::DTypeKind::Float`
+- `pub hologram_types::DTypeKind::SignedInt`
+- `pub hologram_types::DTypeKind::UnsignedInt`
+- `pub hologram_types::MemoryTier::CpuL1 = 0`
+- `pub hologram_types::MemoryTier::CpuL2 = 1`
+- `pub hologram_types::MemoryTier::CpuMain = 2`
+- `pub hologram_types::MemoryTier::Device = 3`
+- `pub hologram_types::dtype::DTypeKind::Bfloat`
+- `pub hologram_types::dtype::DTypeKind::Bool`
+- `pub hologram_types::dtype::DTypeKind::Float`
+- `pub hologram_types::dtype::DTypeKind::SignedInt`
+- `pub hologram_types::dtype::DTypeKind::UnsignedInt`
+- `pub hologram_types::memory_tier::MemoryTier::CpuL1 = 0`
+- `pub hologram_types::memory_tier::MemoryTier::CpuL2 = 1`
+- `pub hologram_types::memory_tier::MemoryTier::CpuMain = 2`
+- `pub hologram_types::memory_tier::MemoryTier::Device = 3`
+- `pub mod hologram`
+- `pub mod hologram_archive`
+- `pub mod hologram_archive::address`
+- `pub mod hologram_archive::certificate_codec`
+- `pub mod hologram_archive::compose`
+- `pub mod hologram_archive::constant_codec`
+- `pub mod hologram_archive::decoder`
+- `pub mod hologram_archive::error`
+- `pub mod hologram_archive::format`
+- `pub mod hologram_archive::kernel_codec`
+- `pub mod hologram_archive::loader`
+- `pub mod hologram_archive::schedule_codec`
+- `pub mod hologram_archive::warm_codec`
+- `pub mod hologram_archive::weight`
+- `pub mod hologram_archive::writer`
+- `pub mod hologram_compiler`
+- `pub mod hologram_compiler::cache`
+- `pub mod hologram_compiler::compiler`
+- `pub mod hologram_compiler::error`
+- `pub mod hologram_compiler::lower`
+- `pub mod hologram_compiler::pipeline`
+- `pub mod hologram_compiler::source`
+- `pub mod hologram_compute`
+- `pub mod hologram_compute::backend`
+- `pub mod hologram_compute::broadcast_op`
+- `pub mod hologram_compute::cpu`
+- `pub mod hologram_compute::cpu::dtype`
+- `pub mod hologram_compute::cpu::lut`
+- `pub mod hologram_compute::cpu::simd`
+- `pub mod hologram_compute::decode_gate`
+- `pub mod hologram_compute::error`
+- `pub mod hologram_compute::fused_activation`
+- `pub mod hologram_compute::kernel_call`
+- `pub mod hologram_compute::kernel_call::broadcast_op`
+- `pub mod hologram_compute::kernel_call::decode_gate`
+- `pub mod hologram_compute::kernel_call::fused_activation`
+- `pub mod hologram_compute::kernel_call::lut_act`
+- `pub mod hologram_compute::kernel_call::mm_act_quant`
+- `pub mod hologram_compute::layout`
+- `pub mod hologram_compute::lut_act`
+- `pub mod hologram_compute::mm_act_quant`
+- `pub mod hologram_compute::prism_axes`
+- `pub mod hologram_compute::quant_tier`
+- `pub mod hologram_compute::workspace`
+- `pub mod hologram_exec`
+- `pub mod hologram_exec::buffer`
+- `pub mod hologram_exec::error`
+- `pub mod hologram_exec::prism_route`
+- `pub mod hologram_exec::refinement`
+- `pub mod hologram_exec::session`
+- `pub mod hologram_exec::warm`
+- `pub mod hologram_ffi`
+- `pub mod hologram_ffi::sdk`
+- `pub mod hologram_graph`
+- `pub mod hologram_graph::backward`
+- `pub mod hologram_graph::constant`
+- `pub mod hologram_graph::graph`
+- `pub mod hologram_graph::node`
+- `pub mod hologram_graph::registry`
+- `pub mod hologram_graph::schedule`
+- `pub mod hologram_ops`
+- `pub mod hologram_ops::activation_reduce`
+- `pub mod hologram_ops::activations`
+- `pub mod hologram_ops::conv`
+- `pub mod hologram_ops::direct`
+- `pub mod hologram_ops::dispatch`
+- `pub mod hologram_ops::elementwise_binary`
+- `pub mod hologram_ops::elementwise_unary`
+- `pub mod hologram_ops::emit`
+- `pub mod hologram_ops::grounding`
+- `pub mod hologram_ops::kind`
+- `pub mod hologram_ops::layout`
+- `pub mod hologram_ops::linalg`
+- `pub mod hologram_ops::lut`
+- `pub mod hologram_ops::normalization`
+- `pub mod hologram_ops::pooling`
+- `pub mod hologram_ops::quantization`
+- `pub mod hologram_ops::reduction`
+- `pub mod hologram_ops::reference`
+- `pub mod hologram_ops::structured`
+- `pub mod hologram_ops::utility`
+- `pub mod hologram_types`
+- `pub mod hologram_types::act_quant`
+- `pub mod hologram_types::dtype`
+- `pub mod hologram_types::dtype_id`
+- `pub mod hologram_types::dtype_id::act_quant`
+- `pub mod hologram_types::dtype_id::weight_layout`
+- `pub mod hologram_types::host`
+- `pub mod hologram_types::memory_tier`
+- `pub mod hologram_types::shape`
+- `pub mod hologram_types::weight_layout`
+- `pub struct hologram_archive::HoloHeader`
+- `pub struct hologram_archive::HoloLoader<'a>`
+- `pub struct hologram_archive::HoloWriter`
+- `pub struct hologram_archive::LoadedPlan<'a>`
+- `pub struct hologram_archive::PortDescriptor`
+- `pub struct hologram_archive::WarmEntry`
+- `pub struct hologram_archive::WeightFingerprint(pub [u8; 32])`
+- `pub struct hologram_archive::WeightStore`
+- `pub struct hologram_archive::certificate_codec::CertificateRecord`
+- `pub struct hologram_archive::compose::OrderedCarrier<'a>(_)`
+- `pub struct hologram_archive::compose::OrderedLabel`
+- `pub struct hologram_archive::compose::OrderedModel`
+- `pub struct hologram_archive::compose::OrderedRoute`
+- `pub struct hologram_archive::constant_codec::ConstantEntry`
+- `pub struct hologram_archive::format::HoloHeader`
+- `pub struct hologram_archive::format::SectionRef`
+- `pub struct hologram_archive::loader::HoloLoader<'a>`
+- `pub struct hologram_archive::loader::LoadedPlan<'a>`
+- `pub struct hologram_archive::warm_codec::WarmEntry`
+- `pub struct hologram_archive::weight::WeightFingerprint(pub [u8; 32])`
+- `pub struct hologram_archive::weight::WeightStore`
+- `pub struct hologram_archive::writer::HoloWriter`
+- `pub struct hologram_archive::writer::PortDescriptor`
+- `pub struct hologram_compiler::CachedCertificate`
+- `pub struct hologram_compiler::CertificateCache`
+- `pub struct hologram_compiler::CompilationOutput`
+- `pub struct hologram_compiler::CompilationStats`
+- `pub struct hologram_compiler::Compiler`
+- `pub struct hologram_compiler::cache::CachedCertificate`
+- `pub struct hologram_compiler::cache::CertificateCache`
+- `pub struct hologram_compiler::compiler::CompilationOutput`
+- `pub struct hologram_compiler::compiler::CompilationStats`
+- `pub struct hologram_compiler::compiler::Compiler`
+- `pub struct hologram_compiler::lower::LoweredNode`
+- `pub struct hologram_compiler::lower::QuantParams`
+- `pub struct hologram_compiler::lower::ShapeArgs`
+- `pub struct hologram_compiler::pipeline::PerNodeUnit<'a>`
+- `pub struct hologram_compiler::source::HologramFrontend`
+- `pub struct hologram_compiler::source::PythonFrontend`
+- `pub struct hologram_compiler::source::RustFrontend`
+- `pub struct hologram_compiler::source::SourceAttrs`
+- `pub struct hologram_compiler::source::SourceBinding`
+- `pub struct hologram_compiler::source::SourceConst`
+- `pub struct hologram_compiler::source::SourceDiagnostic`
+- `pub struct hologram_compiler::source::SourceDocument`
+- `pub struct hologram_compiler::source::SourceExternalConst`
+- `pub struct hologram_compiler::source::SourceExternalTensor`
+- `pub struct hologram_compiler::source::SourceFrontendInfo`
+- `pub struct hologram_compiler::source::SourceGraph`
+- `pub struct hologram_compiler::source::SourceInput`
+- `pub struct hologram_compiler::source::SourceOpCall`
+- `pub struct hologram_compiler::source::SourceOutput`
+- `pub struct hologram_compiler::source::SourceParseOptions`
+- `pub struct hologram_compiler::source::SourceProgram`
+- `pub struct hologram_compiler::source::SourceSpan`
+- `pub struct hologram_compiler::source::SourceSymbol(pub u32)`
+- `pub struct hologram_compiler::source::SourceTensorLiteral`
+- `pub struct hologram_compiler::source::SourceType`
+- `pub struct hologram_compiler::source::TypeScriptFrontend`
+- `pub struct hologram_compute::AttentionCall`
+- `pub struct hologram_compute::BinaryCall`
+- `pub struct hologram_compute::BroadcastBinaryCall`
+- `pub struct hologram_compute::BufferRef`
+- `pub struct hologram_compute::CastCall`
+- `pub struct hologram_compute::Conv2dCall`
+- `pub struct hologram_compute::CpuBackend<W: hologram_compute::workspace::Workspace>`
+- `pub struct hologram_compute::DecodeAttentionCall`
+- `pub struct hologram_compute::DecodeAttentionValidCall`
+- `pub struct hologram_compute::DequantActivationCall`
+- `pub struct hologram_compute::DequantizeCall`
+- `pub struct hologram_compute::ExpandCall`
+- `pub struct hologram_compute::GatherCall`
+- `pub struct hologram_compute::GemmCall`
+- `pub struct hologram_compute::HologramF32MatmulSquare<const DIM: usize>`
+- `pub struct hologram_compute::HologramF32VectorActivation<const N: usize>`
+- `pub struct hologram_compute::Im2ColCall`
+- `pub struct hologram_compute::KvCacheWriteCall`
+- `pub struct hologram_compute::LayoutCall`
+- `pub struct hologram_compute::LrnCall`
+- `pub struct hologram_compute::MatMulActivationCall`
+- `pub struct hologram_compute::MatMulAddActivationCall`
+- `pub struct hologram_compute::MatMulAddCall`
+- `pub struct hologram_compute::MatMulCall`
+- `pub struct hologram_compute::MatMulDequantCall`
+- `pub struct hologram_compute::NormCall`
+- `pub struct hologram_compute::OpSignature`
+- `pub struct hologram_compute::PoolCall`
+- `pub struct hologram_compute::ReduceCall`
+- `pub struct hologram_compute::RoPECall`
+- `pub struct hologram_compute::SoftmaxCall`
+- `pub struct hologram_compute::TransposeCall`
+- `pub struct hologram_compute::UnaryCall`
+- `pub struct hologram_compute::WhereCall`
+- `pub struct hologram_compute::cpu::CpuBackend<W: hologram_compute::workspace::Workspace>`
+- `pub struct hologram_compute::kernel_call::AttentionCall`
+- `pub struct hologram_compute::kernel_call::BinaryCall`
+- `pub struct hologram_compute::kernel_call::BroadcastBinaryCall`
+- `pub struct hologram_compute::kernel_call::CastCall`
+- `pub struct hologram_compute::kernel_call::Conv2dCall`
+- `pub struct hologram_compute::kernel_call::DecodeAttentionCall`
+- `pub struct hologram_compute::kernel_call::DecodeAttentionValidCall`
+- `pub struct hologram_compute::kernel_call::DequantActivationCall`
+- `pub struct hologram_compute::kernel_call::DequantizeCall`
+- `pub struct hologram_compute::kernel_call::ExpandCall`
+- `pub struct hologram_compute::kernel_call::GatherCall`
+- `pub struct hologram_compute::kernel_call::GemmCall`
+- `pub struct hologram_compute::kernel_call::Im2ColCall`
+- `pub struct hologram_compute::kernel_call::KvCacheWriteCall`
+- `pub struct hologram_compute::kernel_call::LayoutCall`
+- `pub struct hologram_compute::kernel_call::LrnCall`
+- `pub struct hologram_compute::kernel_call::MatMulActivationCall`
+- `pub struct hologram_compute::kernel_call::MatMulAddActivationCall`
+- `pub struct hologram_compute::kernel_call::MatMulAddCall`
+- `pub struct hologram_compute::kernel_call::MatMulCall`
+- `pub struct hologram_compute::kernel_call::MatMulDequantCall`
+- `pub struct hologram_compute::kernel_call::NormCall`
+- `pub struct hologram_compute::kernel_call::OpSignature`
+- `pub struct hologram_compute::kernel_call::PoolCall`
+- `pub struct hologram_compute::kernel_call::ReduceCall`
+- `pub struct hologram_compute::kernel_call::RoPECall`
+- `pub struct hologram_compute::kernel_call::SoftmaxCall`
+- `pub struct hologram_compute::kernel_call::TransposeCall`
+- `pub struct hologram_compute::kernel_call::UnaryCall`
+- `pub struct hologram_compute::kernel_call::WhereCall`
+- `pub struct hologram_compute::prism_axes::HologramF32MatmulSquare<const DIM: usize>`
+- `pub struct hologram_compute::prism_axes::HologramF32VectorActivation<const N: usize>`
+- `pub struct hologram_compute::prism_axes::HologramTensorMatmulF32`
+- `pub struct hologram_compute::quant_tier::QuantTier`
+- `pub struct hologram_compute::workspace::BufferRef`
+- `pub struct hologram_exec::AttestedExecution`
+- `pub struct hologram_exec::BufferArena`
+- `pub struct hologram_exec::CompiledRefinement<B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::FileWarmStore`
+- `pub struct hologram_exec::InferenceSession<B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::InputBuffer<'a>`
+- `pub struct hologram_exec::MemWarmStore`
+- `pub struct hologram_exec::OutputBuffer`
+- `pub struct hologram_exec::RefinementPlan`
+- `pub struct hologram_exec::RefinementPlanBuilder`
+- `pub struct hologram_exec::RefinementReport`
+- `pub struct hologram_exec::RefinementRunner<'a, B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::RefinementStateContract`
+- `pub struct hologram_exec::RefinementStatePort`
+- `pub struct hologram_exec::SlotSpan`
+- `pub struct hologram_exec::ValidatorOutcome`
+- `pub struct hologram_exec::buffer::BufferArena`
+- `pub struct hologram_exec::buffer::InputBuffer<'a>`
+- `pub struct hologram_exec::buffer::OutputBuffer`
+- `pub struct hologram_exec::buffer::SlotSpan`
+- `pub struct hologram_exec::prism_route::AttestedExecution`
+- `pub struct hologram_exec::refinement::CompiledRefinement<B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::refinement::RefinementPlan`
+- `pub struct hologram_exec::refinement::RefinementPlanBuilder`
+- `pub struct hologram_exec::refinement::RefinementReport`
+- `pub struct hologram_exec::refinement::RefinementRunner<'a, B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::refinement::RefinementStateContract`
+- `pub struct hologram_exec::refinement::RefinementStatePort`
+- `pub struct hologram_exec::refinement::ValidatorOutcome`
+- `pub struct hologram_exec::session::InferenceSession<B: hologram_exec::session::SessionBackend>`
+- `pub struct hologram_exec::warm::FileWarmStore`
+- `pub struct hologram_exec::warm::MemWarmStore`
+- `pub struct hologram_ffi::HologramSourceBuilder`
+- `pub struct hologram_ffi::sdk::SdkDType`
+- `pub struct hologram_ffi::sdk::SdkOp`
+- `pub struct hologram_graph::AttentionAttrs`
+- `pub struct hologram_graph::ConstantId(pub u32)`
+- `pub struct hologram_graph::ConstantStore`
+- `pub struct hologram_graph::ConvAttrs`
+- `pub struct hologram_graph::GatherAttrs`
+- `pub struct hologram_graph::GemmAttrs`
+- `pub struct hologram_graph::Graph`
+- `pub struct hologram_graph::LrnAttrs`
+- `pub struct hologram_graph::Node`
+- `pub struct hologram_graph::NodeId(pub u32)`
+- `pub struct hologram_graph::NormAttrs`
+- `pub struct hologram_graph::QuantAttrs`
+- `pub struct hologram_graph::ReduceAttrs`
+- `pub struct hologram_graph::Schedule`
+- `pub struct hologram_graph::ShapeDescriptor`
+- `pub struct hologram_graph::ShapeId(pub u32)`
+- `pub struct hologram_graph::ShapeRegistry`
+- `pub struct hologram_graph::constant::ConstantEntry`
+- `pub struct hologram_graph::constant::ConstantStore`
+- `pub struct hologram_graph::graph::Graph`
+- `pub struct hologram_graph::node::AttentionAttrs`
+- `pub struct hologram_graph::node::ConstantId(pub u32)`
+- `pub struct hologram_graph::node::ConvAttrs`
+- `pub struct hologram_graph::node::GatherAttrs`
+- `pub struct hologram_graph::node::GemmAttrs`
+- `pub struct hologram_graph::node::LrnAttrs`
+- `pub struct hologram_graph::node::Node`
+- `pub struct hologram_graph::node::NodeId(pub u32)`
+- `pub struct hologram_graph::node::NormAttrs`
+- `pub struct hologram_graph::node::QuantAttrs`
+- `pub struct hologram_graph::node::ReduceAttrs`
+- `pub struct hologram_graph::registry::ShapeDescriptor`
+- `pub struct hologram_graph::registry::ShapeId(pub u32)`
+- `pub struct hologram_graph::registry::ShapeRegistry`
+- `pub struct hologram_graph::schedule::Schedule`
+- `pub struct hologram_ops::ScalarEvaluatorU64`
+- `pub struct hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::activations::Gelu`
+- `pub struct hologram_ops::activations::Relu`
+- `pub struct hologram_ops::activations::Sigmoid`
+- `pub struct hologram_ops::activations::Silu`
+- `pub struct hologram_ops::activations::Tanh`
+- `pub struct hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, P: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::direct::AddOp`
+- `pub struct hologram_ops::direct::AndOp`
+- `pub struct hologram_ops::direct::BnotOp`
+- `pub struct hologram_ops::direct::MulOp`
+- `pub struct hologram_ops::direct::NegOp`
+- `pub struct hologram_ops::direct::OrOp`
+- `pub struct hologram_ops::direct::PredOp`
+- `pub struct hologram_ops::direct::SubOp`
+- `pub struct hologram_ops::direct::SuccOp`
+- `pub struct hologram_ops::direct::XorOp`
+- `pub struct hologram_ops::elementwise_binary::DivOp`
+- `pub struct hologram_ops::elementwise_binary::EqualOp`
+- `pub struct hologram_ops::elementwise_binary::GreaterOp`
+- `pub struct hologram_ops::elementwise_binary::GreaterOrEqualOp`
+- `pub struct hologram_ops::elementwise_binary::LessOp`
+- `pub struct hologram_ops::elementwise_binary::LessOrEqualOp`
+- `pub struct hologram_ops::elementwise_binary::MaxOp`
+- `pub struct hologram_ops::elementwise_binary::MinOp`
+- `pub struct hologram_ops::elementwise_binary::ModOp`
+- `pub struct hologram_ops::elementwise_binary::PowOp`
+- `pub struct hologram_ops::elementwise_unary::AbsOp`
+- `pub struct hologram_ops::elementwise_unary::AcosOp`
+- `pub struct hologram_ops::elementwise_unary::AsinOp`
+- `pub struct hologram_ops::elementwise_unary::AtanOp`
+- `pub struct hologram_ops::elementwise_unary::CeilOp`
+- `pub struct hologram_ops::elementwise_unary::CosOp`
+- `pub struct hologram_ops::elementwise_unary::EluOp`
+- `pub struct hologram_ops::elementwise_unary::ErfOp`
+- `pub struct hologram_ops::elementwise_unary::ExpOp`
+- `pub struct hologram_ops::elementwise_unary::FloorOp`
+- `pub struct hologram_ops::elementwise_unary::GeluOp`
+- `pub struct hologram_ops::elementwise_unary::IsNaNOp`
+- `pub struct hologram_ops::elementwise_unary::Log1pOp`
+- `pub struct hologram_ops::elementwise_unary::LogOp`
+- `pub struct hologram_ops::elementwise_unary::ReciprocalOp`
+- `pub struct hologram_ops::elementwise_unary::ReluOp`
+- `pub struct hologram_ops::elementwise_unary::RoundOp`
+- `pub struct hologram_ops::elementwise_unary::SeluOp`
+- `pub struct hologram_ops::elementwise_unary::SigmoidOp`
+- `pub struct hologram_ops::elementwise_unary::SignOp`
+- `pub struct hologram_ops::elementwise_unary::SiluOp`
+- `pub struct hologram_ops::elementwise_unary::SinOp`
+- `pub struct hologram_ops::elementwise_unary::SqrtOp`
+- `pub struct hologram_ops::elementwise_unary::TanOp`
+- `pub struct hologram_ops::elementwise_unary::TanhOp`
+- `pub struct hologram_ops::grounding::ConstantGrounding<D, B>(_)`
+- `pub struct hologram_ops::grounding::WeightLoaderGrounding<D, B>(_)`
+- `pub struct hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: uor_foundation::pipeline::ConstrainedTypeShape, Inputs: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: uor_foundation::pipeline::ConstrainedTypeShape, New: uor_foundation::pipeline::ConstrainedTypeShape, Pos: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Starts: uor_foundation::pipeline::ConstrainedTypeShape, Ends: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Perm: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::linalg::GemmOp<const M: u64, const K: u64, const N: u64, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::linalg::MatMulOp<const M: u64, const K: u64, const N: u64, D, B> where D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::normalization::GroupNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::normalization::InstanceNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::normalization::LayerNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::normalization::RmsNormOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Qd: uor_foundation::pipeline::ConstrainedTypeShape, Td: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axes: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::reference::ScalarEvaluatorU64`
+- `pub struct hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: uor_foundation::pipeline::ConstrainedTypeShape, K: uor_foundation::pipeline::ConstrainedTypeShape, V: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: uor_foundation::pipeline::ConstrainedTypeShape, W: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Lo: uor_foundation::pipeline::ConstrainedTypeShape, Hi: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, Axis: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::LrnOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Pad: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: uor_foundation::pipeline::ConstrainedTypeShape, Sout: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_ops::utility::WhereOp<S, D, B> where S: uor_foundation::pipeline::ConstrainedTypeShape, D: uor_foundation::pipeline::ConstrainedTypeShape, B: uor_foundation::HostBounds(_)`
+- `pub struct hologram_types::DTypeBf16`
+- `pub struct hologram_types::DTypeBool`
+- `pub struct hologram_types::DTypeF16`
+- `pub struct hologram_types::DTypeF32`
+- `pub struct hologram_types::DTypeF64`
+- `pub struct hologram_types::DTypeI32`
+- `pub struct hologram_types::DTypeI4`
+- `pub struct hologram_types::DTypeI64`
+- `pub struct hologram_types::DTypeI8`
+- `pub struct hologram_types::DTypeU64`
+- `pub struct hologram_types::DTypeU8`
+- `pub struct hologram_types::Dim<const N: u64>`
+- `pub struct hologram_types::HologramHostBoundsAvx2`
+- `pub struct hologram_types::HologramHostBoundsAvx512`
+- `pub struct hologram_types::HologramHostBoundsCpu`
+- `pub struct hologram_types::HologramHostBoundsMetal`
+- `pub struct hologram_types::HologramHostBoundsNeon`
+- `pub struct hologram_types::HologramHostBoundsWgpu`
+- `pub struct hologram_types::Shape1<D0, const SITES: usize>(_)`
+- `pub struct hologram_types::Shape2<D0, D1, const SITES: usize>(_)`
+- `pub struct hologram_types::dtype::DTypeBf16`
+- `pub struct hologram_types::dtype::DTypeBool`
+- `pub struct hologram_types::dtype::DTypeF16`
+- `pub struct hologram_types::dtype::DTypeF32`
+- `pub struct hologram_types::dtype::DTypeF64`
+- `pub struct hologram_types::dtype::DTypeI32`
+- `pub struct hologram_types::dtype::DTypeI4`
+- `pub struct hologram_types::dtype::DTypeI64`
+- `pub struct hologram_types::dtype::DTypeI8`
+- `pub struct hologram_types::dtype::DTypeU64`
+- `pub struct hologram_types::dtype::DTypeU8`
+- `pub struct hologram_types::host::HologramHostBoundsAvx2`
+- `pub struct hologram_types::host::HologramHostBoundsAvx512`
+- `pub struct hologram_types::host::HologramHostBoundsCpu`
+- `pub struct hologram_types::host::HologramHostBoundsMetal`
+- `pub struct hologram_types::host::HologramHostBoundsNeon`
+- `pub struct hologram_types::host::HologramHostBoundsWgpu`
+- `pub struct hologram_types::shape::Dim<const N: u64>`
+- `pub struct hologram_types::shape::Shape1<D0, const SITES: usize>(_)`
+- `pub struct hologram_types::shape::Shape2<D0, D1, const SITES: usize>(_)`
+- `pub trait hologram_archive::WeightProvider`
+- `pub trait hologram_archive::weight::WeightProvider`
+- `pub trait hologram_compiler::source::SourceFrontend: core::default::Default`
+- `pub trait hologram_compute::Backend`
+- `pub trait hologram_compute::Workspace`
+- `pub trait hologram_compute::backend::Backend`
+- `pub trait hologram_compute::workspace::Workspace`
+- `pub trait hologram_exec::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>`
+- `pub trait hologram_exec::WarmStore`
+- `pub trait hologram_exec::session::SessionBackend: hologram_compute::backend::Backend<WS = hologram_exec::buffer::BufferArena>`
+- `pub trait hologram_exec::warm::WarmStore`
+- `pub trait hologram_ops::ReferenceEvaluator`
+- `pub trait hologram_ops::lut::ActivationFn`
+- `pub trait hologram_ops::reference::ReferenceEvaluator`
+- `pub trait hologram_types::DType: uor_foundation::pipeline::ConstrainedTypeShape`
+- `pub trait hologram_types::dtype::DType: uor_foundation::pipeline::ConstrainedTypeShape`
+- `pub type hologram_archive::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>`
+- `pub type hologram_archive::ContentLabel = uor_addr::label::KappaLabel<71>`
+- `pub type hologram_archive::address::ContentLabel = uor_addr::label::KappaLabel<71>`
+- `pub type hologram_archive::compose::OrderedModel::Input = hologram_archive::compose::OrderedCarrier<'a>`
+- `pub type hologram_archive::compose::OrderedModel::Output = hologram_archive::compose::OrderedLabel`
+- `pub type hologram_archive::compose::OrderedModel::Route = hologram_archive::compose::OrderedRoute`
+- `pub type hologram_archive::loader::ContentBlobs<'a> = alloc::vec::Vec<(&'a [u8], &'a [u8])>`
+- `pub type hologram_compute::Backend::Bounds: uor_foundation::HostBounds`
+- `pub type hologram_compute::Backend::WS: hologram_compute::workspace::Workspace`
+- `pub type hologram_compute::HologramF32Tensor16x16Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<16>`
+- `pub type hologram_compute::HologramF32Tensor4x4Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<4>`
+- `pub type hologram_compute::HologramF32Tensor8x8Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<8>`
+- `pub type hologram_compute::HologramF32VectorActivation16 = hologram_compute::prism_axes::HologramF32VectorActivation<16>`
+- `pub type hologram_compute::HologramF32VectorActivation256 = hologram_compute::prism_axes::HologramF32VectorActivation<256>`
+- `pub type hologram_compute::HologramF32VectorActivation64 = hologram_compute::prism_axes::HologramF32VectorActivation<64>`
+- `pub type hologram_compute::SplitReads<'a> = smallvec::SmallVec<[&'a [u8]; 4]>`
+- `pub type hologram_compute::backend::Backend::Bounds: uor_foundation::HostBounds`
+- `pub type hologram_compute::backend::Backend::WS: hologram_compute::workspace::Workspace`
+- `pub type hologram_compute::cpu::CpuBackend<W>::Bounds = hologram_types::host::bounds::HologramHostBoundsCpu`
+- `pub type hologram_compute::cpu::CpuBackend<W>::WS = W`
+- `pub type hologram_compute::prism_axes::HologramF32Tensor16x16Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<16>`
+- `pub type hologram_compute::prism_axes::HologramF32Tensor4x4Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<4>`
+- `pub type hologram_compute::prism_axes::HologramF32Tensor8x8Matmul = hologram_compute::prism_axes::HologramF32MatmulSquare<8>`
+- `pub type hologram_compute::prism_axes::HologramF32VectorActivation16 = hologram_compute::prism_axes::HologramF32VectorActivation<16>`
+- `pub type hologram_compute::prism_axes::HologramF32VectorActivation256 = hologram_compute::prism_axes::HologramF32VectorActivation<256>`
+- `pub type hologram_compute::prism_axes::HologramF32VectorActivation64 = hologram_compute::prism_axes::HologramF32VectorActivation<64>`
+- `pub type hologram_compute::workspace::SplitReads<'a> = smallvec::SmallVec<[&'a [u8]; 4]>`
+- `pub type hologram_ops::HoloArena<const CAP: usize> = uor_foundation::enforcement::TermArena<'static, HOLOGRAM_INLINE_BYTES, CAP>`
+- `pub type hologram_ops::HoloTerm = uor_foundation::enforcement::Term<'static, HOLOGRAM_INLINE_BYTES>`
+- `pub type hologram_ops::ReferenceEvaluator::Bindings: ?core::marker::Sized`
+- `pub type hologram_ops::ReferenceEvaluator::Value: core::marker::Copy`
+- `pub type hologram_ops::emit::EmitResult = core::option::Option<u32>`
+- `pub type hologram_ops::emit::HoloArena<const CAP: usize> = uor_foundation::enforcement::TermArena<'static, HOLOGRAM_INLINE_BYTES, CAP>`
+- `pub type hologram_ops::emit::HoloTerm = uor_foundation::enforcement::Term<'static, HOLOGRAM_INLINE_BYTES>`
+- `pub type hologram_ops::grounding::ConstantGrounding<D, B>::Map = uor_foundation::enforcement::BinaryGroundingMap`
+- `pub type hologram_ops::grounding::ConstantGrounding<D, B>::Output = uor_foundation::enforcement::GroundedCoord`
+- `pub type hologram_ops::grounding::WeightLoaderGrounding<D, B>::Map = uor_foundation::enforcement::BinaryGroundingMap`
+- `pub type hologram_ops::grounding::WeightLoaderGrounding<D, B>::Output = uor_foundation::enforcement::GroundedCoord`
+- `pub type hologram_ops::reference::ReferenceEvaluator::Bindings: ?core::marker::Sized`
+- `pub type hologram_ops::reference::ReferenceEvaluator::Value: core::marker::Copy`
+- `pub type hologram_ops::reference::ScalarEvaluatorU64::Bindings = [u64]`
+- `pub type hologram_ops::reference::ScalarEvaluatorU64::Value = u64`
+- `pub type hologram_types::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu`
+- `pub type hologram_types::HologramHasher = prism_crypto::hash::Blake3Hasher`
+- `pub type hologram_types::HologramHostTypes = uor_foundation::DefaultHostTypes`
+- `pub type hologram_types::host::ActiveCpuBounds = hologram_types::HologramHostBoundsCpu`
+- `pub type hologram_types::host::HologramHasher = prism_crypto::hash::Blake3Hasher`
+- `pub type hologram_types::host::HologramHostTypes = uor_foundation::DefaultHostTypes`
+- `pub use hologram_archive::AddressOutcome`
+- `pub use hologram_archive::AddressWitness`
+- `pub use hologram_archive::KappaLabel`
+- `pub use hologram_archive::address::AddressFailure`
+- `pub use hologram_archive::address::AddressOutcome`
+- `pub use hologram_archive::address::AddressWitness`
+- `pub use hologram_archive::address::CompositionFailure`
+- `pub use hologram_archive::address::KappaLabel`
+- `pub use hologram_archive::address::VerifyError`
+- `pub use hologram_archive::address::compose_e6_filtration`
+- `pub use hologram_archive::address::compose_e7_augmentation`
+- `pub use hologram_archive::address::compose_e8_embedding`
+- `pub use hologram_archive::address::compose_f4_quotient`
+- `pub use hologram_archive::address::compose_g2_product`
+- `pub use hologram_archive::address::composition`
+- `pub use hologram_archive::address::ring`
+- `pub use hologram_compute::cpu::dtype::DTypeId`
+- `pub use hologram_graph::DTypeId`
+- `pub use hologram_graph::OpKind`
+- `pub use hologram_graph::registry::DTypeId`
+- `pub use hologram_types::Digest`
+- `pub use hologram_types::MatrixShape`
+- `pub use hologram_types::VectorShape`
+- `pub use hologram_types::host::prism`
+- `pub use hologram_types::host::sdk`
+- `pub use hologram_types::prism`
+- `pub use hologram_types::sdk`
+- `}, prism_model! {`
+- `}, uor_addr::resolvers::AddressResolverTuple<prism_crypto::hash::Blake3Hasher>> for hologram_archive::compose::OrderedModel`
+- `}> for hologram_archive::compose::OrderedRoute`
+
+
 Categorized public-API changes per release (Added / Changed / Deprecated /
 Removed), generated at release time by `scripts/api-changelog.py` from the
 per-crate snapshots in `api/`. See `specs/docs/quality-gates.md`.
