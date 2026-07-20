@@ -30,6 +30,51 @@ shells over exactly one type.
 
 ---
 
+## Quickstart
+
+**Prerequisites:** Rust (stable) and [`just`](https://github.com/casey/just).
+
+```bash
+# 1. Clone and build the workspace
+git clone https://github.com/Hologram-Technologies/hologram
+cd hologram
+just build                                   # or: cargo build --workspace
+
+# 2. Run the end-to-end example (parse → compile → execute → κ-address a graph)
+cargo run -p hologram-cli --example pipeline
+
+# 3. Install the single `hologram` binary (tensor engine + substrate node)
+cargo install --path crates/hologram-cli
+
+# 4. Compile native Hologram source to a content-addressed .holo, then run it
+hologram compile --source graph.txt --output model.holo
+hologram execute --archive model.holo
+```
+
+To use Hologram as a library, add the `hologram` facade crate and enable the
+surfaces you need:
+
+```toml
+[dependencies]
+hologram = {
+  git = "https://github.com/Hologram-Technologies/hologram",
+  features = ["archive", "backend", "compiler", "exec"],   # the tensor engine
+  # add "space", "client" for the substrate contract + the programmatic `Client`
+}
+```
+
+**Where to go next**
+
+| I want to… | See |
+|---|---|
+| Compile & run tensors from Rust / Python / TS | [Using the tensor engine](#using-the-tensor-engine) |
+| Provision and boot a container / devcontainer | [Opening a holospace](#opening-a-holospace) |
+| Drive `compile → provision → run` from one type | [Programmatic control](#programmatic-control) |
+| Use the CLI (`compile` / `node` / `app` / `network`) | [CLI](#cli) |
+| Contribute | [Contributing](#contributing) |
+
+---
+
 ## How it works — the tensor engine
 
 ### Content-addressed execution
@@ -149,7 +194,8 @@ drift:
 use hologram::Client;
 
 // A space supplies the platform: its KappaStore, network KappaSync, and container
-// runtime. In-tree spaces live under `spaces/`; `Client` accepts any `impl Space`.
+// runtime. `Client` accepts any `impl Space` — you compose one from a `Runtime`
+// + the HAL stubs + a `KappaSync` seam (see "Programmatic control" below).
 let client = Client::builder().space(space).build()?;
 
 let holo   = client.compile(graph)?;               // sync compute      (law 4)
@@ -162,6 +208,9 @@ let mut session = client.open(&container_kappa, &caps_kappa);
 // Plus store/GC operations: get / pin / unpin / ls / gc / verify, and
 // `.holo` v3 app tooling: inspect / is_fat / thin / fat / all_verified.
 ```
+
+A full, compilable walkthrough — including the minimal `Space` wiring — is in
+[Programmatic control](#programmatic-control).
 
 ---
 
@@ -246,7 +295,7 @@ crate authors, but applications should prefer the root facade.
 
 ---
 
-## Quick start
+## Using the tensor engine
 
 Add the facade crate and enable the surfaces you need:
 
@@ -570,6 +619,171 @@ let model = compose_model(&[a, b]).unwrap();
 
 ---
 
+## Opening a holospace
+
+A **holospace** is a κ-addressed application you *provision into a store* and
+*boot on a runtime* — a `.holo` compute artifact, a Wasm userland, or a git
+devcontainer. There is **no CLI verb** for holospaces: you open them
+programmatically (Rust) or in the browser peer. The lifecycle lives in
+[`spaces/holospaces`](spaces/holospaces/); the authoritative end-to-end flows are
+in [`spaces/holospaces/tests/e2e.rs`](spaces/holospaces/tests/e2e.rs).
+
+A `Source` is one of three provisioning forms:
+
+| `Source` | What it addresses |
+|---|---|
+| `Source::HoloFile { artifact }` | a `.holo` compute artifact (κ) |
+| `Source::Userland { entry }` | a Wasm-recompiled userland — the execution surface (κ) |
+| `Source::Devcontainer { repo, reference, config, userland, arch, … }` | a git repo + `devcontainer.json` |
+
+### From Rust — the Platform Manager
+
+Sign in with a self-sovereign key, provision a holospace from a `Source`, then
+**open** it into a session and drive its lifecycle. The suspend snapshot is a κ,
+so a session suspended on one peer resumes byte-identically on any other.
+
+```rust
+use hologram_runtime::{Runtime, WasmtimeEngine};
+use hologram_space::MemKappaStore;
+use holospaces::identity::Operator;
+use holospaces::manager::Manager;
+use holospaces::peer::Peer;
+use holospaces::substrate::{Capabilities, KappaStore};
+use holospaces::Source;
+
+// A self-sovereign key unlocks a content-addressed operator identity.
+let operator = Operator::from_public_key(b"operator-public-key");
+
+// A peer = a κ-store + a container runtime (the real Wasmtime engine).
+let runtime = Runtime::new(WasmtimeEngine::new(), MemKappaStore::new());
+let code = runtime.store().put("blake3", &wasm_userland_bytes)?; // a hologram.* Wasm userland
+let peer = Peer::new(runtime.store(), &runtime);
+
+// Capabilities attenuate only — quotas and grants a delegate can never widen.
+let caps = Capabilities {
+    storage_roots: Vec::new(),
+    storage_quota_bytes: 0,
+    network_fetch: false,
+    network_announce: false,
+    publish_channels: Vec::new(),
+    subscribe_channels: Vec::new(),
+    memory_max_bytes: 4 << 20,
+    cpu_time_per_event_ms: 1000,
+    priority_weight: 0,
+};
+
+// Sign in to the Platform Manager, provision, then OPEN → a session.
+let mut manager = Manager::sign_in(peer, operator);
+let holospace = manager.provision(Source::Userland { entry: code }, caps)?;
+
+let mut session = manager.open(&holospace).await?; // resolves + verifies by κ (L5)
+session.boot().await?;                              // now Phase::Running
+let snapshot = session.suspend().await?;            // κ snapshot of live state
+session.terminate().await?;
+```
+
+Prefer the lower level? Skip the Manager and use the `boot` free functions
+directly: `boot::provision(store, source, caps)` mints the holospace and
+`boot::Session::provision(&runtime, holospace)` (or `Peer::session(holospace)`)
+begins the lifecycle. `Session::adopt(&runtime, holospace, snapshot)` resumes a
+*migrated* session from its snapshot κ — the basis for suspend-here / resume-there.
+
+Depend on it as a workspace crate — `holospaces = { workspace = true }` (default
+`std`; `default-features = false` for a `no_std` peer, `features = ["net"]` for the
+internet import boundary). Booting a holospace needs a `ContainerRuntime` —
+`hologram_runtime::Runtime` with an engine (`WasmtimeEngine` natively; the
+`wasmi`/bare-metal engines for browser and embedded).
+
+### In the browser — the tab *is* the substrate
+
+`spaces/holospaces-browser` compiles the Platform Manager to `wasm32` via
+`wasm-bindgen`. Loading the bundle makes the browser tab a peer — no server. The
+JS-facing `Console` mirrors the Rust Manager:
+
+```js
+// Bindings generated from `spaces/holospaces-browser` (wasm-bindgen).
+import init, { Console } from "./holospaces_browser.js";
+
+await init();                                  // the tab is now a Hologram peer
+const console = new Console();
+console.sign_in(publicKeyBytes);               // content-addressed operator identity
+
+// Provision + boot a Wasm userland entirely in-browser; returns the κ snapshot.
+const snapshot = console.boot_userland(wasmModuleBytes, 4 << 20);
+
+// …or provision from a git devcontainer, then read the operator's view.
+console.provision_devcontainer(devcontainerJson, "x64", 64 << 20);
+const view = JSON.parse(console.view());       // { operator, holospaces: [κ, …] }
+```
+
+---
+
+## Programmatic control
+
+`hologram::Client<S: Space>` is the one typed surface the CLI, C ABI, and SDKs are
+all thin shells over — so bindings cannot drift. It drives `compile → provision →
+run` (and container `open`) over any space, with the store/GC and `.holo` app
+tooling hanging off the same handle. Enable it with `features = ["client"]` (which
+pulls `space` + `compiler` + `exec` + `backend` + `archive` + `hologram-runtime`).
+
+A `Space` names a platform's parts (a `KappaStore`, a `KappaSync`, a
+`ContainerRuntime`, and the HAL). `Client` accepts **any** `impl Space`; there is
+no built-in one, so you compose a minimal space from the reference pieces — a
+`Runtime` over `MemKappaStore`, the HAL stubs, and a `KappaSync` seam. The full
+~40-line recipe is [`tests/client.rs`](tests/client.rs):
+
+```rust
+use hologram::space::{
+    ManualClock, MemKappaStore, NoopSpawner, NullSurface, SeededEntropy, Space,
+};
+
+// The composition that makes a type a `Space` (condensed from tests/client.rs):
+impl Space for MinimalSpace {
+    type Store   = MemKappaStore;
+    type Runtime = hologram_runtime::Runtime<hologram_runtime::MockEngine, MemKappaStore>;
+    type Sync    = NullSync;       // your KappaSync — a network layer, or a no-op seam
+    type Entropy = SeededEntropy;
+    type Clock   = ManualClock;
+    type Spawner = NoopSpawner;
+    type Surface = NullSurface;
+    // …seven accessors returning &self.<field>; store() delegates to runtime.store().
+}
+```
+
+`MockEngine` is a deterministic in-process engine (enough to prove compute +
+lifecycle); swap in `WasmtimeEngine` to actually boot Wasm containers. With a space
+in hand, everything composes behind the one `Client`:
+
+```rust
+use hologram::Client;
+
+let client = Client::builder().space(MinimalSpace::new()).build()?;
+
+let holo   = client.compile(graph)?;               // sync compute   (law 4)
+let kappa  = client.provision(&holo)?;             // sync storage   (law 4)
+let out    = client.run(&kappa, &[input]).await?;  // async resolve → sync CPU execute
+
+// Content-addressed store ops on the same handle:
+let bytes = client.get(&kappa)?;      // Option<Bytes>
+client.pin(&kappa)?;                   // pin / unpin / ls / verify / gc
+let all   = client.ls();               // Vec<KappaLabel71>
+
+// .holo v3 app tooling — inspect layer certificates, thin ⇄ fat (app κ unchanged):
+let report = client.inspect(&holo)?;
+assert!(report.all_verified());
+let thin   = client.thin(&holo)?;
+
+// The snapshot is a κ, so suspend-here / resume-there works across spaces:
+let mut session = client.open(&container_kappa, &caps_kappa);
+session.boot().await?;
+```
+
+Under `client`, `run` executes on the CPU backend; the builder's `.target(...)` /
+`.level(...)` set the compile backend and Witt level. `gc()` is available whenever
+the space's store implements `GarbageCollect` (the reference `MemKappaStore` does).
+
+---
+
 ## Build & development
 
 Requires: Rust stable, [`just`](https://github.com/casey/just).
@@ -803,6 +1017,16 @@ for a detailed walkthrough of the execution model, quantum levels (Q0/Q1), the
 
 ## Contributing
 
+Contributions are welcome. Fork the repository, create a topic branch off `main`,
+make your change, and open a pull request. Before submitting, run the full quality
+gate locally — CI runs the same one and it must be green:
+
+```bash
+just ci   # fmt check + clippy (-D warnings) + test suite + supply-chain gate (cargo deny)
+```
+
+House rules (enforced in review and CI):
+
 - Clippy is enforced with `-D warnings` — zero warnings required.
 - Functions ≤ 15 lines; max 3 arguments (use the builder pattern for more).
 - No `TODO`, `unimplemented!()`, or stubs — every merged feature is complete.
@@ -813,11 +1037,9 @@ for a detailed walkthrough of the execution model, quantum levels (Q0/Q1), the
 - Serialisation uses rkyv exclusively; no serde on stored forms.
 - SIMD behind the `simd`/`cpu` feature gate; parallelism behind `parallel`.
 
-Run the full quality gate before submitting:
-
-```bash
-just ci
-```
+New crates land in the right tier (**core → spaces → leaf**; nothing depends on a
+leaf) and ship with a `README.md`. The consolidation laws and the target crate map
+live in [`specs/refactor/`](specs/refactor/).
 
 ---
 
