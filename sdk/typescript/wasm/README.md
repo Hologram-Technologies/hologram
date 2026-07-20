@@ -1,4 +1,4 @@
-# @uor-foundation/wasm
+# @tryhologram/wasm
 
 WASM adapter for the Hologram TypeScript SDK.
 
@@ -7,8 +7,8 @@ wasm-bindgen driver in `driver/`. It is browser-safe, but the driver must use
 an application-provided filesystem policy for `constRef`.
 
 ```ts
-import { loadWasmBinding } from "@uor-foundation/wasm";
-import { Graph, Session, compileSource, f32 } from "@uor-foundation/sdk";
+import { loadWasmBinding } from "@tryhologram/wasm";
+import { Graph, Session, compileSource, f32 } from "@tryhologram/sdk";
 import initHologram from "./hologram_wasm.js";
 
 const binding = await loadWasmBinding(initHologram);
@@ -28,7 +28,7 @@ const sourceArchive = await compileSource(
 ```
 
 The WASM driver should expose the same source-builder and session shape as
-`@uor-foundation/native`:
+`@tryhologram/native`:
 
 - `abiVersion()`
 - `archiveFormatVersion()`
@@ -69,7 +69,7 @@ Browser drivers should use an application-provided virtual filesystem,
 `File`/`Blob` registry, OPFS, or content-addressed store.
 WASM package users should also assume async module loading, browser memory caps,
 and platform-dependent thread/SIMD availability. Native path access and Node
-worker assumptions belong in `@uor-foundation/native`, not in this package.
+worker assumptions belong in `@tryhologram/native`, not in this package.
 
 Build and check:
 
@@ -83,7 +83,7 @@ The driver scripts force the rustup stable toolchain's `rustc` so a system Rust
 installation on `PATH` does not hide the installed wasm stdlib.
 
 The adapter converts driver `lastErrorCode()` / `lastErrorMessage()` values
-into the `@uor-foundation/sdk` error classes. Browser drivers should use the same
+into the `@tryhologram/sdk` error classes. Browser drivers should use the same
 numeric categories as `hologram-ffi` so application code can catch
 `ArchiveLoadError`, `ExternalTensorError`, `ExecutionError`, and the other
 SDK-level classes consistently across native and WASM builds.

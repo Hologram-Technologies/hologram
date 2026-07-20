@@ -1,5 +1,5 @@
 {
-  "name": "@uor-foundation/native",
+  "name": "@tryhologram/native",
   "version": "0.12.1",
   "description": "Node native binding adapter for the Hologram TypeScript SDK",
   "license": "MIT OR Apache-2.0",
@@ -34,7 +34,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@uor-foundation/sdk": "0.12.1"
+    "@tryhologram/sdk": "0.12.1"
   },
   "devDependencies": {
     "typescript": ">=5.4"

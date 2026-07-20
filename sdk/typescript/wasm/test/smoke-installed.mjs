@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const sdk = await import(installedEntry("@uor-foundation/sdk"));
-const wasm = await import(installedEntry("@uor-foundation/wasm"));
+const sdk = await import(installedEntry("@tryhologram/sdk"));
+const wasm = await import(installedEntry("@tryhologram/wasm"));
 
 let lastErrorCode = 0;
 let lastErrorMessage = null;
