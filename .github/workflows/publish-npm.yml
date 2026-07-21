@@ -167,12 +167,13 @@ jobs:
           fi
           ship() {
             dir="$1"
+            # --ignore-scripts on BOTH paths: dist is already built above, so skip prepack's cargo
+            # rebuild — and it keeps the dry-run a faithful mirror of the real publish.
             if [ "$DRY_RUN" = "true" ]; then
               echo "::group::pack $dir (dry-run)"
-              npm pack --dry-run "./$dir"
+              npm pack --dry-run --ignore-scripts "./$dir"
               echo "::endgroup::"
             else
-              # --ignore-scripts: dist is already built above; skip prepack's cargo rebuild.
               # No --provenance: it's automatic under OIDC, and unwanted for a token bootstrap.
               npm publish "./$dir" --access public --ignore-scripts
             fi
