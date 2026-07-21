@@ -76,6 +76,34 @@ def test_deprecated_bench_not_gated():
     assert any("deprecated" in r[4] for r in rows)
 
 
+def test_reference_bench_not_gated_and_labeled():
+    # A reference baseline — a deliberately-slow comparison path (e.g. an unfused
+    # or computed variant) that never ships — is excluded from the gate even on a
+    # large, noisy swing, and is labeled `reference` rather than `deprecated`.
+    base = {"m": bench("m", 1_000_000, 1000)}
+    pr = {"m": bench("m", 2_000_000, 1000)}  # +100%, but a reference baseline
+    rows, regs, _ = cmp.classify(
+        base, pr, threshold=0.10, noise_sigmas=2.0, cv_floor=0.07,
+        skip={"m"}, reference={"m"},
+    )
+    assert regs == []
+    assert any("reference" in r[4] for r in rows)
+
+
+def test_reference_names_helper_and_lifecycle_exemption():
+    manifest = {
+        "a": {"status": "active"},
+        "r": {"status": "reference"},
+        "d": {"status": "deprecated", "deprecated_since": "0.12.0"},
+    }
+    assert cmp.reference_names(manifest) == {"r"}
+    assert cmp.active_names(manifest) == {"a"}  # reference is not active
+    # A reference bench absent from the run is NOT a lifecycle violation (like
+    # deprecated); a missing *active* one still is.
+    errs = cmp.lifecycle_violations({}, {"a": bench("a", 1000)}, manifest, None)
+    assert not any("`r`" in e for e in errs), errs
+
+
 def test_new_benchmark_reported_not_gated():
     base = {}
     pr = {"n": bench("n", 500, 10)}

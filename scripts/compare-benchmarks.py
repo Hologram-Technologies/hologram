@@ -31,6 +31,11 @@ has been *deprecated and versioned out*, never in one step:
     was `deprecated` in the baseline.
   * `deprecated` benchmarks are excluded from regression gating and may be
     absent.
+  * `reference` benchmarks — comparison baselines (an unfused / computed /
+    uncached variant kept only to contrast against the fast path, never shipped)
+    — are excluded from the regression gate but remain tracked. Their scalar
+    timings are measurement-unstable, so a swing there is reported, not
+    release-blocking.
 
 Usage:
     compare-benchmarks.py <base.json> <pr.json> [--threshold 0.10]
@@ -72,17 +77,26 @@ def deprecated_names(manifest):
     return {n for n, m in manifest.items() if m.get("status") == "deprecated"}
 
 
+def reference_names(manifest):
+    """Comparison-baseline benchmarks (`status = "reference"`): deliberately-slow
+    paths kept only to contrast against the fast path — never shipped. Measured
+    and reported, but excluded from the regression gate (see module docstring)."""
+    return {n for n, m in manifest.items() if m.get("status") == "reference"}
+
+
 def active_names(manifest):
     # Absent status defaults to active, so a bare entry still counts as tracked.
     return {n for n, m in manifest.items() if m.get("status", "active") == "active"}
 
 
-def classify(base, pr, *, threshold, noise_sigmas, cv_floor, skip=frozenset()):
+def classify(base, pr, *, threshold, noise_sigmas, cv_floor, skip=frozenset(),
+             reference=frozenset()):
     """Per-benchmark regression classification. Returns (rows, regressions).
 
     `rows` is [(name, base_med, pr_med, delta_pct, status)]; `regressions` is
     the subset that gates [(name, delta_pct)]. `skip` names are compared for the
-    report but never gate (e.g. deprecated benchmarks)."""
+    report but never gate (deprecated or reference benchmarks); `reference` is
+    the subset of `skip` labeled as comparison baselines rather than deprecated."""
     rows, regressions, new = [], [], []
     for name in sorted(pr):
         pr_med = pr[name]["median_ns"]
@@ -106,7 +120,7 @@ def classify(base, pr, *, threshold, noise_sigmas, cv_floor, skip=frozenset()):
         over_threshold = ratio > (1.0 + threshold)
         over_noise = slowdown > noise_sigmas * eff_noise
         if name in skip:
-            status = "⏸ deprecated"
+            status = "⏸ reference" if name in reference else "⏸ deprecated"
         elif over_threshold and over_noise:
             status = "❌ REGRESSED"
             regressions.append((name, delta_pct))
@@ -220,10 +234,12 @@ def main(argv=None):
         return 2
 
     base, pr = index(base_data), index(pr_data)
-    skip = deprecated_names(manifest) if manifest else frozenset()
+    # Deprecated and reference benchmarks are measured/reported but never gate.
+    reference = reference_names(manifest) if manifest else frozenset()
+    skip = (deprecated_names(manifest) | reference) if manifest else frozenset()
     rows, regressions, new = classify(
         base, pr, threshold=args.threshold, noise_sigmas=args.noise_sigmas,
-        cv_floor=args.cv_floor, skip=skip,
+        cv_floor=args.cv_floor, skip=skip, reference=reference,
     )
     removed = sorted(set(base) - set(pr))
     lifecycle = lifecycle_violations(base, pr, manifest, baseline_manifest)
