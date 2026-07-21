@@ -30,6 +30,10 @@ default = ["std"]
 std = ["hologram-space/std"]
 # Live HTTP/1.1 CAS transport over std::net (`http::live`).
 live = ["std"]
+# κ-Distribution `/v2/` registry binding (`http::kd`) — spec 003, Level 1 blob surface. Implies
+# `live`. Non-default and kept out of the always-green blocking CI jobs (exercised by the dedicated
+# `kd-conformance` job) until the KD conformance class is ratified (plan Phase 8).
+kd = ["live"]
 # κ-XOR Kademlia DHT over TCP + tokio (`tcp`).
 tcp = ["std", "dep:tokio"]
 # Encrypted P2P over QUIC (`quic`) — quinn + rustls(ring) + a self-signed transport cert (rcgen).

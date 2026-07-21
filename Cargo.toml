@@ -77,6 +77,13 @@ exclude = [
     "sdk/typescript/wasm/driver",
     # Out-of-tree cargo-fuzz targets (nightly + libfuzzer; run explicitly, spec 03 §Parser hardening).
     "crates/hologram-space/fuzz",
+    # The κ-Distribution protocol standard (spec 003) — incubating as its own workspace so it never
+    # perturbs the release; built + tested by the non-blocking `kd-conformance` job (plan Phase 3/8).
+    "crates/uor-distribution",
+    # hologram's κ-Distribution registry service (Levels 3-5) — the leaf crate that consumes the
+    # unpublished `uor-distribution` standard; excluded (own workspace, publish=false) so it stays out
+    # of the release + blocking jobs, built by the non-blocking `kd-conformance` job (plan Phase 5/8).
+    "crates/hologram-registry",
 ]
 
 [workspace.package]

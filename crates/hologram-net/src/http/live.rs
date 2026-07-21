@@ -110,6 +110,11 @@ fn handle_conn(stream: &mut TcpStream, store: &dyn KappaStore, forge: bool) -> s
     if forge {
         return write_response(stream, 200, b"forged-content");
     }
+    // κ-Distribution `/v2/` binding (spec 003) — the L1 blob surface, feature-gated + non-blocking.
+    #[cfg(feature = "kd")]
+    if path == "/v2" || path.starts_with("/v2/") {
+        return super::kd::handle_v2(stream, &buf, store);
+    }
     // Discovery extension (spec §6.3): GET /cas/?prefix=<p>&limit=<n> → newline-separated κ-labels.
     if path.starts_with("/cas/?") || path == "/cas/" {
         let body = serve_discover(store, path);

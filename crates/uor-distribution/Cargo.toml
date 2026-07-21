@@ -1,0 +1,22 @@
+# The κ-Distribution protocol standard (spec `specs/prompts/003-KAPPA_DISTRIBUTION_SPEC_v2.md`) —
+# the external UOR-REGISTRY (#20) + UOR-RESOLUTION (#21) standard, a peer of `uor-addr`, incubating
+# in-tree. Its own `[workspace]` detaches it from the host workspace so it never perturbs the
+# `uor-hologram` release; it is built + tested only by the non-blocking `kd-conformance` CI job and
+# extracted to its own repo/crates.io at ratification (plan Phase 8). Dependency-light and no_std: it
+# defines the cross-registry BYTE contracts (canonical forms, error taxonomy, conformance levels)
+# that any conforming registry — hologram included — implements over its own storage/transport.
+[package]
+name = "uor-distribution"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "κ-Distribution protocol standard: content-addressed /v2/ registry canonical forms, error taxonomy, and conformance levels (spec 003). Incubating; identity is κ-only (UOR-ADDR)."
+
+[workspace]
+
+[dependencies]
+
+[features]
+default = ["std"]
+std = []

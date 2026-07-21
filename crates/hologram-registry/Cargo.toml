@@ -1,0 +1,27 @@
+# hologram's κ-Distribution `/v2/` registry (spec 003) — the leaf service crate that hosts the
+# higher conformance levels (edges, composition, GC, federation) over hologram's `KappaStore`. It is
+# the crate that may depend on the incubating `uor-distribution` standard: `hologram-net` and
+# `hologram-space` are published, release-lockstep crates and CANNOT take a production dependency on an
+# unpublished crate (`cargo publish` forbids it), so the parts that consume the standard's canonical
+# forms live HERE. `publish = false` + its own `[workspace]` keep it out of the release and out of the
+# always-green blocking jobs (built + tested by the non-blocking `kd-conformance` job) until the
+# standard is ratified (plan Phase 8). Levels 1–2 (blobs, tags) are served by `hologram-net::http::kd`.
+[package]
+name = "hologram-registry"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "κ-Distribution /v2/ registry service (spec 003): hologram's conforming implementation of Levels 3-5 (edges, composition, GC, federation) over KappaStore, using the uor-distribution canonical forms. Incubating."
+
+[workspace]
+
+[dependencies]
+hologram-space = { path = "../hologram-space" }
+uor-distribution = { path = "../uor-distribution" }
+# The registry server delegates Levels 1-2 (blobs, tags) to hologram-net's `/v2/` kd binding and
+# layers Level 3+ (edges, …) on top — one `/v2/` surface across the publish boundary.
+hologram-net = { path = "../hologram-net", features = ["kd"] }
+
+[dev-dependencies]
+hologram-tck = { path = "../hologram-tck" }

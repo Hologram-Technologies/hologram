@@ -80,6 +80,9 @@ pub fn accept_received(requested: &KappaLabel71, body: &[u8]) -> Result<Bytes, R
 #[cfg(feature = "live")]
 pub mod live;
 
+#[cfg(feature = "kd")]
+pub mod kd;
+
 #[cfg(test)]
 mod tests {
     use super::*;

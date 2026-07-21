@@ -365,6 +365,42 @@ jobs:
           cargo run -p hologram-space --example restricted_network
           cargo run -p hologram-space --example private_confidentiality
 
+  # κ-Distribution conformance (spec 003) — the KD ledger class, built out level-by-level.
+  # **NON-BLOCKING BY DESIGN:** intentionally absent from `ci-success.needs` (mirrors how
+  # `docs-conformance` was introduced non-blocking before promotion). It exercises the feature-gated
+  # `/v2/` registry binding (`hologram-net --features kd`) that the always-green blocking jobs never
+  # compile, so the protocol can grow (L1→L5) without gating the first `uor-hologram` release. It is
+  # promoted into `ci-success.needs` at ratification (plan Phase 8), at which point the KD-* rows flip
+  # 🟡→✅.
+  kd-conformance:
+    name: κ-Distribution conformance (non-blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: kd-conformance
+
+      - name: KD Levels 1-2 — /v2/ blobs (verify-on-put · idempotent · multi-label · chunked upload + recovery · mount) + tags (bind/resolve/list/CAS · κ-only Law-2 guard)
+        run: cargo test -p hologram-net --features kd --lib
+
+      - name: KD standard crate — canonical forms + error taxonomy + levels (uor-distribution)
+        run: |
+          cargo test --manifest-path crates/uor-distribution/Cargo.toml
+          cargo build --manifest-path crates/uor-distribution/Cargo.toml --no-default-features
+          cargo clippy --manifest-path crates/uor-distribution/Cargo.toml --all-targets -- -D warnings
+
+      - name: KD Levels 3-5 — registry service (edges · composition/witness/schema · GC/finalizers/admission/federation; hologram-registry)
+        run: |
+          cargo test --manifest-path crates/hologram-registry/Cargo.toml
+          cargo clippy --manifest-path crates/hologram-registry/Cargo.toml --all-targets -- -D warnings
+
   # Job 17: Verify all quality gates passed
   ci-success:
     name: CI Success
