@@ -38,6 +38,12 @@ class BDistWheel(bdist_wheel):
         # ABI, so one platform wheel serves every Python 3.x. Force `py3-none-<platform>` instead of
         # the default `cpXY-cpXY-<platform>` (which would need a separate wheel per interpreter).
         _, _, plat = super().get_tag()
+        # GitHub's setup-python ships a `universal2` (fat) macOS interpreter, so get_tag() reports
+        # `macosx_..._universal2` on BOTH the arm64 and x86_64 runners — but cargo builds a single-arch
+        # dylib. Left alone, the two macOS wheels collide on one filename AND mislabel the arch. Retag
+        # to the real build arch. (No-op off macOS or when already single-arch, e.g. a local build.)
+        if plat.startswith("macosx") and plat.endswith("_universal2"):
+            plat = plat.rsplit("_", 1)[0] + "_" + platform.machine()
         return "py3", "none", plat
 
 
