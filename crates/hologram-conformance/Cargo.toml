@@ -32,8 +32,8 @@ hologram = { package = "uor-hologram", path = "../..", features = [
     "frontend-rust",
 ] }
 # SpikeSpace's building blocks (public API only): the mock-engine Runtime + the async_trait for its
-# null sync seam.
-hologram-runtime = { path = "../hologram-runtime" }
+# null sync seam. RM-25 also boots a real container, so the real Wasmtime engine is enabled here.
+hologram-runtime = { path = "../hologram-runtime", features = ["std", "engine-wasmtime"] }
 async-trait = { workspace = true }
 smallvec = { workspace = true }
 # SP-1 (passing the TCK is conformance) runs the shared conformance battery against the
@@ -52,6 +52,11 @@ hologram-cli = { path = "../hologram-cli", features = [
 ] }
 # RM-32: drive the C ABI (compile_source → session load/execute/close + abi_version) directly.
 hologram-ffi = { path = "../hologram-ffi" }
+# RM-25: boot a real holospace end to end (Manager → provision → open → boot → suspend → terminate)
+# over the real Wasmtime engine, mirroring spaces/holospaces/tests/e2e.rs. `wat` compiles the minimal
+# hologram.* Wasm userland the container ABI requires.
+holospaces = { path = "../../spaces/holospaces" }
+wat = "1"
 
 [[test]]
 name = "bdd"

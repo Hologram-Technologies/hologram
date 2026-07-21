@@ -918,6 +918,79 @@ fn cli_writes_archive(w: &mut ConformanceWorld) {
     );
 }
 
+// ───────────────────────────── RM-25 — holospace Manager boot (L608) ─────────────────────────────
+
+/// A minimal real `hologram.*` Wasm container: it exports the container ABI and imports nothing
+/// outside the host surface, so the real Wasmtime engine can boot and suspend it (mirrors
+/// `spaces/holospaces/tests/e2e.rs`).
+const CONTAINER_WAT: &str = r#"
+(module
+  (memory (export "memory") 1)
+  (func (export "hg_init")     (param i32 i32) (result i32) (i32.const 0))
+  (func (export "hg_event")    (param i32 i32) (result i32) (i32.const 0))
+  (func (export "hg_suspend")  (result i32) (i32.const 0))
+  (func (export "hg_resume")   (result i32) (i32.const 0))
+  (func (export "hg_callback") (param i32 i32 i32) (result i32) (i32.const 0)))
+"#;
+
+#[given("a signed-in Platform Manager over a peer")]
+fn rm25_given(_w: &mut ConformanceWorld) {}
+
+#[when("I provision a holospace, open it, boot it, and suspend it")]
+async fn rm25_when(w: &mut ConformanceWorld) {
+    use hologram_runtime::{Runtime, WasmtimeEngine};
+    use hologram_space::MemKappaStore;
+    use holospaces::boot::Phase;
+    use holospaces::identity::Operator;
+    use holospaces::manager::Manager;
+    use holospaces::peer::Peer;
+    use holospaces::substrate::{Capabilities, KappaStore};
+    use holospaces::Source;
+
+    // Sign in with a self-sovereign key → a content-addressed operator identity.
+    let operator = Operator::from_public_key(b"rm25-operator-public-key");
+    // A peer = a κ-store + a container runtime (the real Wasmtime engine).
+    let runtime = Runtime::new(WasmtimeEngine::new(), MemKappaStore::new());
+    let userland = wat::parse_str(CONTAINER_WAT).expect("the hologram.* userland compiles");
+    let code = runtime
+        .store()
+        .put("blake3", &userland)
+        .expect("put the Wasm userland");
+    let peer = Peer::new(runtime.store(), &runtime);
+    let caps = Capabilities {
+        storage_roots: Vec::new(),
+        storage_quota_bytes: 0,
+        network_fetch: false,
+        network_announce: false,
+        publish_channels: Vec::new(),
+        subscribe_channels: Vec::new(),
+        memory_max_bytes: 4 << 20,
+        cpu_time_per_event_ms: 1000,
+        priority_weight: 0,
+    };
+
+    // Sign in → provision → open → boot → suspend (κ snapshot) → terminate.
+    let mut manager = Manager::sign_in(peer, operator);
+    let holospace = manager
+        .provision(Source::Userland { entry: code }, caps)
+        .expect("provision the userland holospace");
+    let mut session = manager.open(&holospace).await.expect("open the holospace");
+    session.boot().await.expect("boot the real Wasm container");
+    let running = session.phase() == Phase::Running;
+    let snapshot = session.suspend().await.expect("suspend to a κ snapshot");
+    session.terminate().await.expect("terminate the session");
+    w.rm_flag = Some(running && snapshot.as_str().starts_with("blake3:"));
+}
+
+#[then("the session boots and suspend yields a κ snapshot")]
+fn rm25_then(w: &mut ConformanceWorld) {
+    assert_eq!(
+        w.rm_flag,
+        Some(true),
+        "Manager provision→open→boot→suspend must reach Running and yield a κ snapshot (blake3:…)"
+    );
+}
+
 // ───────────────────────────── RM-32 — the C ABI pipeline (L827) ─────────────────────────────
 
 #[given("native source and the C ABI entry points")]
