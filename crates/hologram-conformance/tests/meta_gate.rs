@@ -15,4 +15,16 @@ fn catalog_and_scenarios_are_in_bijection() {
             violations.join("\n  - ")
         );
     }
+
+    // RM rows the Rust `bdd` gate cannot run (SDK / browser surfaces) are witnessed by their own
+    // package tests — bind each to a present witness (the CC/CS pattern), never left unverified.
+    let repo_root = Path::new(CONFORMANCE_MD)
+        .parent()
+        .expect("CONFORMANCE.md has a parent directory");
+    if let Err(violations) = report::check_witnessed_rows(&rows, repo_root) {
+        panic!(
+            "conformance witnessed-row audit failed:\n  - {}",
+            violations.join("\n  - ")
+        );
+    }
 }

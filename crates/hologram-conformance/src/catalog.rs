@@ -40,11 +40,17 @@ pub struct CatalogRow {
 /// feature-scenario witness of that form.
 fn extract_witness(cell: &str) -> Option<String> {
     let token = cell.trim().trim_matches('`').trim();
-    // A witness is a `file::item` path — a Gherkin scenario (`.feature::…`, the BDD classes), a
-    // Rust test (`.rs::…`, the non-BDD AS/KC/CC classes), or a validator script (`…/scripts/…`
-    // ending `.sh`, the CS class). Each gate only consults the form it owns.
+    // A witness is a `file::item` path — a Gherkin scenario (`.feature`, the BDD classes), a Rust
+    // test (`.rs`, the non-BDD AS/KC/CC classes), or an external package test / source artifact
+    // (`.py` / `.ts` / `.mjs` / `.js`, the RM rows witnessed by the SDK & browser packages) — plus
+    // the CS validator-script form (`…/scripts/*.sh`). Each gate only consults the form it owns.
+    let is_test_witness = token.split_once("::").is_some_and(|(path, _)| {
+        [".feature", ".rs", ".py", ".ts", ".mjs", ".js"]
+            .iter()
+            .any(|ext| path.ends_with(ext))
+    });
     let is_script = token.contains("/scripts/") && token.ends_with(".sh");
-    if token.contains(".feature::") || token.contains(".rs::") || is_script {
+    if is_test_witness || is_script {
         Some(token.to_string())
     } else {
         None
