@@ -1,16 +1,17 @@
 name: Publish · PyPI
 
-# Publishes the Python SDK (dist name `uor-hologram`, import `hologram`) to PyPI via OIDC TRUSTED
-# PUBLISHING — there is NO PYPI_API_TOKEN. Configure a trusted publisher on pypi.org (or a "pending
-# publisher" before the first release exists — PyPI, unlike npm, allows pre-configuration):
-#   PyPI project: uor-hologram
-#   Owner:        Hologram-Technologies
-#   Repository:   hologram
-#   Workflow:     publish-pypi.yml
-#   Environment:  (leave blank — the publish job sets none)
-# There's no token `gate` job like this file used to have: OIDC can't be probed from a secret, so an
-# unconfigured publisher just fails the publish step loudly. If the trusted publisher requires a
-# GitHub Environment, add `environment: <name>` to the `publish` job to match.
+# Publishes the Python SDK (dist `uor-hologram`, import `hologram`) to PyPI via OIDC TRUSTED
+# PUBLISHING — there is NO PYPI_API_TOKEN. It is a NATIVE package: setup.py compiles `hologram-ffi`
+# and bundles `_hologram_ffi.<ext>`, loaded via ctypes. ctypes has no CPython ABI, so one
+# `py3-none-<platform>` wheel serves every Python 3.x — hence a per-OS/arch wheel MATRIX (like the
+# npm native package), not one universal wheel. No sdist: it can't build standalone (the Rust
+# workspace isn't in it), so shipping one would make `pip install` fail wherever no wheel matches.
+#
+# Trusted publisher (or a "pending publisher" before the first release — PyPI allows pre-config) on
+# pypi.org: project uor-hologram · owner Hologram-Technologies · repo hologram · workflow
+# publish-pypi.yml · environment (blank). No token `gate` job — OIDC can't be probed from a secret,
+# so an unconfigured publisher just fails the publish step loudly. If the trusted publisher requires
+# a GitHub Environment, add `environment: <name>` to the publish job to match.
 run-name: "Publish PyPI · ${{ github.ref_name }}"
 
 on:
@@ -24,28 +25,78 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build wheel + sdist
+  # Linux wheels must be manylinux-tagged (PyPI rejects raw linux_x86_64). Build inside the manylinux
+  # image (glibc 2.28 → broad compat, and new enough for actions' node20) and relabel with auditwheel.
+  wheel-linux:
+    name: wheel (manylinux x86_64)
     runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v6
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build + repair wheel
+        run: |
+          PY=/opt/python/cp312-cp312/bin/python
+          "$PY" -m pip install --upgrade build auditwheel setuptools wheel
+          # --no-isolation + --wheel: build in-tree so setup.py's `cargo build -p hologram-ffi` sees
+          # the workspace (the default `python -m build` builds the wheel from an isolated sdist that
+          # lacks the Rust workspace, which is exactly what fails).
+          "$PY" -m build sdk/python --wheel --no-isolation --outdir wheelhouse
+          auditwheel repair wheelhouse/*.whl -w dist
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-linux
+          path: dist/*.whl
+          if-no-files-found: error
+
+  # macOS + Windows wheels upload as-is.
+  wheel-native:
+    name: wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest = arm64, macos-15-intel = x86_64 (matches the npm native matrix).
+        os: [macos-15-intel, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build (pure-python — one universal wheel + sdist)
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: pypi-wheel-${{ matrix.os }}
+
+      - name: Build wheel
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0" # broaden macOS compat; ignored off macOS
         run: |
-          python -m pip install --upgrade build
-          python -m build sdk/python --outdir dist
+          python -m pip install --upgrade build setuptools wheel
+          python -m build sdk/python --wheel --no-isolation --outdir dist
           ls -l dist
+
       - uses: actions/upload-artifact@v7
         with:
-          name: pypi-dist
-          path: dist/*
+          name: wheel-${{ matrix.os }}
+          path: dist/*.whl
           if-no-files-found: error
 
   publish:
     name: Publish to PyPI (OIDC)
-    needs: build
+    needs: [wheel-linux, wheel-native]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,8 +104,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: pypi-dist
+          pattern: wheel-*
+          merge-multiple: true
           path: dist
+
+      - name: List + sanity-check wheels
+        run: |
+          ls -l dist
+          n=$(find dist -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')
+          # 4 platforms: manylinux x86_64, macOS x86_64, macOS arm64, win_amd64.
+          if [ "$n" -lt 4 ]; then echo "::error::expected >=4 wheels, found $n"; exit 1; fi
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         # No `password:` — with `id-token: write` the action performs the OIDC exchange against the

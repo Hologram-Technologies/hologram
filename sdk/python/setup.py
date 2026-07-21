@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from setuptools import setup
+from setuptools import Distribution, setup
 from setuptools.command.build_py import build_py
 from wheel.bdist_wheel import bdist_wheel
 
@@ -24,10 +24,21 @@ class BuildPy(build_py):
         shutil.copy2(source, target)
 
 
+class BinaryDistribution(Distribution):
+    # Marks the distribution as non-pure so the bundled `_hologram_ffi` shared library lands in the
+    # package root (platlib) and the wheel carries a platform tag — without this, setuptools treats
+    # the package as pure and shunts every file under `<name>.data/purelib/`.
+    def has_ext_modules(self) -> bool:
+        return True
+
+
 class BDistWheel(bdist_wheel):
-    def finalize_options(self) -> None:
-        super().finalize_options()
-        self.root_is_pure = False
+    def get_tag(self) -> tuple[str, str, str]:
+        # The bundled `_hologram_ffi` is a plain shared library loaded via ctypes — it has no CPython
+        # ABI, so one platform wheel serves every Python 3.x. Force `py3-none-<platform>` instead of
+        # the default `cpXY-cpXY-<platform>` (which would need a separate wheel per interpreter).
+        _, _, plat = super().get_tag()
+        return "py3", "none", plat
 
 
 def rust_library_name() -> str:
@@ -48,4 +59,4 @@ def python_library_name() -> str:
     return "_hologram_ffi.so"
 
 
-setup(cmdclass={"build_py": BuildPy, "bdist_wheel": BDistWheel})
+setup(cmdclass={"build_py": BuildPy, "bdist_wheel": BDistWheel}, distclass=BinaryDistribution)
