@@ -22,6 +22,16 @@ the exit code instead of `process::exit`). Frontend features (`frontend-python/-
 enabled on the conformance dev-deps (the §10 default), adding the swc/`syn` parsers to the `just bdd`
 build.
 
+**Follow-ups (post-merge):**
+
+- **RM-25 promoted** (`⛔ → ✅`): the holospace Manager block boots a real Wasm container over the
+  Wasmtime engine (`spaces/holospaces`, mirroring `tests/e2e.rs`).
+- **Witnessed rows** (`⛔ → 🟡`): the 5 blocks the Rust `bdd` gate cannot run — Python/TS SDK demos +
+  compile-source (RM-20/21/22/23) and the browser `Console` (RM-27) — are bound to their **own**
+  package tests (`sdk/python/tests`, `sdk/typescript/test`, `spaces/holospaces-browser`) via a new
+  `report::check_witnessed_rows` audit, the same pattern the `CC`/`CS` classes use. So every one of
+  the 35 blocks is either a BDD scenario (30) or an externally-witnessed row (5) — none left pending.
+
 ---
 
 ## 1. Goal

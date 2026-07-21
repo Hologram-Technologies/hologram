@@ -9,9 +9,12 @@ root `CONFORMANCE.md` normative ledger.
 
 - `suites/s0_laws` … `suites/s6_governance` — one suite per refactor spec area.
 - `suites/s7_readme` — the **RM** class: every fenced code block in the repo `README.md`
-  is bound to exactly one scenario (`RM-N` ≡ the N-th fenced block, top-to-bottom), driven
-  through the public facade / CLI / C ABI the README documents. Step defs live in
-  `crates/hologram-conformance/tests/rm_steps/`.
+  is bound to exactly one row (`RM-N` ≡ the N-th fenced block, top-to-bottom). **30 rows are
+  BDD scenarios** here, driven through the public facade / CLI / C ABI the README documents
+  (step defs in `crates/hologram-conformance/tests/rm_steps/`). **5 rows are witnessed
+  externally** — the SDK & browser surfaces the Rust `bdd` gate cannot run — bound to their own
+  package tests (`sdk/python`, `sdk/typescript`, `spaces/holospaces-browser`) by the meta-gate's
+  `check_witnessed_rows` audit, the same way the `CC`/`CS` classes cite cargo tests / scripts.
 - Each scenario is tagged `@class:<C> @id:<C-N> @spec:<doc> @phase:<Pn> @status:<s>`.
 - `@class`/`@id` bind the scenario to a `CONFORMANCE.md` row (classes LAW/SP/HF/NW/TL/MG/GV/RM).
 

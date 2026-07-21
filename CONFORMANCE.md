@@ -436,16 +436,17 @@ addressing and warm-start do.
 | **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ✅ |
 | **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ✅ |
 
-## RM — README public surface (README.md; BDD)
+## RM — README public surface (README.md; BDD + witnessed)
 
-> Every fenced code block in `README.md` is bound to exactly one scenario under
-> `features/suites/s7_readme` — **`RM-N` ≡ the N-th fenced block, top-to-bottom** (35 blocks).
-> Scenarios drive the **public** surface the README documents (the `hologram` facade, the
-> `hologram` CLI binary, the C ABI), never the internal contract `s0–s6` exercise; overlap is
-> expected, ids are distinct. Blocks that are not runnable in a unit test (an install `curl`,
-> a dependency snippet, a prose diagram) assert the strongest verifiable structural fact the
-> block claims. `⛔` rows document a README surface that ships ahead of the merged
-> implementation (SDK packaging, holospace boot, the browser peer).
+> Every fenced code block in `README.md` is bound to exactly one row — **`RM-N` ≡ the N-th
+> fenced block, top-to-bottom** (35 blocks). **30 rows are BDD scenarios** under
+> `features/suites/s7_readme`, driving the **public** surface the README documents (the
+> `hologram` facade, the CLI binary, the C ABI), never the internal contract `s0–s6` exercise;
+> overlap is expected, ids are distinct. Blocks not runnable in a unit test (an install `curl`,
+> a dependency snippet, a prose diagram) assert the strongest verifiable structural fact they
+> claim. **5 rows are *witnessed externally*** — the SDK & browser surfaces the Rust `bdd` gate
+> cannot run — bound (the CC/CS pattern) to their own package tests by `check_witnessed_rows`:
+> `🟡` = witness present + audit-bound; runtime V&V lives in the SDK / browser CI, not this gate.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
@@ -468,14 +469,14 @@ addressing and warm-start do.
 | **RM-17** | `hologram --features frontend-typescript compile --source graph.ts --graph encoder` produces an archive. | BDD scenario | `s7_readme/typescript-frontend-cli.feature::the CLI compiles a selected TypeScript graph` | ✅ |
 | **RM-18** | The Rust frontend (`syn`) extracts the `encoder` builder function and ignores unrelated code. | BDD scenario (feat `frontend-rust`) | `s7_readme/rust-frontend-parse.feature::the encoder graph is extracted and unrelated code ignored` | ✅ |
 | **RM-19** | `hologram --features frontend-rust compile --source graph.rs --graph encoder` produces an archive. | BDD scenario | `s7_readme/rust-frontend-cli.feature::the CLI compiles a selected Rust graph` | ✅ |
-| **RM-20** | The Python SDK builds a `Graph`, compiles it, and executes via `Session` (package-root exports). | BDD scenario | `s7_readme/sdk-python-demo.feature::the Python SDK compiles and executes a graph` | ⛔ |
-| **RM-21** | The TypeScript SDK builds a `Graph`, compiles via a native binding, and executes via `Session`. | BDD scenario | `s7_readme/sdk-typescript-demo.feature::the TypeScript SDK compiles and executes a graph` | ⛔ |
-| **RM-22** | The Python SDK compiles native `.txt` source through the FFI boundary (`compile_source_file`). | BDD scenario | `s7_readme/sdk-python-compile-source.feature::compile_source_file compiles a native source graph` | ⛔ |
-| **RM-23** | The TypeScript SDK compiles native source text/files (`compileSource` / `compileSourceFile`). | BDD scenario | `s7_readme/sdk-typescript-compile-source.feature::compileSource compiles native source text` | ⛔ |
+| **RM-20** | The Python SDK builds a `Graph`, compiles it, and executes via `Session` (package-root exports). | package test (`sdk/python`, pytest) | `sdk/python/tests/test_native_binding.py::test_native_session_loads_executes_and_introspects` | 🟡 |
+| **RM-21** | The TypeScript SDK builds a `Graph`, compiles via a native binding, and executes via `Session`. | package test (`sdk/typescript`, golden) | `sdk/typescript/test/golden.mjs::Session.load` | 🟡 |
+| **RM-22** | The Python SDK compiles native `.txt` source through the FFI boundary (`compile_source_file`). | package test (`sdk/python`, pytest) | `sdk/python/tests/test_native_binding.py::test_native_binding_compiles_txt_source_file` | 🟡 |
+| **RM-23** | The TypeScript SDK compiles native source text/files (`compileSource` / `compileSourceFile`). | package test (`sdk/typescript`, golden) | `sdk/typescript/test/golden.mjs::compileSource` | 🟡 |
 | **RM-24** | `address_ring` mints a κ per model part and `compose_model` is a commutative (order-independent) product. | BDD scenario | `s7_readme/address-compose.feature::two κ addresses compose order-independently` | ✅ |
 | **RM-25** | Run a holospace from Rust: `Manager::sign_in` → `provision(Source)` → `open` → `boot` → `suspend` (κ snapshot) → `terminate`, over the real Wasmtime engine. | BDD scenario | `s7_readme/holospace-manager.feature::provision open boot and suspend a holospace to a κ snapshot` | ✅ |
 | **RM-26** | `hologram node put` / `manifest` / `caps` store bytes and mint the container + capability κs (the parts a holospace bundles); `spawn` boot is not yet asserted. | BDD scenario (CLI) | `s7_readme/node-holospace-cli.feature::node put manifest and caps mint the container κs` | 🟡 |
-| **RM-27** | The browser tab is the substrate: the wasm32 `Console` signs in, provisions, and boots a userland in-tab. | BDD scenario | `s7_readme/browser-console.feature::the wasm console signs in provisions and boots a userland` | ⛔ |
+| **RM-27** | The browser tab is the substrate: the wasm32 `Console` signs in, provisions, and boots a userland in-tab. Runtime V&V is the release-tier Chromium/Playwright job. | package source + browser CI (`spaces/holospaces-browser`) | `spaces/holospaces-browser/src/lib.rs::Console` | 🟡 |
 | **RM-28** | A minimal reference `Space` (a `Runtime` over `MemKappaStore` + HAL stubs + a `KappaSync` seam) is accepted by `Client`. | BDD scenario | `s7_readme/minimal-space.feature::a minimal reference space is accepted by the Client` | ✅ |
 | **RM-29** | On one `Client` handle: `compile` / `provision` / `run`, plus store ops `get` / `pin` / `ls`, `.holo` tooling `inspect` / `thin`, and `open` → `boot`. | BDD scenario (`MockEngine` space) | `s7_readme/client-store-tooling.feature::the Client exposes get pin ls inspect thin and open` | ✅ |
 | **RM-30** | The CLI tensor verbs `compile` / `inspect` / `execute` / `bench` each operate on one `.holo` archive. | BDD scenario (drives `hologram-cli`) | `s7_readme/cli-tensor-verbs.feature::compile inspect execute and bench operate on one archive` | ✅ |
