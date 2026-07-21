@@ -1726,10 +1726,12 @@ dependencies = [
  "hologram-runtime",
  "hologram-space",
  "hologram-tck",
+ "holospaces",
  "smallvec",
  "tokio",
  "uor-foundation",
  "uor-hologram",
+ "wat",
 ]
 
 [[package]]
