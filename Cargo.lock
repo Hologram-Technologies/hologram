@@ -1721,11 +1721,14 @@ dependencies = [
  "async-trait",
  "cucumber",
  "hologram-archive",
+ "hologram-cli",
+ "hologram-ffi",
  "hologram-runtime",
  "hologram-space",
  "hologram-tck",
  "smallvec",
  "tokio",
+ "uor-foundation",
  "uor-hologram",
 ]
 

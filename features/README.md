@@ -8,8 +8,12 @@ root `CONFORMANCE.md` normative ledger.
 ## Layout
 
 - `suites/s0_laws` … `suites/s6_governance` — one suite per refactor spec area.
+- `suites/s7_readme` — the **RM** class: every fenced code block in the repo `README.md`
+  is bound to exactly one scenario (`RM-N` ≡ the N-th fenced block, top-to-bottom), driven
+  through the public facade / CLI / C ABI the README documents. Step defs live in
+  `crates/hologram-conformance/tests/rm_steps/`.
 - Each scenario is tagged `@class:<C> @id:<C-N> @spec:<doc> @phase:<Pn> @status:<s>`.
-- `@class`/`@id` bind the scenario to a `CONFORMANCE.md` row (classes LAW/SP/HF/NW/TL/MG/GV).
+- `@class`/`@id` bind the scenario to a `CONFORMANCE.md` row (classes LAW/SP/HF/NW/TL/MG/GV/RM).
 
 ## Status vocabulary (cross-walked to the CONFORMANCE.md legend)
 

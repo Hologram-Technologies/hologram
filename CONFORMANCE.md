@@ -37,6 +37,7 @@
 | **TL** | One binary, one public facade crate, FFI over Client — spec 05 | BDD scenarios (s4_tooling) |
 | **MG** | Phased always-green migration gates (P0–P6) — spec 06 | BDD scenarios (s5_migration) |
 | **GV** | Governance R1–R4 boundary rules — spec 07 | BDD scenarios (s6_governance) |
+| **RM** | README public surface — every fenced code block in `README.md` is an executable scenario driven through the public facade / CLI / C ABI | BDD scenarios (s7_readme) |
 
 ## AS — Addressing / σ-axis (external: BLAKE3 reference)
 
@@ -434,6 +435,55 @@ addressing and warm-start do.
 | **GV-2** | R2 auditability: lifecycle transitions emit through one seam that can be pointed at the κ-chain; no lifecycle path bypasses it. | BDD scenario | `s6_governance/auditability.feature::one audit seam, no bypass` | ✅ |
 | **GV-3** | R3 attestation: signing keys are bound to κ-addressed identities as published content; certificates are never a second identity surface. | BDD scenario | `s6_governance/attestation.feature::keys bind to κ-identity` | ✅ |
 | **GV-4** | R4 data governance: capability checks stay at the import/protocol boundary; resource accounting is per-capability, not global. | BDD scenario | `s6_governance/data_governance.feature::capability checks at the boundary` | ✅ |
+
+## RM — README public surface (README.md; BDD)
+
+> Every fenced code block in `README.md` is bound to exactly one scenario under
+> `features/suites/s7_readme` — **`RM-N` ≡ the N-th fenced block, top-to-bottom** (35 blocks).
+> Scenarios drive the **public** surface the README documents (the `hologram` facade, the
+> `hologram` CLI binary, the C ABI), never the internal contract `s0–s6` exercise; overlap is
+> expected, ids are distinct. Blocks that are not runnable in a unit test (an install `curl`,
+> a dependency snippet, a prose diagram) assert the strongest verifiable structural fact the
+> block claims. `⛔` rows document a README surface that ships ahead of the merged
+> implementation (SDK packaging, holospace boot, the browser peer).
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **RM-1** | The install one-liner `curl … \| sh` runs `install.sh` — a POSIX-sh installer that downloads a prebuilt binary for the host platform into `~/.local/bin`. | BDD scenario (the real repo-root `install.sh`) | `s7_readme/install-script.feature::install.sh downloads a platform binary into the local bin dir` | 🟡 |
+| **RM-2** | Install alternatives are honored: `install.sh` accepts `--version` / `--bin-dir` / `--help`, and the `hologram-cli` binary target (for `cargo install`) exists. | BDD scenario | `s7_readme/install-alternatives.feature::the install script honors version and bin-dir overrides` | 🟡 |
+| **RM-3** | `hologram compile --source … --output …` then `hologram execute --archive …` round-trips native source to a loadable, executable `.holo`. | BDD scenario (drives `hologram-cli` in-process) | `s7_readme/quickstart-compile-execute.feature::the CLI compiles a source graph and executes the archive` | ✅ |
+| **RM-4** | The quickstart library features (`archive`, `backend`, `compiler`, `exec`) are declared on the `hologram` facade crate. | BDD scenario (facade `Cargo.toml`) | `s7_readme/quickstart-library-features.feature::the documented tensor-engine features are declared on the facade` | ✅ |
+| **RM-5** | The space-substrate `Client` excerpt composes: one `Client` drives `compile → provision → run` (and `open`) over a space. | BDD scenario (real `Client` over the reference space) | `s7_readme/space-substrate-client.feature::a Client composes compile then provision then run` | ✅ |
+| **RM-6** | The tensor-engine library feature set (`archive`, `backend`, `compiler`, `exec`) resolves on the facade. | BDD scenario | `s7_readme/tensor-engine-library-features.feature::the tensor-engine feature set resolves on the facade` | ✅ |
+| **RM-7** | `full` enables every tensor-engine facade module; `space` and `client` are opt-in on top. | BDD scenario (facade `Cargo.toml`) | `s7_readme/full-space-client-features.feature::full enables the tensor-engine modules and space plus client are available` | ✅ |
+| **RM-8** | The host-language source-frontend features (`frontend-python` / `-typescript` / `-rust`) are declared on the facade. | BDD scenario | `s7_readme/frontend-features.feature::the frontend features are declared on the facade` | ✅ |
+| **RM-9** | `cargo run -p hologram-cli --example pipeline` runs the end-to-end parse → compile → execute → κ-address flow to completion. | BDD scenario (runs the example's entry point) | `s7_readme/pipeline-example.feature::the pipeline example runs parse compile execute and address` | ✅ |
+| **RM-10** | The minimal example verbatim: `source::parse` → `Compiler::new(…, W32).compile()` → `InferenceSession::load(&archive, CpuBackend)` → `execute(zeros)` yields one output buffer per port. | BDD scenario | `s7_readme/minimal-example.feature::native source runs end to end` | ✅ |
+| **RM-11** | The documented lowering pipeline composes: source text → `SourceDocument` → selected `SourceProgram` → `Graph` (`lower_ir`) → `Compiler`. | BDD scenario | `s7_readme/lowering-pipeline.feature::the documented lowering pipeline symbols compose` | ✅ |
+| **RM-12** | Programmatic graph selection: `SourceParseOptions::new().graph("encoder")` selects and lowers a named graph. | BDD scenario (feat `frontend-python`) | `s7_readme/source-parse-options.feature::a named graph is selected and lowered` | ✅ |
+| **RM-13** | `compile_from_source_language(src, lang, level, backend)` compiles a single-graph source in one call. | BDD scenario (feat `frontend-python`) | `s7_readme/compile-from-source-language.feature::a single-graph source compiles in one call` | ✅ |
+| **RM-14** | The Python frontend extracts the restricted builder graph `encoder` and ignores unrelated application code. | BDD scenario (feat `frontend-python`) | `s7_readme/python-frontend-parse.feature::the encoder graph is extracted and unrelated code ignored` | ✅ |
+| **RM-15** | `hologram --features frontend-python compile --source graph.py --graph encoder` produces an archive. | BDD scenario (CLI + feat) | `s7_readme/python-frontend-cli.feature::the CLI compiles a selected Python graph` | ✅ |
+| **RM-16** | The TypeScript frontend extracts the `encoder` builder function and ignores unrelated code. | BDD scenario (feat `frontend-typescript`) | `s7_readme/typescript-frontend-parse.feature::the encoder graph is extracted and unrelated code ignored` | ✅ |
+| **RM-17** | `hologram --features frontend-typescript compile --source graph.ts --graph encoder` produces an archive. | BDD scenario | `s7_readme/typescript-frontend-cli.feature::the CLI compiles a selected TypeScript graph` | ✅ |
+| **RM-18** | The Rust frontend (`syn`) extracts the `encoder` builder function and ignores unrelated code. | BDD scenario (feat `frontend-rust`) | `s7_readme/rust-frontend-parse.feature::the encoder graph is extracted and unrelated code ignored` | ✅ |
+| **RM-19** | `hologram --features frontend-rust compile --source graph.rs --graph encoder` produces an archive. | BDD scenario | `s7_readme/rust-frontend-cli.feature::the CLI compiles a selected Rust graph` | ✅ |
+| **RM-20** | The Python SDK builds a `Graph`, compiles it, and executes via `Session` (package-root exports). | BDD scenario | `s7_readme/sdk-python-demo.feature::the Python SDK compiles and executes a graph` | ⛔ |
+| **RM-21** | The TypeScript SDK builds a `Graph`, compiles via a native binding, and executes via `Session`. | BDD scenario | `s7_readme/sdk-typescript-demo.feature::the TypeScript SDK compiles and executes a graph` | ⛔ |
+| **RM-22** | The Python SDK compiles native `.txt` source through the FFI boundary (`compile_source_file`). | BDD scenario | `s7_readme/sdk-python-compile-source.feature::compile_source_file compiles a native source graph` | ⛔ |
+| **RM-23** | The TypeScript SDK compiles native source text/files (`compileSource` / `compileSourceFile`). | BDD scenario | `s7_readme/sdk-typescript-compile-source.feature::compileSource compiles native source text` | ⛔ |
+| **RM-24** | `address_ring` mints a κ per model part and `compose_model` is a commutative (order-independent) product. | BDD scenario | `s7_readme/address-compose.feature::two κ addresses compose order-independently` | ✅ |
+| **RM-25** | Run a holospace from Rust: `Manager::sign_in` → `provision(Source)` → `open` → `boot` → `suspend` (κ snapshot). | BDD scenario | `s7_readme/holospace-manager.feature::provision open boot and suspend a holospace to a κ snapshot` | ⛔ |
+| **RM-26** | `hologram node put` / `manifest` / `caps` store bytes and mint the container + capability κs (the parts a holospace bundles); `spawn` boot is not yet asserted. | BDD scenario (CLI) | `s7_readme/node-holospace-cli.feature::node put manifest and caps mint the container κs` | 🟡 |
+| **RM-27** | The browser tab is the substrate: the wasm32 `Console` signs in, provisions, and boots a userland in-tab. | BDD scenario | `s7_readme/browser-console.feature::the wasm console signs in provisions and boots a userland` | ⛔ |
+| **RM-28** | A minimal reference `Space` (a `Runtime` over `MemKappaStore` + HAL stubs + a `KappaSync` seam) is accepted by `Client`. | BDD scenario | `s7_readme/minimal-space.feature::a minimal reference space is accepted by the Client` | ✅ |
+| **RM-29** | On one `Client` handle: `compile` / `provision` / `run`, plus store ops `get` / `pin` / `ls`, `.holo` tooling `inspect` / `thin`, and `open` → `boot`. | BDD scenario (`MockEngine` space) | `s7_readme/client-store-tooling.feature::the Client exposes get pin ls inspect thin and open` | ✅ |
+| **RM-30** | The CLI tensor verbs `compile` / `inspect` / `execute` / `bench` each operate on one `.holo` archive. | BDD scenario (drives `hologram-cli`) | `s7_readme/cli-tensor-verbs.feature::compile inspect execute and bench operate on one archive` | ✅ |
+| **RM-31** | The CLI substrate verbs operate over a store: `node put` / `get` / `verify` round-trip and re-derive (SPINE-4), and `app` / `network` verbs run; `node serve` (a live listener) is not asserted. | BDD scenario (CLI) | `s7_readme/cli-substrate-verbs.feature::node app and network verbs operate over a store` | 🟡 |
+| **RM-32** | The C ABI drives the pipeline: `hologram_compile_source` → `hologram_session_load` → `_execute` → `_close`, with `hologram_abi_version` probing. | BDD scenario (drives `hologram-ffi`) | `s7_readme/c-ffi.feature::the C ABI compiles loads executes and closes a session` | ✅ |
+| **RM-33** | The no_std facade composition (`default-features=false`, `features=[backend,compiler,exec]`) is a valid feature set; the full no_std build lives in `just wasm`. | BDD scenario (facade `Cargo.toml`) | `s7_readme/no-std-features.feature::the no_std feature set resolves with default features off` | 🟡 |
+| **RM-34** | Building from source: the pipeline example runs from a workspace build (clone / `cargo install` are environmental). | BDD scenario | `s7_readme/building-from-source.feature::the pipeline example runs from a source build` | 🟡 |
+| **RM-35** | `just ci` chains the documented gates: `fmt-check`, `clippy`, `test`, and the supply-chain gate (`deny`). | BDD scenario (the `Justfile` recipe) | `s7_readme/quality-gate.feature::the ci recipe chains fmt clippy test and supply-chain gate` | ✅ |
 
 ## CC — component conformance (holospaces V&V; external: per-row authority; cargo-witnessed, non-BDD)
 
