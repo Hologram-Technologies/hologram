@@ -1,12 +1,16 @@
 name: Publish · PyPI
 
-# Publishes the Python SDK (dist name `uor-hologram`, import `hologram`) to PyPI on a release tag.
-# Auto-enabled by the presence of the PYPI_API_TOKEN secret — no manual flag.
-#
-# NOTE: this uses a PyPI API TOKEN (not OIDC trusted publishing). Trusted publishing has no secret to
-# key on, so it can't be "enable when the token is set" — it would need a flag. Token auth is what
-# makes the token-presence gate work. If you'd rather keep OIDC (more secure, no long-lived token),
-# say so and I'll switch back to trusted publishing + gate it on a flag instead.
+# Publishes the Python SDK (dist name `uor-hologram`, import `hologram`) to PyPI via OIDC TRUSTED
+# PUBLISHING — there is NO PYPI_API_TOKEN. Configure a trusted publisher on pypi.org (or a "pending
+# publisher" before the first release exists — PyPI, unlike npm, allows pre-configuration):
+#   PyPI project: uor-hologram
+#   Owner:        Hologram-Technologies
+#   Repository:   hologram
+#   Workflow:     publish-pypi.yml
+#   Environment:  (leave blank — the publish job sets none)
+# There's no token `gate` job like this file used to have: OIDC can't be probed from a secret, so an
+# unconfigured publisher just fails the publish step loudly. If the trusted publisher requires a
+# GitHub Environment, add `environment: <name>` to the `publish` job to match.
 run-name: "Publish PyPI · ${{ github.ref_name }}"
 
 on:
@@ -20,28 +24,8 @@ permissions:
   contents: read
 
 jobs:
-  # Enable only when PYPI_API_TOKEN is set (no PUBLISH_* flag). Secrets can't be used in a job-level
-  # `if:`, so read it here and expose a boolean the build/publish jobs key on.
-  gate:
-    runs-on: ubuntu-latest
-    outputs:
-      enabled: ${{ steps.check.outputs.enabled }}
-    steps:
-      - id: check
-        env:
-          TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "PYPI_API_TOKEN not set — skipping PyPI publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
     name: Build wheel + sdist
-    needs: gate
-    if: ${{ needs.gate.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -60,10 +44,12 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish to PyPI
-    needs: [gate, build]
-    if: ${{ needs.gate.outputs.enabled == 'true' }}
+    name: Publish to PyPI (OIDC)
+    needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing (mints the short-lived PyPI token)
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -71,7 +57,6 @@ jobs:
           path: dist
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          # For a dry run against TestPyPI: add `repository-url: https://test.pypi.org/legacy/`
-          # and a TEST_PYPI_API_TOKEN.
+        # No `password:` — with `id-token: write` the action performs the OIDC exchange against the
+        # configured trusted publisher. For a TestPyPI dry run, add
+        # `with: repository-url: https://test.pypi.org/legacy/` and a matching pending publisher there.
