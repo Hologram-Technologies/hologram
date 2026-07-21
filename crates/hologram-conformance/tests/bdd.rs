@@ -31,6 +31,8 @@ use hologram_space::{
     SurfaceError,
 };
 mod common;
+// RM suite (s7_readme): step definitions binding every README code block to a scenario.
+mod rm_steps;
 use common::SpikeSpace;
 use hologram_tck::MemKappaStore;
 

@@ -23,7 +23,14 @@ hologram-archive = { path = "../hologram-archive" }
 # `tests/common` reference `Space`, absorbed from the former hologram-spike-sp3 crate, D21/D28): the
 # Client comes from the facade, SpikeSpace uses only the public `Space` contract. Client accepting an
 # outside space with no in-tree privilege is the LAW-3 witness; compile→provision→run is the SP-3 one.
-hologram = { package = "uor-hologram", path = "../..", features = ["client"] }
+# Frontend features (RM-12/13/14/16/18) enable the Python/TypeScript/Rust source frontends
+# the README documents — parsed through the same public `hologram::compiler::source` surface.
+hologram = { package = "uor-hologram", path = "../..", features = [
+    "client",
+    "frontend-python",
+    "frontend-typescript",
+    "frontend-rust",
+] }
 # SpikeSpace's building blocks (public API only): the mock-engine Runtime + the async_trait for its
 # null sync seam.
 hologram-runtime = { path = "../hologram-runtime" }
@@ -32,6 +39,19 @@ smallvec = { workspace = true }
 # SP-1 (passing the TCK is conformance) runs the shared conformance battery against the
 # reference store — the same battery every backend runs (substrate-tripling discipline).
 hologram-tck = { path = "../hologram-tck" }
+# RM-10 / RM-11: the README minimal example calls `Compiler::new(g, Cpu, WittLevel::new(32))`.
+# `WittLevel` is `uor_foundation::WittLevel` (re-exported by the README's `prism::vocabulary`).
+uor-foundation = { workspace = true }
+# RM-3 / RM-9 / RM-30 / RM-26 / RM-31: drive the real `hologram` CLI verbs in-process via the
+# `cmd::run_from_args` / `run_node_from_args` seams — the README's `hologram <verb>` snippets.
+# The frontend features cover RM-15/17/19 (`compile --source graph.{py,ts,rs} --graph encoder`).
+hologram-cli = { path = "../hologram-cli", features = [
+    "frontend-python",
+    "frontend-typescript",
+    "frontend-rust",
+] }
+# RM-32: drive the C ABI (compile_source → session load/execute/close + abi_version) directly.
+hologram-ffi = { path = "../hologram-ffi" }
 
 [[test]]
 name = "bdd"

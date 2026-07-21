@@ -93,4 +93,18 @@ pub struct ConformanceWorld {
     /// GV-2: `true` once every lifecycle transition (spawn/suspend/resume/terminate) is shown to
     /// emit through the one audit seam onto an append-only κ-chain — no path bypasses it.
     pub gv2_audit: Option<bool>,
+
+    // ───────────────────────── RM — README public surface (s7_readme) ─────────────────────────
+    // A fresh `ConformanceWorld` is built per scenario, so these generic fields are reused across
+    // the RM scenarios without collision — each scenario's When stashes here for its Then to assert.
+    /// RM: a single boolean handed from a When step to its Then.
+    pub rm_flag: Option<bool>,
+    /// RM: a set of boolean conditions a Then asserts are all true.
+    pub rm_flags: Vec<bool>,
+    /// RM: a generic count (e.g. output-port count) handed When→Then.
+    pub rm_count: Option<usize>,
+    /// RM: generic bytes (e.g. a compiled `.holo` archive) handed When→Then.
+    pub rm_bytes: Vec<u8>,
+    /// RM: a generic κ-label string handed When→Then.
+    pub rm_kappa: Option<String>,
 }

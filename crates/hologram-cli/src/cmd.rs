@@ -210,6 +210,49 @@ pub fn run_from_env() -> Result<(), CompileError> {
     run_args(CliArgs::parse())
 }
 
+/// Run the tensor verbs (`compile` / `execute` / `inspect` / `bench`) from an explicit
+/// argument vector (`argv[0]` = program name), returning `Result` instead of touching the
+/// process environment — the in-process entry point conformance tests drive.
+pub fn run_from_args<I, T>(args: I) -> Result<(), CompileError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = Cli::try_parse_from(args).map_err(|_| CompileError::SourceParse("cli args"))?;
+    run(cli)
+}
+
+/// Run the FULL CLI from an explicit argument vector — including `compile`'s `--graph` /
+/// `--source-language` options that the tensor-only [`run_from_args`] omits. Returns `Result`
+/// for `compile` / `execute` / `inspect` / `bench` / `app` / `network`; the `node` arm still
+/// exits the process, so drive node with [`run_node_from_args`].
+pub fn run_full_from_args<I, T>(args: I) -> Result<(), CompileError>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    run_args(CliArgs::try_parse_from(args).map_err(|_| CompileError::SourceParse("cli args"))?)
+}
+
+/// Run the `node` verb group from an explicit argument vector, returning its exit code
+/// (`0` = success) instead of exiting the process — the in-process entry conformance tests
+/// drive (the unified CLI's node arm exits with this same code).
+pub fn run_node_from_args<I, T>(args: I) -> u8
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    #[derive(Parser)]
+    struct NodeWrap {
+        #[command(flatten)]
+        cli: crate::node::NodeCli,
+    }
+    match NodeWrap::try_parse_from(args) {
+        Ok(w) => crate::node::run(w.cli),
+        Err(_) => 2,
+    }
+}
+
 pub fn run(cli: Cli) -> Result<(), CompileError> {
     match cli.command {
         Command::Compile {

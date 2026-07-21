@@ -1,13 +1,15 @@
 //! The honesty meta-gate: a *static* check that the CONFORMANCE.md catalog and the
-//! Gherkin scenarios are in bijection for the seven BDD classes. It verifies, for
+//! Gherkin scenarios are in bijection for the eight BDD classes. It verifies, for
 //! every BDD-class row: exactly one scenario with the same `@id`; the row's status
 //! glyph agrees with the scenario's `@status` tag; the row's `Witness` path+scenario
 //! name matches the actual file; and the file declares exactly one scenario.
 use crate::catalog::CatalogRow;
 use crate::feature::{status_tag_to_glyph, ScenarioRef};
 
-/// The refactor classes whose rows are witnessed by BDD scenarios.
-pub const BDD_CLASSES: &[&str] = &["LAW", "SP", "HF", "NW", "TL", "MG", "GV"];
+/// The refactor classes whose rows are witnessed by BDD scenarios, plus `RM` — the
+/// README public-surface suite (`features/suites/s7_readme`), which binds every fenced
+/// code block in `README.md` to exactly one scenario.
+pub const BDD_CLASSES: &[&str] = &["LAW", "SP", "HF", "NW", "TL", "MG", "GV", "RM"];
 
 fn is_bdd(class: &str) -> bool {
     BDD_CLASSES.contains(&class)
