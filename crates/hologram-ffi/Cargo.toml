@@ -19,6 +19,11 @@ hologram-archive  = { workspace = true, features = ["std"] }
 hologram-compute  = { workspace = true, features = ["std", "cpu"] }
 hologram-graph    = { workspace = true }
 uor-prism         = { workspace = true }
+# ── Uncomment to build `--features ai` (and set `ai = ["dep:hologram-ai"]`
+# below). Sibling-repo path during development; becomes a git pin once
+# hologram-ai is published/pinned. Kept commented because an optional path dep
+# on a non-existent path breaks workspace resolution even with the feature off.
+# hologram-ai = { path = "../../../hologram-ai/crates/hologram-ai", optional = true }
 
 [dev-dependencies]
 hologram-types = { workspace = true }
@@ -27,3 +32,10 @@ uor-prism     = { workspace = true }
 [features]
 default = []
 wasm = []
+# The `hologram_ai_*` C ABI surface (`.holo` v4 inference-model apps), delegating
+# to the sibling `hologram-ai` crate. The dependency stays commented out (see
+# [dependencies]) until hologram-ai is published/pinned. To enable: uncomment the
+# dep AND change this to `ai = ["dep:hologram-ai"]`. Enabling `ai` without the
+# dep is a deliberate compile error — no stub fallback. See src/ai.rs for the
+# wiring + the assumed `hologram_ai::ffi` API contract.
+ai = []

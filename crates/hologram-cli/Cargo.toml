@@ -30,6 +30,11 @@ hologram-runtime      = { workspace = true, features = ["engine-wasmtime"] }
 hologram-net          = { workspace = true, features = ["live", "tcp"] }
 pollster              = { workspace = true }
 tokio                 = { version = "1", features = ["rt", "macros"] }
+# ── Uncomment to build `--features ai` (and set `ai = ["dep:hologram-ai"]`
+# below). Sibling-repo path during development; becomes a git pin once
+# hologram-ai is published/pinned. Kept commented because an optional path dep
+# on a non-existent path breaks workspace resolution even with the feature off.
+# hologram-ai = { path = "../../../hologram-ai/crates/hologram-ai", optional = true }
 
 [dev-dependencies]
 # The node module's inline tests run against the reference MemKappaStore.
@@ -40,3 +45,10 @@ default = []
 frontend-python = ["hologram-compiler/frontend-python"]
 frontend-rust = ["hologram-compiler/frontend-rust"]
 frontend-typescript = ["hologram-compiler/frontend-typescript"]
+# `hologram ai …` — AI application tooling (`.holo` v4 inference-model layers),
+# delegating to the sibling `hologram-ai` crate. The dependency stays commented
+# out (see [dependencies]) until hologram-ai is published/pinned. To enable:
+# uncomment the dep AND change this to `ai = ["dep:hologram-ai"]`. Enabling `ai`
+# without the dep is a deliberate compile error — no stub fallback. See src/ai.rs
+# for the wiring + the assumed `hologram_ai::cli` API contract.
+ai = []

@@ -1,5 +1,33 @@
 # Public API changelog
 
+## Unreleased
+
+`.holo` format v4 + the AI application surface (specs/refactor/03 §v4):
+
+- **Format**: `hologram-archive`'s `FORMAT_VERSION` is now **4** (snapshot text is
+  value-free, so `api/hologram-archive.txt` is unchanged). v4 appends the
+  `inference-model` layer kind (discriminant 4) to the manifest's closed kind set;
+  the section set is unchanged and v2/v3 archives remain loadable
+  (`MIN_READ_VERSION` stays 2). Writers emit v4 only.
+- **hologram-space** (not covered by the api/ snapshot set): `LayerKind::InferenceModel = 4`,
+  `Layer::inference_model(content, entry, engine)`, and new `ManifestError` variants
+  `EmptyLayerEntry` / `MissingEngineTag` / `DuplicateLayerEntry`.
+- **hologram-cli**: new `hologram ai` subcommand group (download / compile /
+  inspect / infer), cfg-gated behind the new `ai` cargo feature (default off; the
+  sibling `hologram-ai` dependency is documented but commented out until that
+  crate is published — see `crates/hologram-cli/src/ai.rs`).
+- **hologram-ffi**: new `ai` cargo feature (default off) adding the
+  `hologram_ai_*` C ABI surface (compile / download / app load / model listing /
+  JSON session invoke) and the `HOLOGRAM_ERROR_AI_*` error band (100–111), all
+  cfg-gated, plus cfg-gated `ai-compile` / `ai-download` / `ai-app` /
+  `ai-session` FEATURES probes. Default-feature public API is unchanged, so
+  `api/hologram-ffi.txt` is unchanged.
+
+_Snapshot note_: the api/*.txt snapshots are tool-generated
+(`scripts/update-api-snapshots.sh`); no snapshot diff results from this change
+(default features, value-free consts), so they were not regenerated.
+
+
 ## v0.12.1
 
 _No public-API changes._

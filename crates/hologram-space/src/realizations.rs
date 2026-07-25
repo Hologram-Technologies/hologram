@@ -691,10 +691,11 @@ realization!(
 // One format: an application is a manifest naming an ordered list of κ-referenced layers plus
 // the child apps it composes (D9). A tensor-only archive is the degenerate single-layer case.
 
-/// A `.holo` v3 layer's kind (spec 03 §v3 structure) — a **closed** enum, extended only by a
-/// format-version bump (exhaustive matching, no catch-all). The kind alone fixes whether a layer
-/// bears an exit code: an application is "a binary with an exit code", so only the code-bearing
-/// kinds may serve as a manifest's `primary` (an app's exit code cannot be undefined).
+/// A `.holo` layer's kind (spec 03 §v3 structure, §v4) — a **closed** enum, extended only by a
+/// format-version bump (exhaustive matching, no catch-all; discriminants are appended, never
+/// renumbered). The kind alone fixes whether a layer bears an exit code: an application is "a
+/// binary with an exit code", so only the code-bearing kinds may serve as a manifest's `primary`
+/// (an app's exit code cannot be undefined).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum LayerKind {
@@ -709,6 +710,11 @@ pub enum LayerKind {
     /// A UI view (D10), attached when its surface is ready; no exit code. Its `aux` tag carries the
     /// `surface` (`portable`, `native(ios)`, …).
     View = 3,
+    /// A packaged AI inference model, invoked as a callable service; no exit code (FORMAT_VERSION 4,
+    /// spec 03 §v4). Its `aux` tag carries the mandatory **engine** identifier (e.g. `uor-r4`) and
+    /// its `entry` names the callable service. Hologram is engine-agnostic: it stores and routes
+    /// the layer; the named engine interprets it.
+    InferenceModel = 4,
 }
 
 impl LayerKind {
@@ -723,6 +729,7 @@ impl LayerKind {
             1 => Ok(LayerKind::TensorPlan),
             2 => Ok(LayerKind::RootfsImage),
             3 => Ok(LayerKind::View),
+            4 => Ok(LayerKind::InferenceModel),
             _ => Err(RealizationError::Malformed),
         }
     }
@@ -730,17 +737,19 @@ impl LayerKind {
 
 /// One layer of a `.holo` v3 application: a κ-referenced payload plus its boot descriptor. The
 /// `entry` is the layer's entrypoint (like `main`); `aux` is the kind-specific tag — the **arch**
-/// for a rootfs-image (mandatory, ISA fixed at provision) or the **surface** for a view, empty for
-/// the portable code/tensor kinds.
+/// for a rootfs-image (mandatory, ISA fixed at provision), the **surface** for a view, or the
+/// **engine** for an inference-model (mandatory, v4), empty for the portable code/tensor kinds.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Layer {
     pub kind: LayerKind,
-    /// The layer's payload κ (a codemodule, tensor plan, rootfs image, or view bundle). Dedup
-    /// spans layers: a model shared by two layers is stored once (Law L3).
+    /// The layer's payload κ (a codemodule, tensor plan, rootfs image, view bundle, or inference
+    /// model). Dedup spans layers: a model shared by two layers is stored once (Law L3).
     pub content: KappaLabel71,
-    /// Entrypoint name (e.g. `_start`, a session id, `boot`).
+    /// Entrypoint name (e.g. `_start`, a session id, `boot`, or a callable service name for an
+    /// inference-model layer).
     pub entry: String,
-    /// Kind-specific tag: arch for rootfs-image, surface for view, empty otherwise.
+    /// Kind-specific tag: arch for rootfs-image, surface for view, engine for inference-model,
+    /// empty otherwise.
     pub aux: String,
 }
 
@@ -785,6 +794,21 @@ impl Layer {
             aux: surface.into(),
         }
     }
+    /// An inference-model layer (v4; no exit code) served by `engine` under the callable service
+    /// name `entry`. Hologram is engine-agnostic — `engine` is an opaque identifier (e.g.
+    /// `"uor-r4"`) resolved by the host at invocation time.
+    pub fn inference_model(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        engine: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LayerKind::InferenceModel,
+            content,
+            entry: entry.into(),
+            aux: engine.into(),
+        }
+    }
 }
 
 /// Why an [`AppManifest`] is not loadable (spec 03 §Encoding decisions — validated at load, before
@@ -804,6 +828,13 @@ pub enum ManifestError {
     PortableLayerHasArch,
     /// A view layer is missing its `surface` tag.
     ViewMissingSurface,
+    /// An inference-model layer (v4) is missing its callable service name (`entry`).
+    EmptyLayerEntry,
+    /// An inference-model layer (v4) is missing its mandatory engine tag (`aux`).
+    MissingEngineTag,
+    /// Two layers share one non-empty `entry` name — service names are the invoke seam, so they
+    /// must be unique within a manifest.
+    DuplicateLayerEntry,
 }
 
 /// `https://hologram.foundation/realization/app-manifest` — a `.holo` v3 application (spec 03).
@@ -854,33 +885,28 @@ impl AppManifest {
         if self.layers.is_empty() {
             return Err(ManifestError::NoLayers);
         }
-        if let Some(i) = self.primary {
-            let layer = self
-                .layers
-                .get(i as usize)
-                .ok_or(ManifestError::PrimaryOutOfRange)?;
-            if !layer.kind.has_exit_semantics() {
-                return Err(ManifestError::PrimaryNotExitBearing);
-            }
-        }
+        self.validate_primary()?;
         for layer in &self.layers {
-            match layer.kind {
-                LayerKind::RootfsImage => {
-                    if layer.aux.is_empty() {
-                        return Err(ManifestError::RootfsMissingArch);
-                    }
-                }
-                LayerKind::View => {
-                    if layer.aux.is_empty() {
-                        return Err(ManifestError::ViewMissingSurface);
-                    }
-                }
-                LayerKind::WasmCodemodule | LayerKind::TensorPlan => {
-                    if !layer.aux.is_empty() {
-                        return Err(ManifestError::PortableLayerHasArch);
-                    }
-                }
-            }
+            validate_layer_descriptor(layer)?;
+        }
+        if has_duplicate_entries(&self.layers) {
+            return Err(ManifestError::DuplicateLayerEntry);
+        }
+        Ok(())
+    }
+
+    /// `primary`, when present, must index a layer with exit semantics (an app's exit code cannot
+    /// be undefined). `None` is a non-executable / library artifact.
+    fn validate_primary(&self) -> Result<(), ManifestError> {
+        let Some(i) = self.primary else {
+            return Ok(());
+        };
+        let layer = self
+            .layers
+            .get(i as usize)
+            .ok_or(ManifestError::PrimaryOutOfRange)?;
+        if !layer.kind.has_exit_semantics() {
+            return Err(ManifestError::PrimaryNotExitBearing);
         }
         Ok(())
     }
@@ -963,6 +989,30 @@ impl AppManifest {
         })
     }
 }
+
+/// Per-layer descriptor invariants (spec 03 §Encoding decisions + §v4): which kinds require or
+/// forbid the `aux` tag, and the v4 inference-model service-name / engine-tag requirements.
+fn validate_layer_descriptor(layer: &Layer) -> Result<(), ManifestError> {
+    match layer.kind {
+        LayerKind::RootfsImage if layer.aux.is_empty() => Err(ManifestError::RootfsMissingArch),
+        LayerKind::View if layer.aux.is_empty() => Err(ManifestError::ViewMissingSurface),
+        LayerKind::WasmCodemodule | LayerKind::TensorPlan if !layer.aux.is_empty() => {
+            Err(ManifestError::PortableLayerHasArch)
+        }
+        LayerKind::InferenceModel if layer.entry.is_empty() => Err(ManifestError::EmptyLayerEntry),
+        LayerKind::InferenceModel if layer.aux.is_empty() => Err(ManifestError::MissingEngineTag),
+        _ => Ok(()),
+    }
+}
+
+/// Whether two layers share one non-empty `entry` name — service names are the invoke seam, so
+/// they must be unique within a manifest (empty entries, e.g. view layers, are exempt).
+fn has_duplicate_entries(layers: &[Layer]) -> bool {
+    layers.iter().enumerate().any(|(i, layer)| {
+        !layer.entry.is_empty() && layers[..i].iter().any(|l| l.entry == layer.entry)
+    })
+}
+
 realization!(
     AppManifest,
     "https://hologram.foundation/realization/app-manifest"
@@ -2209,6 +2259,95 @@ mod tests {
             wasm_with_arch.validate(),
             Err(ManifestError::PortableLayerHasArch)
         );
+    }
+
+    // ── .holo v4 inference-model layers (spec 03 §v4) ──
+
+    /// A v4 model-only app: inference-model layers, no primary (a library artifact — invoking it
+    /// is calling a service, not running an exit-bearing binary).
+    fn model_only_app() -> AppManifest {
+        AppManifest {
+            primary: None,
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer::inference_model(
+                k(b"model-a"),
+                "ai.default",
+                "uor-r4"
+            )],
+            children: alloc::vec![],
+        }
+    }
+
+    #[test]
+    fn inference_model_kind_decodes_and_has_no_exit_semantics() {
+        assert_eq!(LayerKind::from_u8(4), Ok(LayerKind::InferenceModel));
+        assert!(LayerKind::from_u8(5).is_err());
+        assert!(!LayerKind::InferenceModel.has_exit_semantics());
+    }
+
+    #[test]
+    fn model_only_manifest_validates_and_round_trips() {
+        let m = model_only_app();
+        m.validate().unwrap();
+        let decoded = AppManifest::decode(&m.canonicalize()).unwrap();
+        assert_eq!(decoded.primary, None);
+        assert_eq!(decoded.layers, m.layers);
+        assert_eq!(decoded.layers[0].kind, LayerKind::InferenceModel);
+        assert_eq!(decoded.layers[0].entry, "ai.default");
+        assert_eq!(decoded.layers[0].aux, "uor-r4");
+    }
+
+    #[test]
+    fn inference_model_primary_is_rejected() {
+        // An inference-model layer has no exit code, so it cannot be an app's primary.
+        let bad = AppManifest {
+            primary: Some(0),
+            ..model_only_app()
+        };
+        assert_eq!(bad.validate(), Err(ManifestError::PrimaryNotExitBearing));
+    }
+
+    #[test]
+    fn inference_model_requires_entry_and_engine() {
+        let no_entry = AppManifest {
+            layers: alloc::vec![Layer {
+                kind: LayerKind::InferenceModel,
+                content: k(b"m"),
+                entry: String::new(), // the callable service name is mandatory
+                aux: "uor-r4".into(),
+            }],
+            ..model_only_app()
+        };
+        assert_eq!(no_entry.validate(), Err(ManifestError::EmptyLayerEntry));
+        let no_engine = AppManifest {
+            layers: alloc::vec![Layer::inference_model(k(b"m"), "ai.default", "")],
+            ..model_only_app()
+        };
+        assert_eq!(no_engine.validate(), Err(ManifestError::MissingEngineTag));
+    }
+
+    #[test]
+    fn duplicate_service_entries_are_rejected() {
+        let dup = AppManifest {
+            layers: alloc::vec![
+                Layer::inference_model(k(b"a"), "ai.default", "uor-r4"),
+                Layer::inference_model(k(b"b"), "ai.default", "uor-r4"),
+            ],
+            ..model_only_app()
+        };
+        assert_eq!(dup.validate(), Err(ManifestError::DuplicateLayerEntry));
+        // Distinct service names over shared content are fine (dedup spans layers, Law L3);
+        // empty view entries never collide.
+        let ok = AppManifest {
+            layers: alloc::vec![
+                Layer::inference_model(k(b"a"), "ai.default", "uor-r4"),
+                Layer::inference_model(k(b"a"), "ai.alt", "uor-r4"),
+                Layer::view(k(b"v1"), "portable"),
+                Layer::view(k(b"v2"), "native(ios)"),
+            ],
+            ..model_only_app()
+        };
+        ok.validate().unwrap();
     }
 
     #[test]

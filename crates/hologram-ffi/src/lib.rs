@@ -8,6 +8,9 @@
 
 pub mod sdk;
 
+#[cfg(feature = "ai")]
+pub mod ai;
+
 use std::cell::RefCell;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_uchar};
@@ -684,26 +687,44 @@ fn set_error(error: FfiError) {
     LAST_ERROR.with(|slot| *slot.borrow_mut() = record);
 }
 
+/// Record a dynamically-owned error message (the `ai` surface: engine-side
+/// `AiError`s carry owned messages, unlike the core surface's static strings).
+#[cfg(feature = "ai")]
+fn set_error_message(code: c_int, message: &str) {
+    let record = CString::new(message).ok().map(|message| FfiErrorRecord {
+        code,
+        message,
+        line: 0,
+        column: 0,
+        rejected: None,
+    });
+    LAST_ERROR.with(|slot| *slot.borrow_mut() = record);
+}
+
 fn error_code(error: FfiError) -> c_int {
     set_error(error);
     -1
 }
 
 fn feature_supported(feature: &str) -> bool {
-    matches!(
-        feature,
+    match feature {
         "abi.v1"
-            | "archive.v2"
-            | "compile.empty"
-            | "compile.source"
-            | "session"
-            | "source-builder"
-            | "source-builder.const"
-            | "source-builder.const-ref"
-            | "source-builder.output-alias"
-            | "errors.structured"
-            | "errors.locations"
-    )
+        | "archive.v2"
+        | "compile.empty"
+        | "compile.source"
+        | "session"
+        | "source-builder"
+        | "source-builder.const"
+        | "source-builder.const-ref"
+        | "source-builder.output-alias"
+        | "errors.structured"
+        | "errors.locations" => true,
+        // The `ai` surface probes 1 only when the `ai` cargo feature is compiled
+        // in (mirrors the cfg-gated entries in `sdk::FEATURES`).
+        #[cfg(feature = "ai")]
+        "ai-compile" | "ai-download" | "ai-app" | "ai-session" => true,
+        _ => false,
+    }
 }
 
 fn invalid_arg_error(message: &'static str) -> FfiError {

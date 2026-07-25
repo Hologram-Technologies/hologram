@@ -1627,6 +1627,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hologram-compute",
  "hologram-graph",
+ "hologram-space",
  "hologram-types",
  "memmap2",
  "smallvec",

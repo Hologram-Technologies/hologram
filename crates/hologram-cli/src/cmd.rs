@@ -111,6 +111,11 @@ enum CommandArgs {
     /// Network tooling (spec `refactor/04`): create a Network realization (the VPC analogue) or show
     /// one. Membership/policy/key are κ-addressed — a member/policy/key is content, named by its κ.
     Network(NetworkCli),
+    /// AI application tooling (`.holo` v4 inference-model layers, spec `refactor/03` §v4):
+    /// download / compile / inspect / infer, delegated to the sibling `hologram-ai` crate —
+    /// hologram stays engine-agnostic. Only present with the `ai` cargo feature.
+    #[cfg(feature = "ai")]
+    Ai(crate::ai::AiCli),
 }
 
 /// `hologram network <subcommand>` — network (VPC-analogue) tooling.
@@ -398,6 +403,8 @@ fn run_args(cli: CliArgs) -> Result<(), CompileError> {
         CommandArgs::Node(node_cli) => std::process::exit(i32::from(crate::node::run(node_cli))),
         CommandArgs::App(app_cli) => run_app(app_cli),
         CommandArgs::Network(net_cli) => run_network(net_cli),
+        #[cfg(feature = "ai")]
+        CommandArgs::Ai(ai_cli) => crate::ai::run(ai_cli),
     }
 }
 

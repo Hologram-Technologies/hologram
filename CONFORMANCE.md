@@ -32,7 +32,7 @@
 | **CS** | Specification conformance (holospaces docs) — the documentation vs arc42 / C4 / OPM ISO 19450 / ISO 15288, via validators V1–V8 — spec 06 §docs (MG-8) | validator scripts (`specs/holospaces/scripts/v*-*`) |
 | **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
 | **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
-| **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
+| **HF** | `.holo` v3/v4 container (v4 appends the inference-model layer kind), attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
 | **NW** | Network κ-realization, KappaSync/DHT, public/restricted/private tiers — spec 04 | BDD scenarios (s3_networks) |
 | **TL** | One binary, one public facade crate, FFI over Client — spec 05 | BDD scenarios (s4_tooling) |
 | **MG** | Phased always-green migration gates (P0–P6) — spec 06 | BDD scenarios (s5_migration) |
@@ -390,13 +390,14 @@ addressing and warm-start do.
 | **SP-4** | The reference HAL seams (`Entropy`/`Clock`/`Spawner`, spec 02 §4) are hermetic and deterministic — equally-seeded entropy reproduces the same stream, the clock advances only when told, and the background spawner is inert — so V&V is reproducible. | BDD scenario (witnessed against `hologram-space`'s `SeededEntropy`/`ManualClock`/`NoopSpawner`) | `s1_space_contract/hal_seams.feature::the reference HAL seams are hermetic and deterministic` | ✅ |
 | **SP-5** | Headless is a first-class conformance profile (spec 02 §5): a space with no display satisfies `Surface` via the null projection — `project` yields the canonical empty-projection κ and `intent` refuses with a typed headless error. | BDD scenario (witnessed against `hologram-space`'s `NullSurface`) | `s1_space_contract/surface_headless.feature::a headless space satisfies the Surface contract via the null projection` | ✅ |
 
-## HF — .holo v3 format (refactor spec 03; BDD)
+## HF — .holo v3/v4 format (refactor spec 03; BDD)
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **HF-1** | `.holo` v3 is the one application container; a tensor-only archive is the degenerate single-layer case. | BDD scenario | `s2_holo_format/container.feature::single format covers tensor-only` | ✅ |
 | **HF-2** | App nesting is capability-attenuated: a child's κ refs + delegated CapabilitySet are a subset of the parent's. | BDD scenario | `s2_holo_format/nesting.feature::nested app cannot exceed parent` | ✅ |
 | **HF-3** | v3 per-layer certificates verify; inspection APIs never strip them. | BDD scenario | `s2_holo_format/certificates.feature::per-layer certificates verify` | ✅ |
+| **HF-4** | v4 appends the `inference-model` layer kind (discriminant 4, closed enum — appended, never renumbered): non-exit-bearing (never a manifest `primary`), mandatory engine tag (`aux`) and service name (`entry`), unique non-empty entries per manifest; writers emit v4, v2/v3 archives remain loadable. Space-side validation: the `inference_model_*` and `duplicate_service_entries_are_rejected` unit tests in `realizations.rs`. | unit + round-trip tests | `crates/hologram-archive/tests/app_manifest_v3.rs::v4_archive_round_trips_an_inference_model_layer` | ✅ |
 
 ## NW — networks (refactor spec 04; BDD)
 

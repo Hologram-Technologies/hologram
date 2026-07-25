@@ -151,8 +151,8 @@ impl<'a> HoloLoader<'a> {
             return Err(ArchiveError::BadMagic(m));
         }
         let ver = u16::from_le_bytes([bytes[4], bytes[5]]);
-        // Read-shim (spec 03 §Compatibility): accept v2 tensor archives through
-        // the current version; writers emit v3 only. Below MIN_READ_VERSION or
+        // Read-shim (spec 03 §Compatibility): accept v2/v3 archives through
+        // the current version; writers emit v4 only. Below MIN_READ_VERSION or
         // above the current version is rejected.
         if !(crate::format::MIN_READ_VERSION..=FORMAT_VERSION).contains(&ver) {
             return Err(ArchiveError::UnsupportedVersion(ver));
