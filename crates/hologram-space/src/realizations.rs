@@ -735,10 +735,20 @@ impl LayerKind {
     }
 }
 
+/// Canonical guest-contract selector for the legacy core-Wasm ABI.
+///
+/// An empty Wasm layer `aux` remains a byte-compatible alias for this contract. New producers may
+/// write this explicit identifier when they need the selector to be visible in canonical identity.
+pub const WASM_CONTRACT_CORE_V1: &str = "hologram:guest/core-wasm@1";
+
+/// Canonical guest-contract selector for the import-free Component Model ABI.
+pub const WASM_CONTRACT_COMPONENT_V1: &str = "hologram:guest/component@1";
+
 /// One layer of a `.holo` v3 application: a κ-referenced payload plus its boot descriptor. The
 /// `entry` is the layer's entrypoint (like `main`); `aux` is the kind-specific tag — the **arch**
 /// for a rootfs-image (mandatory, ISA fixed at provision), the **surface** for a view, or the
-/// **engine** for an inference-model (mandatory, v4), empty for the portable code/tensor kinds.
+/// **engine** for an inference-model (mandatory, v4), a closed guest-contract selector for Wasm,
+/// and empty for tensor plans. Empty Wasm `aux` is the byte-compatible core-Wasm v1 alias.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Layer {
     pub kind: LayerKind,
@@ -748,8 +758,8 @@ pub struct Layer {
     /// Entrypoint name (e.g. `_start`, a session id, `boot`, or a callable service name for an
     /// inference-model layer).
     pub entry: String,
-    /// Kind-specific tag: arch for rootfs-image, surface for view, engine for inference-model,
-    /// empty otherwise.
+    /// Kind-specific tag: guest contract for Wasm, arch for rootfs-image, surface for view, engine
+    /// for inference-model, and empty for tensor plans.
     pub aux: String,
 }
 
@@ -761,6 +771,22 @@ impl Layer {
             content,
             entry: entry.into(),
             aux: String::new(),
+        }
+    }
+    /// A wasm layer with an explicit canonical guest-contract selector.
+    ///
+    /// [`WASM_CONTRACT_CORE_V1`] and [`WASM_CONTRACT_COMPONENT_V1`] are the accepted selectors.
+    /// Use [`Layer::wasm`] to retain the empty-tag compatibility encoding.
+    pub fn wasm_with_contract(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        contract: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LayerKind::WasmCodemodule,
+            content,
+            entry: entry.into(),
+            aux: contract.into(),
         }
     }
     /// A tensor-plan layer (no exit code) — the degenerate single-layer archive is one of these.
@@ -824,8 +850,10 @@ pub enum ManifestError {
     PrimaryNotExitBearing,
     /// A rootfs-image layer is missing its mandatory `arch` tag (ISA fixed at provision).
     RootfsMissingArch,
-    /// A portable layer (wasm-codemodule / tensor-plan) carries an `arch`/`aux` tag it must not.
+    /// A tensor-plan carries an `aux` tag it must not.
     PortableLayerHasArch,
+    /// A wasm-codemodule names a guest contract outside the closed supported identifier set.
+    UnsupportedWasmContract,
     /// A view layer is missing its `surface` tag.
     ViewMissingSurface,
     /// An inference-model layer (v4) is missing its callable service name (`entry`).
@@ -991,14 +1019,20 @@ impl AppManifest {
 }
 
 /// Per-layer descriptor invariants (spec 03 §Encoding decisions + §v4): which kinds require or
-/// forbid the `aux` tag, and the v4 inference-model service-name / engine-tag requirements.
+/// constrain the `aux` tag, and the v4 inference-model service-name / engine-tag requirements.
 fn validate_layer_descriptor(layer: &Layer) -> Result<(), ManifestError> {
     match layer.kind {
         LayerKind::RootfsImage if layer.aux.is_empty() => Err(ManifestError::RootfsMissingArch),
         LayerKind::View if layer.aux.is_empty() => Err(ManifestError::ViewMissingSurface),
-        LayerKind::WasmCodemodule | LayerKind::TensorPlan if !layer.aux.is_empty() => {
-            Err(ManifestError::PortableLayerHasArch)
+        LayerKind::WasmCodemodule
+            if !matches!(
+                layer.aux.as_str(),
+                "" | WASM_CONTRACT_CORE_V1 | WASM_CONTRACT_COMPONENT_V1
+            ) =>
+        {
+            Err(ManifestError::UnsupportedWasmContract)
         }
+        LayerKind::TensorPlan if !layer.aux.is_empty() => Err(ManifestError::PortableLayerHasArch),
         LayerKind::InferenceModel if layer.entry.is_empty() => Err(ManifestError::EmptyLayerEntry),
         LayerKind::InferenceModel if layer.aux.is_empty() => Err(ManifestError::MissingEngineTag),
         _ => Ok(()),
@@ -2196,6 +2230,51 @@ mod tests {
     }
 
     #[test]
+    fn legacy_wasm_constructor_keeps_the_empty_tag_identity() {
+        let legacy = AppManifest {
+            primary: Some(0),
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer::wasm(k(b"wasm"), "_start")],
+            children: alloc::vec![],
+        };
+        let pre_contract_shape = AppManifest {
+            primary: Some(0),
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer {
+                kind: LayerKind::WasmCodemodule,
+                content: k(b"wasm"),
+                entry: "_start".into(),
+                aux: String::new(),
+            }],
+            children: alloc::vec![],
+        };
+
+        assert_eq!(legacy.canonicalize(), pre_contract_shape.canonicalize());
+        assert_eq!(legacy.kappa(), pre_contract_shape.kappa());
+        legacy.validate().unwrap();
+    }
+
+    #[test]
+    fn explicit_wasm_contracts_validate_and_round_trip() {
+        for contract in [WASM_CONTRACT_CORE_V1, WASM_CONTRACT_COMPONENT_V1] {
+            let manifest = AppManifest {
+                primary: Some(0),
+                requires: k(b"caps"),
+                layers: alloc::vec![Layer::wasm_with_contract(k(b"wasm"), "_start", contract,)],
+                children: alloc::vec![],
+            };
+
+            manifest.validate().unwrap();
+            let decoded = AppManifest::decode(&manifest.canonicalize()).unwrap();
+            assert_eq!(decoded.primary, manifest.primary);
+            assert_eq!(decoded.requires, manifest.requires);
+            assert_eq!(decoded.layers[0].aux, contract);
+            assert_eq!(decoded.layers, manifest.layers);
+            assert_eq!(decoded.children, manifest.children);
+        }
+    }
+
+    #[test]
     fn app_manifest_dispatches_through_registry() {
         let m = full_app();
         let refs = references(&m.canonicalize(), REGISTRY).unwrap();
@@ -2232,7 +2311,7 @@ mod tests {
     }
 
     #[test]
-    fn rootfs_requires_arch_and_portable_kinds_reject_it() {
+    fn layer_aux_tags_are_validated_by_kind() {
         let no_arch = AppManifest {
             layers: alloc::vec![
                 Layer::wasm(k(b"w"), "_start"),
@@ -2246,17 +2325,31 @@ mod tests {
             ..full_app()
         };
         assert_eq!(no_arch.validate(), Err(ManifestError::RootfsMissingArch));
-        let wasm_with_arch = AppManifest {
+        let wasm_with_unknown_contract = AppManifest {
             layers: alloc::vec![Layer {
                 kind: LayerKind::WasmCodemodule,
                 content: k(b"w"),
                 entry: "_start".into(),
-                aux: "riscv64".into(), // portable kind must not carry arch
+                aux: "hologram:guest/unknown@1".into(),
             }],
             ..full_app()
         };
         assert_eq!(
-            wasm_with_arch.validate(),
+            wasm_with_unknown_contract.validate(),
+            Err(ManifestError::UnsupportedWasmContract)
+        );
+        let tensor_with_aux = AppManifest {
+            layers: alloc::vec![Layer {
+                kind: LayerKind::TensorPlan,
+                content: k(b"t"),
+                entry: "session".into(),
+                aux: "not-allowed".into(),
+            }],
+            primary: None,
+            ..full_app()
+        };
+        assert_eq!(
+            tensor_with_aux.validate(),
             Err(ManifestError::PortableLayerHasArch)
         );
     }
