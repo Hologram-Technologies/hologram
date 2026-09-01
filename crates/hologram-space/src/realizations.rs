@@ -749,6 +749,13 @@ pub const WASM_CONTRACT_COMPONENT_V1: &str = "hologram:guest/component@1";
 pub const WASM_CONTRACT_COMPONENT_STORE_READ_V1: &str = "hologram:guest/component-store-read@1";
 
 /// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram object-store read interface over a fully resolved,
+/// bounded typed realization closure. The exact-root store-read selector
+/// remains distinct so consumers cannot widen existing grants implicitly.
+pub const WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1: &str =
+    "hologram:guest/component-store-graph-read@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
 /// capability-gated Hologram object-store write interface.
 pub const WASM_CONTRACT_COMPONENT_STORE_WRITE_V1: &str = "hologram:guest/component-store-write@1";
 
@@ -795,6 +802,7 @@ impl Layer {
     ///
     /// [`WASM_CONTRACT_CORE_V1`], [`WASM_CONTRACT_COMPONENT_V1`],
     /// [`WASM_CONTRACT_COMPONENT_STORE_READ_V1`],
+    /// [`WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1`],
     /// [`WASM_CONTRACT_COMPONENT_STORE_WRITE_V1`],
     /// [`WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1`], and
     /// [`WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1`] are the accepted selectors.
@@ -1052,6 +1060,7 @@ fn validate_layer_descriptor(layer: &Layer) -> Result<(), ManifestError> {
                 "" | WASM_CONTRACT_CORE_V1
                     | WASM_CONTRACT_COMPONENT_V1
                     | WASM_CONTRACT_COMPONENT_STORE_READ_V1
+                    | WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1
                     | WASM_CONTRACT_COMPONENT_STORE_WRITE_V1
                     | WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1
                     | WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1
@@ -2287,6 +2296,7 @@ mod tests {
             WASM_CONTRACT_CORE_V1,
             WASM_CONTRACT_COMPONENT_V1,
             WASM_CONTRACT_COMPONENT_STORE_READ_V1,
+            WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1,
             WASM_CONTRACT_COMPONENT_STORE_WRITE_V1,
             WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1,
             WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1,
