@@ -744,6 +744,11 @@ pub const WASM_CONTRACT_CORE_V1: &str = "hologram:guest/core-wasm@1";
 /// Canonical guest-contract selector for the import-free Component Model ABI.
 pub const WASM_CONTRACT_COMPONENT_V1: &str = "hologram:guest/component@1";
 
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram object-store read interface.
+pub const WASM_CONTRACT_COMPONENT_STORE_READ_V1: &str =
+    "hologram:guest/component-store-read@1";
+
 /// One layer of a `.holo` v3 application: a κ-referenced payload plus its boot descriptor. The
 /// `entry` is the layer's entrypoint (like `main`); `aux` is the kind-specific tag — the **arch**
 /// for a rootfs-image (mandatory, ISA fixed at provision), the **surface** for a view, or the
@@ -775,7 +780,8 @@ impl Layer {
     }
     /// A wasm layer with an explicit canonical guest-contract selector.
     ///
-    /// [`WASM_CONTRACT_CORE_V1`] and [`WASM_CONTRACT_COMPONENT_V1`] are the accepted selectors.
+    /// [`WASM_CONTRACT_CORE_V1`], [`WASM_CONTRACT_COMPONENT_V1`], and
+    /// [`WASM_CONTRACT_COMPONENT_STORE_READ_V1`] are the accepted selectors.
     /// Use [`Layer::wasm`] to retain the empty-tag compatibility encoding.
     pub fn wasm_with_contract(
         content: KappaLabel71,
@@ -1027,7 +1033,10 @@ fn validate_layer_descriptor(layer: &Layer) -> Result<(), ManifestError> {
         LayerKind::WasmCodemodule
             if !matches!(
                 layer.aux.as_str(),
-                "" | WASM_CONTRACT_CORE_V1 | WASM_CONTRACT_COMPONENT_V1
+                ""
+                    | WASM_CONTRACT_CORE_V1
+                    | WASM_CONTRACT_COMPONENT_V1
+                    | WASM_CONTRACT_COMPONENT_STORE_READ_V1
             ) =>
         {
             Err(ManifestError::UnsupportedWasmContract)
@@ -2256,7 +2265,11 @@ mod tests {
 
     #[test]
     fn explicit_wasm_contracts_validate_and_round_trip() {
-        for contract in [WASM_CONTRACT_CORE_V1, WASM_CONTRACT_COMPONENT_V1] {
+        for contract in [
+            WASM_CONTRACT_CORE_V1,
+            WASM_CONTRACT_COMPONENT_V1,
+            WASM_CONTRACT_COMPONENT_STORE_READ_V1,
+        ] {
             let manifest = AppManifest {
                 primary: Some(0),
                 requires: k(b"caps"),
