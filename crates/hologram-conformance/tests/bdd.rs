@@ -269,8 +269,10 @@ const GV_SIGMA_2_KAPPA: &str =
     "blake3:1669bd4584b6af8519f71e9f9116a4ad6aaae70950a70787ee5718c00558e18d";
 const GV_MANIFEST_KAPPA: &str =
     "blake3:2d4f5ff9117227d79c5cd31d6774af96246896bd80a013d69b20c714246a7224";
+// Advanced 2026-09-01 for the versioned NEP1 endpoint-scope extension. The separate
+// CapabilitySet unit vector proves legacy no-network bytes remain unchanged.
 const GV_CAPS_KAPPA: &str =
-    "blake3:efd7908e447824e02df07049a68f6c5018663484bf87e63d5a17e4ae43ce02b0";
+    "blake3:f0ae51cbdde2b4254be9c10df9a2400da466b0ba26d8a6b9b5e8cfe8686ae069";
 
 fn golden_manifest() -> ContainerManifest {
     ContainerManifest {
@@ -289,8 +291,11 @@ fn golden_caps() -> CapabilitySet {
         memory_max_bytes: 4096,
         cpu_time_per_event_ms: 10,
         priority_weight: 1,
-        network_fetch: true,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
     })
 }
 
@@ -303,6 +308,10 @@ fn mg5_rederive(w: &mut ConformanceWorld) {
     let sigma2 = address_bytes(b"hologram-golden-vector/sigma/2").to_string();
     let manifest = address_bytes(&golden_manifest().canonicalize()).to_string();
     let caps = address_bytes(&golden_caps().canonicalize()).to_string();
+    assert_eq!(
+        caps, GV_CAPS_KAPPA,
+        "the endpoint-scoped CapabilitySet golden vector changed"
+    );
     w.mg5_stable = sigma1 == GV_SIGMA_1_KAPPA
         && sigma2 == GV_SIGMA_2_KAPPA
         && manifest == GV_MANIFEST_KAPPA
@@ -542,8 +551,12 @@ fn hf2_caps(storage: &[&[u8]], quota: u64, fetch: bool) -> Capabilities {
     Capabilities {
         storage_roots: storage.iter().map(|s| address_bytes(s)).collect(),
         storage_quota_bytes: quota,
-        network_fetch: fetch,
-        network_announce: false,
+        network_fetch_endpoints: if fetch {
+            vec![hologram_space::NetworkEndpointScope::parse("https://example.com:443/").unwrap()]
+        } else {
+            vec![]
+        },
+        network_announce_endpoints: vec![],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: quota,
@@ -784,8 +797,11 @@ fn gv4_given(w: &mut ConformanceWorld) {
     let policy = Capabilities {
         storage_roots: vec![],
         storage_quota_bytes: 1000,
-        network_fetch: true,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: 0,
@@ -798,17 +814,19 @@ fn gv4_given(w: &mut ConformanceWorld) {
 #[when("a peer stores, fetches, or announces content")]
 fn gv4_attempt(w: &mut ConformanceWorld) {
     let policy = CapabilitySet::to_capabilities(&w.canonical).expect("decode the policy");
+    let target = hologram_space::NetworkEndpointScope::parse("https://example.com:443/api")
+        .expect("canonical target");
     // The check is at the boundary — decided from the capability alone, per op.
-    let fetch_ok = policy.admits_network_op(NetworkOp::Fetch, 0);
-    let announce_refused = !policy.admits_network_op(NetworkOp::Announce, 0);
-    let store_within = policy.admits_network_op(NetworkOp::Store, 500);
-    let store_over = !policy.admits_network_op(NetworkOp::Store, 2000);
+    let fetch_ok = policy.admits_network_op(NetworkOp::Fetch, Some(&target), 0);
+    let announce_refused = !policy.admits_network_op(NetworkOp::Announce, Some(&target), 0);
+    let store_within = policy.admits_network_op(NetworkOp::Store, None, 500);
+    let store_over = !policy.admits_network_op(NetworkOp::Store, None, 2000);
     // Accounting is per-capability: a second capability's quota is independent, not a global counter.
     let other = Capabilities {
         storage_quota_bytes: 5000,
         ..policy.clone()
     };
-    let per_capability = other.admits_network_op(NetworkOp::Store, 2000);
+    let per_capability = other.admits_network_op(NetworkOp::Store, None, 2000);
     w.gv4_boundary =
         Some(fetch_ok && announce_refused && store_within && store_over && per_capability);
 }

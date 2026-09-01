@@ -45,8 +45,11 @@ fn caps() -> Capabilities {
     Capabilities {
         storage_roots: Vec::new(),
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: 4 << 20,
@@ -130,7 +133,7 @@ fn the_control_plane_reconfigures_an_instance_over_the_substrate() {
             .expect("the owner is authorized for its own instance");
         assert_eq!(applied.lifecycle, Some(LifecycleAction::Resume));
         assert_eq!(applied.forward_ports, vec![8080]);
-        assert!(applied.capabilities.network_fetch);
+        assert_eq!(applied.capabilities.network_fetch_endpoints.len(), 1);
         assert_eq!(applied.capabilities.storage_quota_bytes, 2 << 30);
         assert_eq!(
             applied.grants,

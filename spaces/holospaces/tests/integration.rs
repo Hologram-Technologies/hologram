@@ -21,8 +21,8 @@ fn caps() -> Capabilities {
     Capabilities {
         storage_roots: Vec::new(),
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: 0,
@@ -79,7 +79,8 @@ fn capability_change_changes_identity_end_to_end() {
     let open = provision();
     let mut scoped_caps = caps();
     scoped_caps.memory_max_bytes = 512 << 20;
-    scoped_caps.network_fetch = true;
+    scoped_caps.network_fetch_endpoints =
+        vec![hologram_space::NetworkEndpointScope::parse("https://example.com:443/").unwrap()];
     let scoped = ingest_devcontainer(
         "https://example.invalid/app.git",
         "main",

@@ -28,8 +28,8 @@ fn caps_with(
         memory_max_bytes: 0,
         cpu_time_per_event_ms: 0,
         priority_weight: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
     }
 }
 

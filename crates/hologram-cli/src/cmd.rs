@@ -990,8 +990,11 @@ mod tests {
         let caps = |roots: &[&[u8]], quota: u64| Capabilities {
             storage_roots: roots.iter().map(|r| address_bytes(r)).collect(),
             storage_quota_bytes: quota,
-            network_fetch: true,
-            network_announce: false,
+            network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+                "https://example.com:443/",
+            )
+            .unwrap()],
+            network_announce_endpoints: vec![],
             publish_channels: vec![],
             subscribe_channels: vec![],
             memory_max_bytes: quota,

@@ -284,8 +284,8 @@ fn the_emulator_codemodule_runs_on_the_real_hologram_runtime() {
             let caps = Capabilities {
                 storage_roots: Vec::new(),
                 storage_quota_bytes: 0,
-                network_fetch: false,
-                network_announce: false,
+                network_fetch_endpoints: vec![],
+                network_announce_endpoints: vec![],
                 publish_channels: Vec::new(),
                 subscribe_channels: Vec::new(),
                 memory_max_bytes: 0,
@@ -417,8 +417,8 @@ fn the_codemodule_boots_real_linux_on_the_substrate() {
             let caps = Capabilities {
                 storage_roots: vec![kernel_k, dtb_k],
                 storage_quota_bytes: 1 << 20,
-                network_fetch: false,
-                network_announce: false,
+                network_fetch_endpoints: vec![],
+                network_announce_endpoints: vec![],
                 publish_channels: Vec::new(),
                 subscribe_channels: Vec::new(),
                 memory_max_bytes: 0,

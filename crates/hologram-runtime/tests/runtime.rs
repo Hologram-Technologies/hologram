@@ -14,8 +14,12 @@ fn caps(roots: &[KappaLabel71], quota: u64, fetch: bool) -> Capabilities {
     Capabilities {
         storage_roots: roots.to_vec(),
         storage_quota_bytes: quota,
-        network_fetch: fetch,
-        network_announce: false,
+        network_fetch_endpoints: if fetch {
+            vec![hologram_space::NetworkEndpointScope::parse("https://example.com:443/").unwrap()]
+        } else {
+            vec![]
+        },
+        network_announce_endpoints: vec![],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: 1 << 20,
@@ -240,8 +244,8 @@ fn caps_chan(publish: &[KappaLabel71], subscribe: &[KappaLabel71]) -> Capabiliti
     Capabilities {
         storage_roots: vec![],
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: publish.to_vec(),
         subscribe_channels: subscribe.to_vec(),
         memory_max_bytes: 1 << 20,
@@ -358,8 +362,8 @@ fn caps_weighted(weight: u32) -> Capabilities {
     Capabilities {
         storage_roots: vec![],
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: 1 << 20,

@@ -21,8 +21,14 @@ fn unbounded_caps() -> Capabilities {
     Capabilities {
         storage_roots: vec![],
         storage_quota_bytes: 0,
-        network_fetch: true,
-        network_announce: true,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: 0,
