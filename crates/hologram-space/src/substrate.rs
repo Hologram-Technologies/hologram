@@ -432,7 +432,7 @@ impl NetworkEndpointScope {
         {
             return Err(NetworkEndpointScopeError::Path);
         }
-        Ok(Self(value.to_owned()))
+        Ok(Self(String::from(value)))
     }
 
     #[must_use]
