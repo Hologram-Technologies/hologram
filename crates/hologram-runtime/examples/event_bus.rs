@@ -13,8 +13,8 @@ fn caps(publish: Vec<KappaLabel71>, subscribe: Vec<KappaLabel71>) -> Capabilitie
     Capabilities {
         storage_roots: vec![],
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: publish,
         subscribe_channels: subscribe,
         memory_max_bytes: 0,

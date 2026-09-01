@@ -191,8 +191,8 @@ fn client_opens_boots_and_suspends_a_session() {
         memory_max_bytes: 1 << 20,
         cpu_time_per_event_ms: 100,
         priority_weight: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
     };
     let caps_k = store
         .put("blake3", &CapabilitySet::new(caps).canonicalize())

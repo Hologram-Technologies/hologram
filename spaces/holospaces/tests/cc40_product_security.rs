@@ -71,8 +71,11 @@ fn sec_authority_capabilities_only_attenuate_never_escalate() {
     let parent = Capabilities {
         storage_roots: vec![root],
         storage_quota_bytes: 1024,
-        network_fetch: true,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: 256 * 1024 * 1024,
@@ -84,7 +87,7 @@ fn sec_authority_capabilities_only_attenuate_never_escalate() {
     let attenuated = Capabilities {
         storage_roots: Vec::new(),
         storage_quota_bytes: 512,
-        network_fetch: false,
+        network_fetch_endpoints: vec![],
         memory_max_bytes: 128 * 1024 * 1024,
         cpu_time_per_event_ms: 50,
         priority_weight: 5,
@@ -97,7 +100,10 @@ fn sec_authority_capabilities_only_attenuate_never_escalate() {
 
     // Every escalation vector is refused — no ambient authority leaks through.
     let grant_unheld_network = Capabilities {
-        network_announce: true, // the parent does not hold announce
+        network_announce_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()], // the parent does not hold announce
         ..parent.clone()
     };
     assert!(

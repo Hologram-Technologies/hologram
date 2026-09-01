@@ -8,7 +8,10 @@
 //! is a tracked upgrade — uor-addr ships only commutative `compose_g2_product_blake3`, and the
 //! ordered PrismModel lives behind the compute engine, excluded by RZ).
 
-use crate::{address_bytes, Capabilities, KappaLabel, KappaLabel71, RealizationError, References};
+use crate::{
+    address_bytes, Capabilities, KappaLabel, KappaLabel71, NetworkEndpointScope, RealizationError,
+    References,
+};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -172,6 +175,8 @@ pub struct CapabilitySet {
     pub caps: Capabilities,
 }
 impl CapabilitySet {
+    const ENDPOINT_EXTENSION: &'static [u8; 4] = b"NEP1";
+
     pub fn new(caps: Capabilities) -> Self {
         Self { caps }
     }
@@ -190,7 +195,17 @@ impl CapabilitySet {
         p.extend_from_slice(&c.memory_max_bytes.to_le_bytes());
         p.extend_from_slice(&c.cpu_time_per_event_ms.to_le_bytes());
         p.extend_from_slice(&c.priority_weight.to_le_bytes());
-        p.push((c.network_fetch as u8) | ((c.network_announce as u8) << 1));
+        // The legacy byte is retained at zero so all pre-scope capability sets that did not grant
+        // ambient network access keep their exact canonical identity. Old readers see new endpoint
+        // extensions as no network authority; new readers reject legacy nonzero ambient flags.
+        p.push(0);
+        let fetch = canonical_endpoint_order(&c.network_fetch_endpoints);
+        let announce = canonical_endpoint_order(&c.network_announce_endpoints);
+        if !fetch.is_empty() || !announce.is_empty() {
+            p.extend_from_slice(Self::ENDPOINT_EXTENSION);
+            encode_endpoint_scopes(&mut p, &fetch);
+            encode_endpoint_scopes(&mut p, &announce);
+        }
         (refs, p)
     }
     /// Decode a capability-set canonical form back to its [`Capabilities`] view — the inverse of
@@ -213,6 +228,29 @@ impl CapabilitySet {
         let cpu_time_per_event_ms = read_u64(&payload, &mut cur)?;
         let priority_weight = read_u32(&payload, &mut cur)?;
         let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
+        cur += 1;
+        if flags != 0 {
+            // Boolean network authority had no endpoint boundary. It is intentionally not mapped
+            // to a wildcard because doing so would preserve unsafe ambient access.
+            return Err(RealizationError::Malformed);
+        }
+        let (network_fetch_endpoints, network_announce_endpoints) = if cur == payload.len() {
+            (Vec::new(), Vec::new())
+        } else {
+            let magic_end = cur
+                .checked_add(Self::ENDPOINT_EXTENSION.len())
+                .ok_or(RealizationError::Truncated)?;
+            if payload.get(cur..magic_end) != Some(Self::ENDPOINT_EXTENSION.as_slice()) {
+                return Err(RealizationError::Malformed);
+            }
+            cur = magic_end;
+            let fetch = decode_endpoint_scopes(&payload, &mut cur)?;
+            let announce = decode_endpoint_scopes(&payload, &mut cur)?;
+            if cur != payload.len() {
+                return Err(RealizationError::Malformed);
+            }
+            (fetch, announce)
+        };
         Ok(Capabilities {
             storage_roots: refs[..ns].to_vec(),
             publish_channels: refs[ns..ns + np].to_vec(),
@@ -221,10 +259,57 @@ impl CapabilitySet {
             memory_max_bytes,
             cpu_time_per_event_ms,
             priority_weight,
-            network_fetch: flags & 1 != 0,
-            network_announce: flags & 2 != 0,
+            network_fetch_endpoints,
+            network_announce_endpoints,
         })
     }
+}
+
+fn canonical_endpoint_order(scopes: &[NetworkEndpointScope]) -> Vec<NetworkEndpointScope> {
+    let mut scopes = scopes.to_vec();
+    scopes.sort();
+    scopes.dedup();
+    scopes
+}
+
+fn encode_endpoint_scopes(payload: &mut Vec<u8>, scopes: &[NetworkEndpointScope]) {
+    payload.extend_from_slice(&(scopes.len() as u32).to_le_bytes());
+    for scope in scopes {
+        let bytes = scope.as_str().as_bytes();
+        payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(bytes);
+    }
+}
+
+fn decode_endpoint_scopes(
+    payload: &[u8],
+    cur: &mut usize,
+) -> Result<Vec<NetworkEndpointScope>, RealizationError> {
+    const MAX_ENDPOINT_SCOPES: usize = 1024;
+    const MAX_ENDPOINT_SCOPE_BYTES: usize = 2048;
+
+    let count = read_u32(payload, cur)? as usize;
+    if count > MAX_ENDPOINT_SCOPES {
+        return Err(RealizationError::Malformed);
+    }
+    let mut scopes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = read_u32(payload, cur)? as usize;
+        if len == 0 || len > MAX_ENDPOINT_SCOPE_BYTES {
+            return Err(RealizationError::Malformed);
+        }
+        let end = cur.checked_add(len).ok_or(RealizationError::Truncated)?;
+        let value =
+            core::str::from_utf8(payload.get(*cur..end).ok_or(RealizationError::Truncated)?)
+                .map_err(|_| RealizationError::Malformed)?;
+        let scope = NetworkEndpointScope::parse(value).map_err(|_| RealizationError::Malformed)?;
+        if scopes.last().is_some_and(|previous| previous >= &scope) {
+            return Err(RealizationError::Malformed);
+        }
+        scopes.push(scope);
+        *cur = end;
+    }
+    Ok(scopes)
 }
 realization!(
     CapabilitySet,
@@ -2667,28 +2752,32 @@ mod tests {
         let policy = Capabilities {
             storage_roots: alloc::vec![],
             storage_quota_bytes: 1000,
-            network_fetch: true,
-            network_announce: false,
+            network_fetch_endpoints: vec![crate::NetworkEndpointScope::parse(
+                "https://example.com:443/",
+            )
+            .unwrap()],
+            network_announce_endpoints: vec![],
             publish_channels: alloc::vec![],
             subscribe_channels: alloc::vec![],
             memory_max_bytes: 0,
             cpu_time_per_event_ms: 0,
             priority_weight: 0,
         };
+        let target = crate::NetworkEndpointScope::parse("https://example.com:443/api").unwrap();
         assert!(
-            policy.admits_network_op(NetworkOp::Fetch, 0),
+            policy.admits_network_op(NetworkOp::Fetch, Some(&target), 0),
             "fetch granted"
         );
         assert!(
-            !policy.admits_network_op(NetworkOp::Announce, 0),
+            !policy.admits_network_op(NetworkOp::Announce, Some(&target), 0),
             "announce not granted"
         );
         assert!(
-            policy.admits_network_op(NetworkOp::Store, 500),
+            policy.admits_network_op(NetworkOp::Store, None, 500),
             "store within quota"
         );
         assert!(
-            !policy.admits_network_op(NetworkOp::Store, 2000),
+            !policy.admits_network_op(NetworkOp::Store, None, 2000),
             "store over quota refused"
         );
         // Per-capability accounting: a second capability's quota is independent, not global.
@@ -2697,9 +2786,56 @@ mod tests {
             ..policy.clone()
         };
         assert!(
-            other.admits_network_op(NetworkOp::Store, 2000),
+            other.admits_network_op(NetworkOp::Store, None, 2000),
             "the other cap has its own budget"
         );
+    }
+
+    #[test]
+    fn capability_endpoint_extension_round_trips_and_legacy_ambient_flags_fail_closed() {
+        use crate::Capabilities;
+
+        let empty = Capabilities {
+            storage_roots: alloc::vec![],
+            storage_quota_bytes: 0,
+            network_fetch_endpoints: alloc::vec![],
+            network_announce_endpoints: alloc::vec![],
+            publish_channels: alloc::vec![],
+            subscribe_channels: alloc::vec![],
+            memory_max_bytes: 0,
+            cpu_time_per_event_ms: 0,
+            priority_weight: 0,
+        };
+        let legacy_safe = CapabilitySet::new(empty.clone()).canonicalize();
+        assert_eq!(CapabilitySet::to_capabilities(&legacy_safe).unwrap(), empty);
+
+        let mut legacy_ambient = legacy_safe.clone();
+        *legacy_ambient.last_mut().expect("legacy flag byte") = 1;
+        assert_eq!(
+            CapabilitySet::to_capabilities(&legacy_ambient),
+            Err(RealizationError::Malformed),
+            "unscoped legacy fetch must never become a wildcard"
+        );
+
+        let broad = crate::NetworkEndpointScope::parse("https://api.example.com:443/v1").unwrap();
+        let narrow =
+            crate::NetworkEndpointScope::parse("https://api.example.com:443/v1/models").unwrap();
+        let scoped = Capabilities {
+            network_fetch_endpoints: alloc::vec![narrow.clone(), broad.clone(), broad],
+            ..empty
+        };
+        let canonical = CapabilitySet::new(scoped).canonicalize();
+        let decoded = CapabilitySet::to_capabilities(&canonical).expect("scoped capability");
+        assert_eq!(decoded.network_fetch_endpoints.len(), 2);
+        assert_eq!(
+            CapabilitySet::new(decoded.clone()).canonicalize(),
+            canonical,
+            "canonical endpoint ordering is stable"
+        );
+        assert!(decoded.admits(&Capabilities {
+            network_fetch_endpoints: alloc::vec![narrow],
+            ..decoded.clone()
+        }));
     }
 
     #[test]

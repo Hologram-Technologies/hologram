@@ -14,8 +14,8 @@ fn caps(roots: Vec<KappaLabel71>, quota: u64) -> Capabilities {
     Capabilities {
         storage_roots: roots,
         storage_quota_bytes: quota,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: vec![],
         subscribe_channels: vec![],
         memory_max_bytes: 0,

@@ -14,6 +14,7 @@
 //!   κ-format helpers are byte-identical to `hologram-archive::address_bytes`.
 
 use alloc::boxed::Box;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -363,6 +364,105 @@ impl Closure {
 
 // ───────────────────────────── capability view (decoded; authority is a κ-label) ─────────────
 
+/// One canonical endpoint boundary for mediated HTTPS operations.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NetworkEndpointScope(String);
+
+/// Why a human-readable network endpoint scope is not canonical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkEndpointScopeError {
+    Scheme,
+    Host,
+    Port,
+    Path,
+}
+
+impl NetworkEndpointScope {
+    /// Parse the deliberately narrow canonical syntax
+    /// `https://<lowercase-dns-host>:<explicit-port>/<path-prefix>`.
+    ///
+    /// Query strings, fragments, user information, IP literals, percent escapes, dot segments,
+    /// repeated slashes, and non-ASCII bytes are excluded so every authority has one byte form.
+    pub fn parse(value: &str) -> Result<Self, NetworkEndpointScopeError> {
+        let rest = value
+            .strip_prefix("https://")
+            .ok_or(NetworkEndpointScopeError::Scheme)?;
+        let slash = rest.find('/').ok_or(NetworkEndpointScopeError::Path)?;
+        let (authority, path) = rest.split_at(slash);
+        let (host, port_text) = authority
+            .rsplit_once(':')
+            .ok_or(NetworkEndpointScopeError::Port)?;
+        if host.is_empty()
+            || host.len() > 253
+            || host.contains(':')
+            || host.starts_with('.')
+            || host.ends_with('.')
+            || !host.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'.'
+            })
+            || host.split('.').any(|label| {
+                label.is_empty()
+                    || label.len() > 63
+                    || label.starts_with('-')
+                    || label.ends_with('-')
+            })
+        {
+            return Err(NetworkEndpointScopeError::Host);
+        }
+        let port = port_text
+            .parse::<u16>()
+            .map_err(|_| NetworkEndpointScopeError::Port)?;
+        if port == 0 || port.to_string() != port_text {
+            return Err(NetworkEndpointScopeError::Port);
+        }
+        if path.is_empty()
+            || !path.is_ascii()
+            || path.contains("//")
+            || path.contains('%')
+            || path.contains('?')
+            || path.contains('#')
+            || path
+                .split('/')
+                .any(|segment| segment == "." || segment == "..")
+            || !path.bytes().all(|byte| {
+                byte == b'/'
+                    || byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'-' | b'.' | b'_' | b'~')
+            })
+        {
+            return Err(NetworkEndpointScopeError::Path);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Whether this scope contains `derived`. Hosts and ports are exact; paths narrow only on a
+    /// segment boundary (`/api` admits `/api/v1`, never `/apix`).
+    #[must_use]
+    pub fn admits(&self, derived: &Self) -> bool {
+        let (parent_authority, parent_path) = split_scope(&self.0);
+        let (derived_authority, derived_path) = split_scope(&derived.0);
+        if parent_authority != derived_authority {
+            return false;
+        }
+        parent_path == "/"
+            || derived_path == parent_path
+            || (derived_path.starts_with(parent_path)
+                && (parent_path.ends_with('/')
+                    || derived_path.as_bytes().get(parent_path.len()) == Some(&b'/')))
+    }
+}
+
+fn split_scope(value: &str) -> (&str, &str) {
+    let rest = &value["https://".len()..];
+    let slash = rest.find('/').expect("validated endpoint scope has a path");
+    (&rest[..slash], &rest[slash..])
+}
+
 /// Decoded *view* of a Capability Set's canonical form (spec §8.4). The authority itself is a
 /// **κ-label** in the graph (SPINE-1); this struct is only the parsed projection — never the
 /// thing passed to [`ContainerRuntime::spawn`] (which takes the κ-label, B3).
@@ -371,8 +471,10 @@ pub struct Capabilities {
     /// Readable closure roots (transitive via SPINE-3 references).
     pub storage_roots: Vec<KappaLabel71>,
     pub storage_quota_bytes: u64,
-    pub network_fetch: bool,
-    pub network_announce: bool,
+    /// HTTPS origins/path prefixes available to a future mediated fetch interface.
+    pub network_fetch_endpoints: Vec<NetworkEndpointScope>,
+    /// HTTPS origins/path prefixes available to a future mediated announce interface.
+    pub network_announce_endpoints: Vec<NetworkEndpointScope>,
     pub publish_channels: Vec<KappaLabel71>,
     pub subscribe_channels: Vec<KappaLabel71>,
     pub memory_max_bytes: u64,
@@ -404,6 +506,14 @@ impl Capabilities {
         fn subset(a: &[KappaLabel71], b: &[KappaLabel71]) -> bool {
             a.iter().all(|x| b.contains(x))
         }
+        fn endpoint_subset(
+            derived: &[NetworkEndpointScope],
+            parent: &[NetworkEndpointScope],
+        ) -> bool {
+            derived
+                .iter()
+                .all(|candidate| parent.iter().any(|scope| scope.admits(candidate)))
+        }
         // Budget containment under the **0 = unbounded** convention (spec §7.6 / arch §3.4):
         // - parent unbounded (parent = 0) admits any child.
         // - parent bounded (parent ≠ 0) requires child also bounded (child ≠ 0) AND child ≤ parent.
@@ -419,22 +529,41 @@ impl Capabilities {
             && budget_admits(self.memory_max_bytes, derived.memory_max_bytes)
             && budget_admits(self.cpu_time_per_event_ms, derived.cpu_time_per_event_ms)
             && derived.priority_weight <= self.priority_weight.max(1)
-            // A flag may be granted by the child only if the parent holds it.
-            && (!derived.network_fetch || self.network_fetch)
-            && (!derived.network_announce || self.network_announce)
+            && endpoint_subset(
+                &derived.network_fetch_endpoints,
+                &self.network_fetch_endpoints,
+            )
+            && endpoint_subset(
+                &derived.network_announce_endpoints,
+                &self.network_announce_endpoints,
+            )
     }
 
     /// The **import/protocol-boundary** capability check for a network op (spec 07 R4 / GV-4):
     /// whether *this* capability admits `op` on `bytes_len` bytes. Decided from the capability
-    /// alone — fetch requires `network_fetch`, announce requires `network_announce`, store must fit
-    /// the **per-capability** `storage_quota_bytes` (`0` = unbounded, spec §7.6). The budget is this
-    /// capability's own, never a global counter, so per-network / per-operator accounting composes.
+    /// alone — fetch/announce require a target contained by one endpoint scope, while store must
+    /// fit the **per-capability** `storage_quota_bytes` (`0` = unbounded, spec §7.6). The budget is
+    /// this capability's own, never a global counter, so per-network / per-operator accounting
+    /// composes.
     #[must_use]
-    pub fn admits_network_op(&self, op: crate::NetworkOp, bytes_len: u64) -> bool {
+    pub fn admits_network_op(
+        &self,
+        op: crate::NetworkOp,
+        endpoint: Option<&NetworkEndpointScope>,
+        bytes_len: u64,
+    ) -> bool {
         use crate::NetworkOp;
         match op {
-            NetworkOp::Fetch => self.network_fetch,
-            NetworkOp::Announce => self.network_announce,
+            NetworkOp::Fetch => endpoint.is_some_and(|target| {
+                self.network_fetch_endpoints
+                    .iter()
+                    .any(|scope| scope.admits(target))
+            }),
+            NetworkOp::Announce => endpoint.is_some_and(|target| {
+                self.network_announce_endpoints
+                    .iter()
+                    .any(|scope| scope.admits(target))
+            }),
             NetworkOp::Store => {
                 self.storage_quota_bytes == 0 || bytes_len <= self.storage_quota_bytes
             }
@@ -725,6 +854,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn endpoint_scope_requires_one_canonical_https_form() {
+        let valid = NetworkEndpointScope::parse("https://api.example.com:443/v1/models")
+            .expect("canonical endpoint");
+        assert_eq!(valid.as_str(), "https://api.example.com:443/v1/models");
+
+        for invalid in [
+            "http://api.example.com:80/",
+            "https://API.example.com:443/",
+            "https://api.example.com/",
+            "https://api.example.com:0443/",
+            "https://api.example.com:443/a/../b",
+            "https://api.example.com:443/a%2fb",
+            "https://user@api.example.com:443/",
+        ] {
+            assert!(
+                NetworkEndpointScope::parse(invalid).is_err(),
+                "accepted noncanonical scope {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn endpoint_scope_attenuates_by_exact_origin_and_path_segment() {
+        let parent = NetworkEndpointScope::parse("https://api.example.com:443/v1").unwrap();
+        let child = NetworkEndpointScope::parse("https://api.example.com:443/v1/models").unwrap();
+        let sibling = NetworkEndpointScope::parse("https://api.example.com:443/v10").unwrap();
+        let other_port =
+            NetworkEndpointScope::parse("https://api.example.com:8443/v1/models").unwrap();
+        assert!(parent.admits(&parent));
+        assert!(parent.admits(&child));
+        assert!(!child.admits(&parent));
+        assert!(!parent.admits(&sibling));
+        assert!(!parent.admits(&other_port));
+    }
+
+    #[test]
     fn verify_kappa_round_trips_blake3() {
         let k = address_bytes(b"hologram");
         assert_eq!(k.sigma_axis(), Some("blake3"));
@@ -1009,8 +1174,12 @@ mod tests {
         Capabilities {
             storage_roots: roots.iter().map(|r| address_bytes(r)).collect(),
             storage_quota_bytes: quota,
-            network_fetch: fetch,
-            network_announce: false,
+            network_fetch_endpoints: if fetch {
+                vec![NetworkEndpointScope::parse("https://example.com:443/").unwrap()]
+            } else {
+                vec![]
+            },
+            network_announce_endpoints: vec![],
             publish_channels: vec![],
             subscribe_channels: vec![],
             memory_max_bytes: 1 << 20,

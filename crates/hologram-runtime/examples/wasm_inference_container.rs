@@ -53,8 +53,8 @@ fn main() {
                 &CapabilitySet::new(Capabilities {
                     storage_roots: vec![input_k], // may read the input κ (and its closure)
                     storage_quota_bytes: 1 << 20,
-                    network_fetch: false,
-                    network_announce: false,
+                    network_fetch_endpoints: vec![],
+                    network_announce_endpoints: vec![],
                     publish_channels: vec![],
                     subscribe_channels: vec![],
                     memory_max_bytes: 4 << 20,

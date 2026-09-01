@@ -611,7 +611,7 @@ use hologram_space::MemKappaStore;
 use holospaces::identity::Operator;
 use holospaces::manager::Manager;
 use holospaces::peer::Peer;
-use holospaces::substrate::{Capabilities, KappaStore};
+use holospaces::substrate::{Capabilities, KappaStore, NetworkEndpointScope};
 use holospaces::Source;
 
 // A self-sovereign key unlocks a content-addressed operator identity.
@@ -626,8 +626,10 @@ let peer = Peer::new(runtime.store(), &runtime);
 let caps = Capabilities {
     storage_roots: Vec::new(),
     storage_quota_bytes: 0,
-    network_fetch: false,
-    network_announce: false,
+    network_fetch_endpoints: vec![
+        NetworkEndpointScope::parse("https://api.example.com:443/v1")?,
+    ],
+    network_announce_endpoints: Vec::new(),
     publish_channels: Vec::new(),
     subscribe_channels: Vec::new(),
     memory_max_bytes: 4 << 20,
