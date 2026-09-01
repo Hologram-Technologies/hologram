@@ -269,8 +269,10 @@ const GV_SIGMA_2_KAPPA: &str =
     "blake3:1669bd4584b6af8519f71e9f9116a4ad6aaae70950a70787ee5718c00558e18d";
 const GV_MANIFEST_KAPPA: &str =
     "blake3:2d4f5ff9117227d79c5cd31d6774af96246896bd80a013d69b20c714246a7224";
+// Advanced 2026-09-01 for the versioned NEP1 endpoint-scope extension. The separate
+// CapabilitySet unit vector proves legacy no-network bytes remain unchanged.
 const GV_CAPS_KAPPA: &str =
-    "blake3:efd7908e447824e02df07049a68f6c5018663484bf87e63d5a17e4ae43ce02b0";
+    "blake3:f0ae51cbdde2b4254be9c10df9a2400da466b0ba26d8a6b9b5e8cfe8686ae069";
 
 fn golden_manifest() -> ContainerManifest {
     ContainerManifest {
@@ -306,6 +308,10 @@ fn mg5_rederive(w: &mut ConformanceWorld) {
     let sigma2 = address_bytes(b"hologram-golden-vector/sigma/2").to_string();
     let manifest = address_bytes(&golden_manifest().canonicalize()).to_string();
     let caps = address_bytes(&golden_caps().canonicalize()).to_string();
+    assert_eq!(
+        caps, GV_CAPS_KAPPA,
+        "the endpoint-scoped CapabilitySet golden vector changed"
+    );
     w.mg5_stable = sigma1 == GV_SIGMA_1_KAPPA
         && sigma2 == GV_SIGMA_2_KAPPA
         && manifest == GV_MANIFEST_KAPPA

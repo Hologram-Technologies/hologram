@@ -2807,6 +2807,11 @@ mod tests {
             priority_weight: 0,
         };
         let legacy_safe = CapabilitySet::new(empty.clone()).canonicalize();
+        assert_eq!(
+            crate::address_bytes(&legacy_safe).to_string(),
+            "blake3:cf46eb3028b50fde0444a1a648f5ce7cba94013f541c86537df54adf5d203e1c",
+            "legacy no-network CapabilitySet identity is frozen"
+        );
         assert_eq!(CapabilitySet::to_capabilities(&legacy_safe).unwrap(), empty);
 
         let mut legacy_ambient = legacy_safe.clone();
