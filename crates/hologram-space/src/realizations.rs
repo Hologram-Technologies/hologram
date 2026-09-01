@@ -2752,11 +2752,11 @@ mod tests {
         let policy = Capabilities {
             storage_roots: alloc::vec![],
             storage_quota_bytes: 1000,
-            network_fetch_endpoints: vec![crate::NetworkEndpointScope::parse(
+            network_fetch_endpoints: alloc::vec![crate::NetworkEndpointScope::parse(
                 "https://example.com:443/",
             )
             .unwrap()],
-            network_announce_endpoints: vec![],
+            network_announce_endpoints: alloc::vec![],
             publish_channels: alloc::vec![],
             subscribe_channels: alloc::vec![],
             memory_max_bytes: 0,

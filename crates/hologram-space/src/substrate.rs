@@ -397,6 +397,7 @@ impl NetworkEndpointScope {
             || host.contains(':')
             || host.starts_with('.')
             || host.ends_with('.')
+            || is_ipv4_literal(host)
             || !host.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'.'
             })
@@ -455,6 +456,21 @@ impl NetworkEndpointScope {
                 && (parent_path.ends_with('/')
                     || derived_path.as_bytes().get(parent_path.len()) == Some(&b'/')))
     }
+}
+
+fn is_ipv4_literal(host: &str) -> bool {
+    let mut labels = host.split('.');
+    let mut count = 0usize;
+    for label in &mut labels {
+        let Ok(octet) = label.parse::<u8>() else {
+            return false;
+        };
+        if octet.to_string() != label {
+            return false;
+        }
+        count += 1;
+    }
+    count == 4
 }
 
 fn split_scope(value: &str) -> (&str, &str) {
@@ -867,6 +883,7 @@ mod tests {
             "https://api.example.com:443/a/../b",
             "https://api.example.com:443/a%2fb",
             "https://user@api.example.com:443/",
+            "https://127.0.0.1:443/",
         ] {
             assert!(
                 NetworkEndpointScope::parse(invalid).is_err(),
