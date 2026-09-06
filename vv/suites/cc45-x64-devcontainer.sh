@@ -111,6 +111,9 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
             || { echo "cc45-x64-devcontainer: e2fsck rejected the 8 GiB ext4 geometry" >&2; rm -f "$_img"; exit 1; }
         rm -f "$_img"
         echo "cc45-x64-devcontainer: 8 GiB build-capable disk — occupancy boot O(content) + e2fsck-clean geometry PASS"
+    else
+        echo "cc45-x64-devcontainer: e2fsck differential oracle unavailable" >&2
+        exit 127
     fi
 
     # An ARBITRARY MULTI-LAYER image (the DoD's "multi-layer real images"): three
@@ -154,11 +157,13 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
                 rm -rf "$tmp"; exit 1
             fi
         else
-            echo "cc45-x64-devcontainer: (rootfs export helper unavailable — qemu differential skipped)"
+            echo "cc45-x64-devcontainer: rootfs export helper failed; differential cannot run" >&2
+            rm -rf "$tmp"; exit 1
         fi
         rm -rf "$tmp"
     else
-        echo "cc45-x64-devcontainer: qemu-system-x86_64 absent — differential pinned by the in-emulator witness (per cc45/SOURCE.txt)"
+        echo "cc45-x64-devcontainer: qemu-system-x86_64 differential oracle unavailable" >&2
+        exit 127
     fi
 
     # ── The DEPLOYED amd64 path, in a real browser ────────────────────────────
@@ -174,7 +179,8 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
         fi
         ( cd "$WEB" && node cc45-x64-boot-test.mjs ) || exit 1
     else
-        echo "cc45-x64-devcontainer: node/wasm-pack absent — deployed browser witness skipped (SKIP)"
+        echo "cc45-x64-devcontainer: node/wasm-pack required by deployed browser witness" >&2
+        exit 127
     fi
     exit 0
 fi

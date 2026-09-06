@@ -33,5 +33,6 @@ if command -v qemu-system-riscv64 >/dev/null 2>&1; then
         --test cc22_lifecycle -- --ignored --nocapture \
         the_os_runs_the_devcontainer_lifecycle_commands || exit 1
 else
-    echo "cc22-lifecycle: SKIP differential oracle — qemu-system-riscv64 unavailable" >&2
+    echo "cc22-lifecycle: FAIL — qemu-system-riscv64 differential oracle unavailable" >&2
+    exit 127
 fi

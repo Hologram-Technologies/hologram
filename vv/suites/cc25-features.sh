@@ -33,5 +33,6 @@ if command -v qemu-system-riscv64 >/dev/null 2>&1; then
     cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release \
         --test cc25_features -- --ignored --nocapture qemu_installs_the_feature || exit 1
 else
-    echo "cc25-features: SKIP differential oracle — qemu-system-riscv64 unavailable" >&2
+    echo "cc25-features: FAIL — qemu-system-riscv64 differential oracle unavailable" >&2
+    exit 127
 fi

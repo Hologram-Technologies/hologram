@@ -137,19 +137,11 @@ composing the
 `Cargo.toml`. Adding a component without satisfying its `CC` row leaves
 holospaces incomplete by definition.
 
-**CC-47 .. CC-49 are _targets_ (behavior/test-driven).** (`CC-44` and `CC-45` were each promoted to `live` when their boot went green.) Each is unfinished
-work whose **behavioral V&V is written first** — an executable, expected-RED
-suite in `vv/targets/` (and a named `#[ignore]`d witness) that defines what
-"done" means before any implementation. This is the conceptual model driving the
-build: each target realizes a named OPM process (`docs/Conceptual-Model.md`) for
-an architecture or surface not yet covered, so the implementation is built *to a
-spec*, never shot in the dark. The target tier is **non-gating** — a RED target
-never fails V&V and never blocks deploy (the green gate is the `live` rows only);
-when a component is built to its target and the suite goes green, it is
-**promoted** from `vv/targets/` to `vv/suites/` and its row turns `live`. A
-target whose analysis shows it is not actually required (e.g. homomorphic
-encryption, `docs/13` §13.9) is removed, not built — targets are derived from the
-model and the threat analysis, not assumed.
+An unfinished CC target blocks production V&V. (`CC-44`, `CC-45`, `CC-48`, and
+`CC-49` were promoted to `live` when their witnesses went green.) A target's
+behavioral V&V is written first, but expected RED is not a release result: it is
+an unwitnessed catalog requirement. When implementation and witness pass, the
+suite is promoted from `vv/targets/` to `vv/suites/` and its row turns `live`.
 
 ## Quality gates and test tiers
 
@@ -158,7 +150,7 @@ continuous integration (`.github/workflows/ci.yml`), which runs on every
 change:
 
 - **V&V** — `vv/run.sh`: CS-1..CS-6 specification conformance (V1–V8)
-  and the CC-1..CC-11 component suites (`vv/suites/`), each against its
+  and every registered CC component suite (`vv/suites/`), each against its
   external authority.
 
 - **Format** — `cargo fmt --check`.

@@ -20,5 +20,6 @@ if command -v qemu-system-riscv64 >/dev/null 2>&1; then
     cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release \
         --test cc26_build -- --ignored --nocapture qemu_runs_the_build || exit 1
 else
-    echo "cc26-build: SKIP differential oracle — qemu-system-riscv64 unavailable" >&2
+    echo "cc26-build: FAIL — qemu-system-riscv64 differential oracle unavailable" >&2
+    exit 127
 fi
