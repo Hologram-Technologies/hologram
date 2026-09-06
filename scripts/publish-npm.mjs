@@ -20,6 +20,18 @@ export function requireMatchingIntegrity(name, version, expected, observed) {
   }
 }
 
+// npm 11 emits an array for `npm pack --json`; npm 12 emits an object keyed by
+// package name. Accept both documented shapes while still requiring exactly one
+// artifact so a CLI format change can never select an arbitrary tarball.
+export function singlePackRow(output, directory) {
+  const parsed = JSON.parse(output);
+  const rows = Array.isArray(parsed) ? parsed : Object.values(parsed);
+  if (rows.length !== 1 || typeof rows[0]?.filename !== "string") {
+    throw new Error(`npm pack returned an unexpected manifest for ${directory}`);
+  }
+  return rows[0];
+}
+
 async function registryIntegrity(name, version) {
   const base = process.env.NPM_REGISTRY_URL ?? "https://registry.npmjs.org";
   const response = await fetch(`${base}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
@@ -44,13 +56,10 @@ function packAll(stage) {
       ["pack", "--json", "--ignore-scripts", "--pack-destination", stage, `./${directory}`],
       { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
     );
-    const rows = JSON.parse(output);
-    if (!Array.isArray(rows) || rows.length !== 1 || typeof rows[0].filename !== "string") {
-      throw new Error(`npm pack returned an unexpected manifest for ${directory}`);
-    }
-    const artifact = resolve(stage, rows[0].filename);
+    const row = singlePackRow(output, directory);
+    const artifact = resolve(stage, row.filename);
     const integrity = sha512Integrity(readFileSync(artifact));
-    if (rows[0].integrity !== integrity) {
+    if (row.integrity !== integrity) {
       throw new Error(`npm pack integrity disagreement for ${manifest.name}@${manifest.version}`);
     }
     return { directory, artifact, name: manifest.name, version: manifest.version, integrity };
