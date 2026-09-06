@@ -111,6 +111,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wait-release-gate.sh
+      - name: Require complete npm publication first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh publish-npm.yml
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: wheel-*

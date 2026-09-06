@@ -111,6 +111,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/wait-release-gate.sh
 
+      - name: Require complete crates.io publication first
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh publish-crates.yml
+
       # No `registry-url:` — that would seed .npmrc with an empty `_authToken` line that can shadow
       # OIDC. Auth is set explicitly in the publish step (OIDC by default; NPM_TOKEN when bootstrapping).
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
