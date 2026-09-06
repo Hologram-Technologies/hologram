@@ -30,19 +30,19 @@ jobs:
   wheel-linux:
     name: wheel (manylinux x86_64)
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux_2_28_x86_64
+    container: quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
 
       - name: Build + repair wheel
         run: |
           PY=/opt/python/cp312-cp312/bin/python
-          "$PY" -m pip install --upgrade build auditwheel setuptools wheel
+          "$PY" -m pip install build==1.6.0 auditwheel==6.8.2 setuptools==84.0.0 wheel==0.48.0
           # --no-isolation + --wheel: build in-tree so setup.py's `cargo build -p hologram-ffi` sees
           # the workspace (the default `python -m build` builds the wheel from an isolated sdist that
           # lacks the Rust workspace, which is exactly what fails).
@@ -50,7 +50,7 @@ jobs:
           auditwheel repair wheelhouse/*.whl -w dist
           ls -l dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-linux
           path: dist/*.whl
@@ -66,15 +66,17 @@ jobs:
         # macos-latest = arm64, macos-15-intel = x86_64 (matches the npm native matrix).
         os: [macos-15-intel, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-on-failure: true
           key: pypi-wheel-${{ matrix.os }}
@@ -84,11 +86,11 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0" # broaden macOS compat; ignored off macOS
         run: |
-          python -m pip install --upgrade build setuptools wheel
+          python -m pip install build==1.6.0 setuptools==84.0.0 wheel==0.48.0
           python -m build sdk/python --wheel --no-isolation --outdir dist
           ls -l dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
@@ -102,7 +104,8 @@ jobs:
       contents: read
       id-token: write # OIDC trusted publishing (mints the short-lived PyPI token)
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: wheel-*
           merge-multiple: true
@@ -115,8 +118,19 @@ jobs:
           # 4 platforms: manylinux x86_64, macOS x86_64, macOS arm64, win_amd64.
           if [ "$n" -lt 4 ]; then echo "::error::expected >=4 wheels, found $n"; exit 1; fi
 
+      - name: Preflight the complete immutable wheel set
+        id: preflight
+        run: python3 scripts/preflight-pypi.py --dist dist --publish-dist publish-dist
+
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        if: ${{ steps.preflight.outputs.missing != '0' }}
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: publish-dist/
+          skip-existing: true
         # No `password:` — with `id-token: write` the action performs the OIDC exchange against the
         # configured trusted publisher. For a TestPyPI dry run, add
         # `with: repository-url: https://test.pypi.org/legacy/` and a matching pending publisher there.
+
+      - name: Verify the complete public wheel closure
+        run: python3 scripts/preflight-pypi.py --dist dist --wait-public

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Hardened all public release paths with immutable-byte preflights and idempotent,
+  dependency-ordered retries, and made the GitHub source release wait for the
+  complete crates.io, npm, and PyPI closure and the exact-tag release V&V run.
+- Replaced the unsigned tag as the source-release trust root with a deterministic
+  source archive and commit manifest covered by GitHub OIDC/Sigstore build
+  provenance; all third-party release actions and toolchains are commit/version
+  pinned.
+- Made the TypeScript WASM package build use the active pinned Rust toolchain
+  instead of silently switching to the floating `stable` alias.
+
 ## [0.13.1] - 2026-09-06
 
 ### Fixed

@@ -267,6 +267,14 @@ jobs:
         run: python3 scripts/test_quality_gates.py
       - name: Release API-history flow test
         run: bash scripts/test-release-tooling.sh
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Publication preflight tooling tests
+        run: |
+          node scripts/test-publish-tooling.mjs
+          python3 scripts/test-publish-tooling.py
+          bash -n scripts/publish-crates.sh scripts/create-source-release.sh
 
   # Job 11: Deployment-substrate V&V — the container substrate's own conformance
   # catalog (CR/ST/SP/NW/HAL/CM/DI/RB/TR/SPINE classes; see

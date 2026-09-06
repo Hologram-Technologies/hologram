@@ -12,8 +12,11 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
+  actions: read
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   # Verify version matches tag
@@ -23,14 +26,16 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Extract version from tag
         id: tag_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
 
       - name: Extract version from Cargo.toml
         id: version
@@ -53,13 +58,15 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Run tests
         # Exclude holospaces (mirrors ci.yml): its CC integration tests need the vv/artifacts
@@ -100,11 +107,12 @@ jobs:
             asset_name: hologram-windows-amd64.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
+          toolchain: 1.98.1
           targets: ${{ matrix.target }}
 
       - name: Install dependencies (Linux)
@@ -119,7 +127,7 @@ jobs:
           sudo apt-get install -y mold
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -146,7 +154,7 @@ jobs:
           7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.artifact_name }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.asset_name }}
           path: |
@@ -162,13 +170,23 @@ jobs:
     name: Create GitHub Release
     needs: [verify, build-binaries]
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
+
+      - name: Require the complete public package closure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify-public-release.py --version '${{ needs.verify.outputs.version }}'
+
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
 
@@ -177,9 +195,33 @@ jobs:
 
       - name: Prepare release assets
         run: |
+          set -euo pipefail
+          version='${{ needs.verify.outputs.version }}'
+          commit=$(git rev-parse "${GITHUB_REF}^{commit}")
+          test "$commit" = "$(git rev-parse HEAD)"
           mkdir -p release-assets
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
+          scripts/create-source-release.sh "$version" release-assets
           ls -lh release-assets/
+
+      - name: Attest source archive and commit manifest with keyless provenance
+        id: attest-source
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            release-assets/hologram-source-v*.tar.gz
+            release-assets/hologram-source-v*.json
+
+      - name: Verify and stage source provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify release-assets/hologram-source-v*.tar.gz --repo "$GITHUB_REPOSITORY"
+          gh attestation verify release-assets/hologram-source-v*.json --repo "$GITHUB_REPOSITORY"
+          cp '${{ steps.attest-source.outputs.bundle-path }}' release-assets/hologram-source-provenance.sigstore.json
+          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > release-assets/SHA256SUMS
 
       - name: Generate release notes
         id: release_notes
@@ -208,6 +250,12 @@ jobs:
 
           Download the appropriate binary for your platform from the assets below and add it to your PATH.
 
+          #### Source provenance
+
+          The deterministic source archive and commit manifest are signed with GitHub OIDC build
+          provenance. Verify them with `gh attestation verify <file> --repo Hologram-Technologies/hologram`;
+          the unsigned Git tag is a locator, not the release trust root.
+
           ### Changes
 
           EOF
@@ -221,13 +269,15 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-assets/*
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(needs.verify.outputs.version, 'alpha') || contains(needs.verify.outputs.version, 'beta') || contains(needs.verify.outputs.version, 'rc') }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
