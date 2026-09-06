@@ -1,4 +1,4 @@
-@class:LAW @id:LAW-5 @spec:00-overview @phase:P2 @status:pending
+@class:LAW @id:LAW-5 @spec:00-overview @phase:P2 @status:enforced
 Feature: capability attenuation only
   Scenario: delegation cannot amplify
     Given a capability set held by a grantor

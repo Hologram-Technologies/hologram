@@ -46,7 +46,8 @@ const DTYPE_F32: u8 = 8;
 const DTYPE_I8: u8 = 2;
 
 fn le_to_f32(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4)
+    b.windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }

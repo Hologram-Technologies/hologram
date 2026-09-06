@@ -77,8 +77,8 @@ fn compile_empty_round_trip() {
 #[test]
 fn reports_versions_and_supported_features() {
     assert_eq!(hologram_abi_version(), HOLOGRAM_ABI_VERSION);
-    // `.holo` is v3 since P4 (the multi-layer application container); the FFI reports FORMAT_VERSION.
-    assert_eq!(hologram_archive_format_version(), 3);
+    // `.holo` is v4 (the inference-model layer kind, spec 03 §v4); the FFI reports FORMAT_VERSION.
+    assert_eq!(hologram_archive_format_version(), 4);
     assert_eq!(
         unsafe { hologram_feature_supported(ffi_str(b"source-builder")) },
         1

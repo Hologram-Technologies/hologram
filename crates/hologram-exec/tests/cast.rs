@@ -51,7 +51,8 @@ fn cast_i64_to_f32_end_to_end() {
     let outputs = session.execute(&[InputBuffer { bytes: &bytes }]).unwrap();
     let got: Vec<f32> = outputs[0]
         .bytes
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     assert_eq!(got, vec![0.0, 42.0, -7.0, 1024.0]);

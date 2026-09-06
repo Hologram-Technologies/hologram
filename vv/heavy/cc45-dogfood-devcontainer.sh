@@ -26,7 +26,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMG="holospaces-dogfood:cc45"
 CTR="holospaces-dogfood-cc45"
-ROOTFS="$(mktemp -d)/devcontainer-rootfs.tar"
+if [ -n "${CC45_DOGFOOD_ROOTFS:-}" ]; then
+    ROOTFS="$CC45_DOGFOOD_ROOTFS"
+    mkdir -p "$(dirname "$ROOTFS")"
+    KEEP_ROOTFS=1
+else
+    ROOTFS="$(mktemp -d)/devcontainer-rootfs.tar"
+    KEEP_ROOTFS=0
+fi
 
 command -v docker >/dev/null 2>&1 || { echo "cc45-dogfood: docker is required to build the devcontainer" >&2; exit 1; }
 command -v npx >/dev/null 2>&1 || { echo "cc45-dogfood: node/npx is required for the Dev Container CLI" >&2; exit 1; }
@@ -34,7 +41,7 @@ command -v npx >/dev/null 2>&1 || { echo "cc45-dogfood: node/npx is required for
 cleanup() {
     docker rm -f "$CTR" >/dev/null 2>&1 || true
     docker rmi -f "$IMG" >/dev/null 2>&1 || true
-    rm -f "$ROOTFS" 2>/dev/null || true
+    [ "$KEEP_ROOTFS" = 1 ] || rm -f "$ROOTFS" 2>/dev/null || true
 }
 trap cleanup EXIT
 

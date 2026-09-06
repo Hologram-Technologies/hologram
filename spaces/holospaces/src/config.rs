@@ -77,7 +77,8 @@ pub enum Directive {
     ForwardPort(u16),
     /// **Network**: stop forwarding a guest port.
     UnforwardPort(u16),
-    /// **Network**: set the instance's outbound (`fetch`) and announce authority.
+    /// **Network**: retain or revoke the instance's already scoped outbound (`fetch`) and announce
+    /// authority. A boolean directive cannot create an endpoint that the base grant did not name.
     SetNetwork {
         /// Whether the instance may make outbound network requests.
         fetch: bool,
@@ -267,8 +268,12 @@ impl Configuration {
                 Directive::ForwardPort(p) => applied.forward_ports.push(*p),
                 Directive::UnforwardPort(p) => applied.unforward_ports.push(*p),
                 Directive::SetNetwork { fetch, announce } => {
-                    caps.network_fetch = *fetch;
-                    caps.network_announce = *announce;
+                    if !fetch {
+                        caps.network_fetch_endpoints.clear();
+                    }
+                    if !announce {
+                        caps.network_announce_endpoints.clear();
+                    }
                 }
                 Directive::SetStorageQuota(n) => caps.storage_quota_bytes = *n,
                 Directive::GrantAccess(op) => applied.grants.push(*op),
@@ -411,8 +416,11 @@ mod tests {
         Capabilities {
             storage_roots: Vec::new(),
             storage_quota_bytes: 0,
-            network_fetch: false,
-            network_announce: false,
+            network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+                "https://example.com:443/",
+            )
+            .unwrap()],
+            network_announce_endpoints: vec![],
             publish_channels: Vec::new(),
             subscribe_channels: Vec::new(),
             memory_max_bytes: 0,
@@ -489,8 +497,8 @@ mod tests {
             .expect("authorized + right instance");
         assert_eq!(applied.lifecycle, Some(LifecycleAction::Resume));
         assert_eq!(applied.forward_ports, vec![8080]);
-        assert!(applied.capabilities.network_fetch);
-        assert!(!applied.capabilities.network_announce);
+        assert_eq!(applied.capabilities.network_fetch_endpoints.len(), 1);
+        assert!(applied.capabilities.network_announce_endpoints.is_empty());
         assert_eq!(applied.capabilities.storage_quota_bytes, 1 << 30);
         assert_eq!(applied.grants, vec![address(b"collaborator")]);
     }

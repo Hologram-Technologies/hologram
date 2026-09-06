@@ -41,7 +41,7 @@ conformance-report:
 # byte-identical + deterministic. Runs the kernel suites with the in-tree
 # worker pool active so the parallel lattice-recursion frontier is exercised.
 parallel:
-    cargo test -p hologram-compute --features cpu,parallel --test parallel --test conformance --lib cpu::parallel
+    cargo test -p hologram-compute --features cpu,parallel --lib --test parallel --test conformance
 
 # Performance V&V (class PV) — release-only budgets; no silent bottleneck.
 # `--nocapture` surfaces PV-4's production throughput / FLOP-per-core-cycle report.
@@ -52,10 +52,14 @@ perf:
     cargo bench -p hologram-store --features native --bench sp_floors -- --quick
     cargo bench -p hologram-tck --bench sp_floors -- --quick
 
-# Run all tests. nextest skips the cucumber `bdd` runner (harness=false — see
-# .config/nextest.toml), so run that suite explicitly with cargo test afterward.
+# Run every test, including the release/heavy witnesses. Cucumber has its own harness, so its
+# package is routed through explicit complete target sets; nothing is ignored or skipped.
+# CC45 intentionally fails unless the caller supplies the exported rootfs of this repository's
+# devcontainer (produce it with `vv/heavy/cc45-dogfood-devcontainer.sh`).
 test:
-    cargo nextest run --workspace
+    test -f "${CC45_DOGFOOD_ROOTFS:?set CC45_DOGFOOD_ROOTFS to the exported repository devcontainer rootfs}"
+    cargo nextest run --release --workspace --exclude hologram-conformance --run-ignored all --no-fail-fast
+    cargo nextest run --release -p hologram-conformance --lib --test cc_gate --test cs_gate --test fat_thin --test meta_gate --run-ignored all --no-fail-fast
     cargo test -p hologram-conformance --test bdd
 
 # Run criterion benchmarks

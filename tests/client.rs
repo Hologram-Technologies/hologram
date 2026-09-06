@@ -148,7 +148,8 @@ fn client_compiles_provisions_and_runs_a_cast() {
     let outputs = pollster::block_on(client.run(&kappa, &[input.as_slice()])).expect("run");
 
     let got: Vec<f32> = outputs[0]
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     assert_eq!(got, vec![0.0, 42.0, -7.0, 1024.0]);
@@ -191,8 +192,8 @@ fn client_opens_boots_and_suspends_a_session() {
         memory_max_bytes: 1 << 20,
         cpu_time_per_event_ms: 100,
         priority_weight: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
     };
     let caps_k = store
         .put("blake3", &CapabilitySet::new(caps).canonicalize())

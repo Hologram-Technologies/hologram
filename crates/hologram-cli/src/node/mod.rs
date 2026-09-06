@@ -90,10 +90,12 @@ pub enum Verb {
         memory_max: u64,
         #[arg(long = "cpu-ms", default_value_t = 0)]
         cpu_ms: u64,
-        #[arg(long)]
-        fetch: bool,
-        #[arg(long)]
-        announce: bool,
+        /// Canonical HTTPS fetch scope (repeatable).
+        #[arg(long = "fetch-endpoint")]
+        fetch_endpoints: Vec<String>,
+        /// Canonical HTTPS announce scope (repeatable).
+        #[arg(long = "announce-endpoint")]
+        announce_endpoints: Vec<String>,
     },
 }
 
@@ -130,14 +132,23 @@ fn build(verb: Verb) -> Result<Command, String> {
             quota,
             memory_max,
             cpu_ms,
-            fetch,
-            announce,
+            fetch_endpoints,
+            announce_endpoints,
         } => {
             let ks = |v: Vec<String>| {
                 v.iter()
                     .map(|s| parse_kappa(s))
                     .collect::<Result<Vec<_>, _>>()
                     .map_err(badk)
+            };
+            let endpoints = |values: Vec<String>| {
+                values
+                    .iter()
+                    .map(|value| {
+                        hologram_space::NetworkEndpointScope::parse(value)
+                            .map_err(|error| format!("invalid endpoint scope {value:?}: {error:?}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
             };
             Command::Caps(hologram_space::Capabilities {
                 storage_roots: ks(roots)?,
@@ -147,8 +158,8 @@ fn build(verb: Verb) -> Result<Command, String> {
                 memory_max_bytes: memory_max,
                 cpu_time_per_event_ms: cpu_ms,
                 priority_weight: 0,
-                network_fetch: fetch,
-                network_announce: announce,
+                network_fetch_endpoints: endpoints(fetch_endpoints)?,
+                network_announce_endpoints: endpoints(announce_endpoints)?,
             })
         }
         Verb::Spawn { .. } | Verb::Serve { .. } => unreachable!("handled in run()"),

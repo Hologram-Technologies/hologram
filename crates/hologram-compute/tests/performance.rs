@@ -73,6 +73,13 @@ fn buf(slot: u32) -> BufferRef {
 
 /// Best-of-N wall-clock for one square f32 matmul of dimension `dim`.
 fn matmul_best_secs(dim: usize, runs: usize) -> f64 {
+    matmul_batch_best_secs(dim, 1, runs)
+}
+
+/// Best-of-N time for a batch of square matmuls. Batching makes ratios between differently sized
+/// operands compare equal amounts of useful work instead of one sub-millisecond, turbo-biased
+/// sample against a much longer sample.
+fn matmul_batch_best_secs(dim: usize, calls_per_batch: usize, runs: usize) -> f64 {
     let bytes = dim * dim * 4;
     let a = vec![0x3f; bytes]; // ~0.5 f32 pattern; values irrelevant to timing
     let b = vec![0x3e; bytes];
@@ -90,12 +97,16 @@ fn matmul_best_secs(dim: usize, runs: usize) -> f64 {
         dtype: DTYPE_F32,
         b_packed: false,
     });
-    // Warm up, then take the minimum (most stable under CI load).
-    backend.dispatch(&call, &mut ws).unwrap();
+    // Warm a complete batch, then take the minimum complete batch (most stable under CI load).
+    for _ in 0..calls_per_batch {
+        backend.dispatch(&call, &mut ws).unwrap();
+    }
     let mut best = f64::INFINITY;
     for _ in 0..runs {
         let t = Instant::now();
-        backend.dispatch(&call, &mut ws).unwrap();
+        for _ in 0..calls_per_batch {
+            backend.dispatch(&call, &mut ws).unwrap();
+        }
         best = best.min(t.elapsed().as_secs_f64());
     }
     best
@@ -139,10 +150,19 @@ fn pv1c_cache_oblivious_efficiency_holds_across_scale() {
     // naïve kernel would cliff (efficiency cratering with size). We require
     // 512³ to retain ≥60% of 128³'s GFLOP/s — a fully-cache-blind kernel falls
     // far below this; the cache-oblivious recursion holds ~90%.
-    let gflops = |n: usize, runs| 2.0 * (n as f64).powi(3) / matmul_best_secs(n, runs) / 1e9;
-    let g128 = gflops(128, 7);
-    let g512 = gflops(512, 3);
+    // 512³ carries 64× the FLOPs of 128³. Measure four large calls against 256 small calls,
+    // giving both sides the same total FLOPs and a long enough sample to average scheduler/turbo
+    // transients while retaining best-of-N resistance to unrelated CI load.
+    let gflops = |n: usize, calls, runs| {
+        2.0 * (n as f64).powi(3) * calls as f64 / matmul_batch_best_secs(n, calls, runs) / 1e9
+    };
+    let g128 = gflops(128, 256, 5);
+    let g512 = gflops(512, 4, 5);
     let retained = g512 / g128;
+    eprintln!(
+        "PV-1c cache efficiency: 128³ {g128:.1} GFLOP/s, 512³ {g512:.1} GFLOP/s ({:.1}% retained)",
+        100.0 * retained
+    );
     assert!(
         retained >= 0.6,
         "matmul efficiency collapsed at scale — 128³ {g128:.1} GFLOP/s, 512³ {g512:.1} GFLOP/s \

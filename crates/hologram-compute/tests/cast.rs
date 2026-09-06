@@ -117,7 +117,8 @@ fn cast_f32_to_i32_truncates_toward_zero() {
     }
     let out = cast(inp, vals.len(), DTYPE_F32, DTYPE_I32, vals.len() * 4);
     let got: Vec<i32> = out
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     assert_eq!(got, vec![1, -1, 2, -2, 0]);

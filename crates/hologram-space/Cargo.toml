@@ -2,7 +2,9 @@
 name = "hologram-space"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 description = "The hologram space contract: the trait surface a host implements to become a place hologram runs (specs/refactor/02)."
 

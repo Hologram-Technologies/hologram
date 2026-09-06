@@ -49,7 +49,7 @@ fn read_ceiling_gbs(buf: &[i8]) -> f64 {
     let t = best_of(7, || {
         let t0 = Instant::now();
         let (mut a0, mut a1, mut a2, mut a3) = (0u64, 0u64, 0u64, 0u64);
-        for w in words.chunks_exact(4) {
+        for w in words.windows(4).step_by(4) {
             a0 ^= w[0];
             a1 ^= w[1];
             a2 ^= w[2];

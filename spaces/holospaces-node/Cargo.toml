@@ -3,6 +3,7 @@ name = "holospaces-node"
 description = "holospaces bare-metal/edge peer — an egress + storage-sync node for low-powered devices (browser-peer's mesh exit + persistence; OTA-updated from the holospaces GitHub Pages site)"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 

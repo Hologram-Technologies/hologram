@@ -61,7 +61,7 @@ x86_64) into `~/.local/bin`. Alternatives:
 
 ```bash
 # pin a version, or install elsewhere (see `install.sh --help`)
-curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh -s -- --version v0.12.1
+curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh -s -- --version v0.13.0
 
 # build from source (any platform; needs Rust — no clone required)
 cargo install --git https://github.com/Hologram-Technologies/hologram --locked hologram-cli
@@ -606,12 +606,11 @@ Sign in with a self-sovereign key, provision a holospace from a `Source`, then
 so a session suspended on one peer resumes byte-identically on any other.
 
 ```rust
-use hologram_runtime::{Runtime, WasmtimeEngine};
-use hologram_space::MemKappaStore;
+use hologram::runtime::{Runtime, WasmtimeEngine};
+use hologram::space::{Capabilities, KappaStore, MemKappaStore, NetworkEndpointScope};
 use holospaces::identity::Operator;
 use holospaces::manager::Manager;
 use holospaces::peer::Peer;
-use holospaces::substrate::{Capabilities, KappaStore};
 use holospaces::Source;
 
 // A self-sovereign key unlocks a content-addressed operator identity.
@@ -626,8 +625,10 @@ let peer = Peer::new(runtime.store(), &runtime);
 let caps = Capabilities {
     storage_roots: Vec::new(),
     storage_quota_bytes: 0,
-    network_fetch: false,
-    network_announce: false,
+    network_fetch_endpoints: vec![
+        NetworkEndpointScope::parse("https://api.example.com:443/v1")?,
+    ],
+    network_announce_endpoints: Vec::new(),
     publish_channels: Vec::new(),
     subscribe_channels: Vec::new(),
     memory_max_bytes: 4 << 20,

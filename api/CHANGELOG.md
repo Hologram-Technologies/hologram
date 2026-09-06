@@ -1,5 +1,620 @@
 # Public API changelog
 
+## v0.13.0
+
+### Added
+- `impl<'a, B> core::marker::Freeze for hologram_exec::refinement::RefinementRunner<'a, B> where &'a mut hologram_exec::session::InferenceSession<B>: core::marker::Freeze`
+- `impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'a, B> where &'a mut hologram_exec::session::InferenceSession<B>: core::marker::Send`
+- `impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where &'a mut hologram_exec::session::InferenceSession<B>: core::marker::Sync`
+- `impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B> where &'a mut hologram_exec::session::InferenceSession<B>: core::marker::Unpin`
+- `impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B> where &'a mut hologram_exec::session::InferenceSession<B>: core::marker::UnsafeUnpin`
+- `impl<Axis, Inputs, D, B> core::marker::Freeze for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::marker::Freeze`
+- `impl<Axis, Inputs, D, B> core::marker::Send for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::marker::Send`
+- `impl<Axis, Inputs, D, B> core::marker::Sync for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::marker::Sync`
+- `impl<Axis, Inputs, D, B> core::marker::Unpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::marker::Unpin`
+- `impl<Axis, Inputs, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where core::marker::PhantomData<(Axis, Inputs, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<B> core::marker::Freeze for hologram_exec::refinement::CompiledRefinement<B> where hologram_exec::session::InferenceSession<B>: core::marker::Freeze`
+- `impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> where hologram_exec::session::InferenceSession<B>: core::marker::Send`
+- `impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where hologram_exec::session::InferenceSession<B>: core::marker::Sync`
+- `impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where hologram_exec::session::InferenceSession<B>: core::marker::Unpin`
+- `impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where hologram_exec::session::InferenceSession<B>: core::marker::UnsafeUnpin`
+- `impl<Cache, New, Pos, D, B> core::marker::Freeze for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::marker::Freeze`
+- `impl<Cache, New, Pos, D, B> core::marker::Send for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::marker::Send`
+- `impl<Cache, New, Pos, D, B> core::marker::Sync for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::marker::Sync`
+- `impl<Cache, New, Pos, D, B> core::marker::Unpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::marker::Unpin`
+- `impl<Cache, New, Pos, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where core::marker::PhantomData<(Cache, New, Pos, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Freeze`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Freeze`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Send`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Send`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Sync`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Sync`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Unpin`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::Unpin`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::UnsafeUnpin`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::marker::UnsafeUnpin`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, D1, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::marker::Freeze`
+- `impl<D0, D1, const SITES: usize> core::marker::Send for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::marker::Send`
+- `impl<D0, D1, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::marker::Sync`
+- `impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::marker::Unpin`
+- `impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::marker::UnsafeUnpin`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where core::marker::PhantomData<(D0, D1)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::marker::Freeze`
+- `impl<D0, const SITES: usize> core::marker::Send for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::marker::Send`
+- `impl<D0, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::marker::Sync`
+- `impl<D0, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::marker::Unpin`
+- `impl<D0, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::marker::UnsafeUnpin`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape1<D0, SITES> where core::marker::PhantomData<(D0)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Q, K, V, D, B> core::marker::Freeze for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::marker::Freeze`
+- `impl<Q, K, V, D, B> core::marker::Send for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::marker::Send`
+- `impl<Q, K, V, D, B> core::marker::Sync for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::marker::Sync`
+- `impl<Q, K, V, D, B> core::marker::Unpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::marker::Unpin`
+- `impl<Q, K, V, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where core::marker::PhantomData<(Q, K, V, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Freeze`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Freeze`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Freeze`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Freeze`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Freeze`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where core::marker::PhantomData<(S, Axes, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Freeze`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Freeze`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Freeze`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where core::marker::PhantomData<(S, Axis, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Freeze`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Send`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Sync`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::Unpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where core::marker::PhantomData<(S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Lo, Hi, D, B> core::marker::Freeze for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::marker::Freeze`
+- `impl<S, Lo, Hi, D, B> core::marker::Send for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::marker::Send`
+- `impl<S, Lo, Hi, D, B> core::marker::Sync for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::marker::Sync`
+- `impl<S, Lo, Hi, D, B> core::marker::Unpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::marker::Unpin`
+- `impl<S, Lo, Hi, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where core::marker::PhantomData<(S, Lo, Hi, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Perm, D, B> core::marker::Freeze for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::marker::Freeze`
+- `impl<S, Perm, D, B> core::marker::Send for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::marker::Send`
+- `impl<S, Perm, D, B> core::marker::Sync for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::marker::Sync`
+- `impl<S, Perm, D, B> core::marker::Unpin for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::marker::Unpin`
+- `impl<S, Perm, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where core::marker::PhantomData<(S, Perm, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Qd, Td, B> core::marker::Freeze for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::marker::Freeze`
+- `impl<S, Qd, Td, B> core::marker::Send for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::marker::Send`
+- `impl<S, Qd, Td, B> core::marker::Sync for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::marker::Sync`
+- `impl<S, Qd, Td, B> core::marker::Unpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::marker::Unpin`
+- `impl<S, Qd, Td, B> core::marker::UnsafeUnpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::marker::UnsafeUnpin`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where core::marker::PhantomData<(S, Qd, Td, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Pad, D, B> core::marker::Freeze for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::marker::Freeze`
+- `impl<Sin, Pad, D, B> core::marker::Send for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::marker::Send`
+- `impl<Sin, Pad, D, B> core::marker::Sync for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::marker::Sync`
+- `impl<Sin, Pad, D, B> core::marker::Unpin for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::marker::Unpin`
+- `impl<Sin, Pad, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where core::marker::PhantomData<(Sin, Pad, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Freeze`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Freeze`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Freeze`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where core::marker::PhantomData<(Sin, Sout, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Freeze for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::marker::Freeze`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Send for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::marker::Send`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Sync for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::marker::Sync`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Unpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::marker::Unpin`
+- `impl<Sin, Starts, Ends, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::marker::UnsafeUnpin`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where core::marker::PhantomData<(Sin, Starts, Ends, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<W> core::marker::Freeze for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::marker::Freeze`
+- `impl<W> core::marker::Send for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::marker::Send`
+- `impl<W> core::marker::Sync for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::marker::Sync`
+- `impl<W> core::marker::Unpin for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::marker::Unpin`
+- `impl<W> core::marker::UnsafeUnpin for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::marker::UnsafeUnpin`
+- `impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<W> core::panic::unwind_safe::UnwindSafe for hologram_compute::cpu::CpuBackend<W> where core::marker::PhantomData<W>: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Freeze`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Freeze`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where core::marker::PhantomData<(X, K, S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, D, B> core::marker::Freeze for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::marker::Freeze`
+- `impl<X, W, D, B> core::marker::Send for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::marker::Send`
+- `impl<X, W, D, B> core::marker::Sync for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::marker::Sync`
+- `impl<X, W, D, B> core::marker::Unpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::marker::Unpin`
+- `impl<X, W, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::marker::UnsafeUnpin`
+- `impl<X, W, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where core::marker::PhantomData<(X, W, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Freeze`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Freeze`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::marker::UnsafeUnpin`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where core::marker::PhantomData<(X, W, P, S, D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Freeze`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Freeze`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::UnsafeUnpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::marker::UnsafeUnpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where core::marker::PhantomData<(D, B)>: core::panic::unwind_safe::UnwindSafe`
+
+### Removed (breaking)
+- `impl<'a, B> core::marker::Freeze for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> core::marker::Send for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Send`
+- `impl<'a, B> core::marker::Sync for hologram_exec::refinement::RefinementRunner<'a, B> where B: core::marker::Sync`
+- `impl<'a, B> core::marker::Unpin for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<'a, B> core::marker::UnsafeUnpin for hologram_exec::refinement::RefinementRunner<'a, B>`
+- `impl<Axis, Inputs, D, B> core::marker::Freeze for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>`
+- `impl<Axis, Inputs, D, B> core::marker::Send for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Send, Inputs: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Axis, Inputs, D, B> core::marker::Sync for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Sync, Inputs: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Axis, Inputs, D, B> core::marker::Unpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::marker::Unpin, Inputs: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Axis, Inputs, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B>`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::RefUnwindSafe, Inputs: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Axis, Inputs, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ConcatOp<Axis, Inputs, D, B> where Axis: core::panic::unwind_safe::UnwindSafe, Inputs: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<B> core::marker::Freeze for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Freeze`
+- `impl<B> core::marker::Send for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Send`
+- `impl<B> core::marker::Sync for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Sync`
+- `impl<B> core::marker::Unpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::Unpin`
+- `impl<B> core::marker::UnsafeUnpin for hologram_exec::refinement::CompiledRefinement<B> where B: core::marker::UnsafeUnpin`
+- `impl<Cache, New, Pos, D, B> core::marker::Freeze for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>`
+- `impl<Cache, New, Pos, D, B> core::marker::Send for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Send, New: core::marker::Send, Pos: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Cache, New, Pos, D, B> core::marker::Sync for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Sync, New: core::marker::Sync, Pos: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Cache, New, Pos, D, B> core::marker::Unpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::marker::Unpin, New: core::marker::Unpin, Pos: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Cache, New, Pos, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B>`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::RefUnwindSafe, New: core::panic::unwind_safe::RefUnwindSafe, Pos: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Cache, New, Pos, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::KvCacheWriteOp<Cache, New, Pos, D, B> where Cache: core::panic::unwind_safe::UnwindSafe, New: core::panic::unwind_safe::UnwindSafe, Pos: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::ConstantGrounding<D, B>`
+- `impl<D, B> core::marker::Freeze for hologram_ops::grounding::WeightLoaderGrounding<D, B>`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<D, B> core::marker::Send for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<D, B> core::marker::Sync for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<D, B> core::marker::Unpin for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::ConstantGrounding<D, B>`
+- `impl<D, B> core::marker::UnsafeUnpin for hologram_ops::grounding::WeightLoaderGrounding<D, B>`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::ConstantGrounding<D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::grounding::WeightLoaderGrounding<D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, D1, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0, D1, const SITES: usize> core::marker::Send for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Send, D1: core::marker::Send`
+- `impl<D0, D1, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Sync, D1: core::marker::Sync`
+- `impl<D0, D1, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::marker::Unpin, D1: core::marker::Unpin`
+- `impl<D0, D1, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape2<D0, D1, SITES>`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe, D1: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, D1, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape2<D0, D1, SITES> where D0: core::panic::unwind_safe::UnwindSafe, D1: core::panic::unwind_safe::UnwindSafe`
+- `impl<D0, const SITES: usize> core::marker::Freeze for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0, const SITES: usize> core::marker::Send for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Send`
+- `impl<D0, const SITES: usize> core::marker::Sync for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Sync`
+- `impl<D0, const SITES: usize> core::marker::Unpin for hologram_types::shape::Shape1<D0, SITES> where D0: core::marker::Unpin`
+- `impl<D0, const SITES: usize> core::marker::UnsafeUnpin for hologram_types::shape::Shape1<D0, SITES>`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::RefUnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<D0, const SITES: usize> core::panic::unwind_safe::UnwindSafe for hologram_types::shape::Shape1<D0, SITES> where D0: core::panic::unwind_safe::UnwindSafe`
+- `impl<Q, K, V, D, B> core::marker::Freeze for hologram_ops::structured::AttentionOp<Q, K, V, D, B>`
+- `impl<Q, K, V, D, B> core::marker::Send for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Send, K: core::marker::Send, V: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Q, K, V, D, B> core::marker::Sync for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Sync, K: core::marker::Sync, V: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Q, K, V, D, B> core::marker::Unpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::marker::Unpin, K: core::marker::Unpin, V: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Q, K, V, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::AttentionOp<Q, K, V, D, B>`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, V: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Q, K, V, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::AttentionOp<Q, K, V, D, B> where Q: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, V: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Freeze for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Send for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Send, Axes: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Sync for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Sync, Axes: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::Unpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::marker::Unpin, Axes: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::marker::UnsafeUnpin for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B>`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axes: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMaxOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMeanOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceMinOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceProdOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axes, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::reduction::ReduceSumOp<S, Axes, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axes: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Freeze for hologram_ops::utility::CumSumOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Send for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Send, Axis: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Sync for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Sync, Axis: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::Unpin for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::marker::Unpin, Axis: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::CumSumOp<S, Axis, D, B>`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Axis: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::LogSoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::activation_reduce::SoftmaxOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Axis, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::CumSumOp<S, Axis, D, B> where S: core::panic::unwind_safe::UnwindSafe, Axis: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::AddRmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::GroupNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::InstanceNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::LayerNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::normalization::RmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::LrnOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::RotaryEmbeddingOp<S, D, B>`
+- `impl<S, D, B> core::marker::Freeze for hologram_ops::utility::WhereOp<S, D, B>`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Send for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Sync for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::LrnOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::Unpin for hologram_ops::utility::WhereOp<S, D, B> where S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::AddRmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::GroupNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::InstanceNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::LayerNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::normalization::RmsNormOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::LrnOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::RotaryEmbeddingOp<S, D, B>`
+- `impl<S, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::WhereOp<S, D, B>`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::AddRmsNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::GroupNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::InstanceNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::LayerNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::normalization::RmsNormOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::GlobalAvgPoolOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::LrnOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::RotaryEmbeddingOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::WhereOp<S, D, B> where S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Lo, Hi, D, B> core::marker::Freeze for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>`
+- `impl<S, Lo, Hi, D, B> core::marker::Send for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Send, Lo: core::marker::Send, Hi: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Lo, Hi, D, B> core::marker::Sync for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Sync, Lo: core::marker::Sync, Hi: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Lo, Hi, D, B> core::marker::Unpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::marker::Unpin, Lo: core::marker::Unpin, Hi: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Lo, Hi, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B>`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Lo: core::panic::unwind_safe::RefUnwindSafe, Hi: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Lo, Hi, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ClipOp<S, Lo, Hi, D, B> where S: core::panic::unwind_safe::UnwindSafe, Lo: core::panic::unwind_safe::UnwindSafe, Hi: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Perm, D, B> core::marker::Freeze for hologram_ops::layout::TransposeOp<S, Perm, D, B>`
+- `impl<S, Perm, D, B> core::marker::Send for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Send, Perm: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<S, Perm, D, B> core::marker::Sync for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Sync, Perm: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Perm, D, B> core::marker::Unpin for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::marker::Unpin, Perm: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Perm, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::TransposeOp<S, Perm, D, B>`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::panic::unwind_safe::RefUnwindSafe, Perm: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Perm, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::TransposeOp<S, Perm, D, B> where S: core::panic::unwind_safe::UnwindSafe, Perm: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<S, Qd, Td, B> core::marker::Freeze for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>`
+- `impl<S, Qd, Td, B> core::marker::Send for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Send, Qd: core::marker::Send, Td: core::marker::Send, B: core::marker::Send`
+- `impl<S, Qd, Td, B> core::marker::Sync for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Sync, Qd: core::marker::Sync, Td: core::marker::Sync, B: core::marker::Sync`
+- `impl<S, Qd, Td, B> core::marker::Unpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::marker::Unpin, Qd: core::marker::Unpin, Td: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<S, Qd, Td, B> core::marker::UnsafeUnpin for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B>`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::panic::unwind_safe::RefUnwindSafe, Qd: core::panic::unwind_safe::RefUnwindSafe, Td: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<S, Qd, Td, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::quantization::DequantizeOp<S, Qd, Td, B> where S: core::panic::unwind_safe::UnwindSafe, Qd: core::panic::unwind_safe::UnwindSafe, Td: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Pad, D, B> core::marker::Freeze for hologram_ops::utility::PadOp<Sin, Pad, D, B>`
+- `impl<Sin, Pad, D, B> core::marker::Send for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Send, Pad: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Pad, D, B> core::marker::Sync for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Sync, Pad: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Pad, D, B> core::marker::Unpin for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::marker::Unpin, Pad: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Pad, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::PadOp<Sin, Pad, D, B>`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Pad: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Pad, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::PadOp<Sin, Pad, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Pad: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ExpandOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Freeze for hologram_ops::utility::ResizeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Send for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Send, Sout: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Sync for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Sync, Sout: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::Unpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::marker::Unpin, Sout: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ExpandOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::marker::UnsafeUnpin for hologram_ops::utility::ResizeOp<Sin, Sout, D, B>`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Sout: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::ReshapeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ExpandOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Sout, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::utility::ResizeOp<Sin, Sout, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Sout: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Freeze for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Send for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Send, Starts: core::marker::Send, Ends: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Sync for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Sync, Starts: core::marker::Sync, Ends: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<Sin, Starts, Ends, D, B> core::marker::Unpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::marker::Unpin, Starts: core::marker::Unpin, Ends: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<Sin, Starts, Ends, D, B> core::marker::UnsafeUnpin for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B>`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::panic::unwind_safe::RefUnwindSafe, Starts: core::panic::unwind_safe::RefUnwindSafe, Ends: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<Sin, Starts, Ends, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::layout::SliceOp<Sin, Starts, Ends, D, B> where Sin: core::panic::unwind_safe::UnwindSafe, Starts: core::panic::unwind_safe::UnwindSafe, Ends: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<W> core::marker::Freeze for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W> core::marker::Send for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Send`
+- `impl<W> core::marker::Sync for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Sync`
+- `impl<W> core::marker::Unpin for hologram_compute::cpu::CpuBackend<W> where W: core::marker::Unpin`
+- `impl<W> core::marker::UnsafeUnpin for hologram_compute::cpu::CpuBackend<W>`
+- `impl<W> core::panic::unwind_safe::RefUnwindSafe for hologram_compute::cpu::CpuBackend<W> where W: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<W> core::panic::unwind_safe::UnwindSafe for hologram_compute::cpu::CpuBackend<W> where W: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::Freeze for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Send, K: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Send for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Send, K: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Sync, K: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Sync for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Sync, K: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::marker::Unpin, K: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::Unpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::marker::Unpin, K: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::marker::UnsafeUnpin for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B>`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::AvgPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, K, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::pooling::MaxPool2dOp<X, K, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, D, B> core::marker::Freeze for hologram_ops::structured::FusedSwiGluOp<X, W, D, B>`
+- `impl<X, W, D, B> core::marker::Send for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Send, W: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, D, B> core::marker::Sync for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Sync, W: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, D, B> core::marker::Unpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, D, B> core::marker::UnsafeUnpin for hologram_ops::structured::FusedSwiGluOp<X, W, D, B>`
+- `impl<X, W, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::structured::FusedSwiGluOp<X, W, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::Freeze for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Send, W: core::marker::Send, P: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Send for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Send, W: core::marker::Send, P: core::marker::Send, S: core::marker::Send, D: core::marker::Send, B: core::marker::Send`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Sync, W: core::marker::Sync, P: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Sync for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Sync, W: core::marker::Sync, P: core::marker::Sync, S: core::marker::Sync, D: core::marker::Sync, B: core::marker::Sync`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, P: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::Unpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::marker::Unpin, W: core::marker::Unpin, P: core::marker::Unpin, S: core::marker::Unpin, D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::marker::UnsafeUnpin for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B>`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, P: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::RefUnwindSafe, W: core::panic::unwind_safe::RefUnwindSafe, P: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::Conv2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, P: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<X, W, P, S, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::conv::ConvTranspose2dOp<X, W, P, S, D, B> where X: core::panic::unwind_safe::UnwindSafe, W: core::panic::unwind_safe::UnwindSafe, P: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::GemmOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Freeze for hologram_ops::linalg::MatMulOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Send for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Send, B: core::marker::Send`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Sync for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Sync, B: core::marker::Sync`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::Unpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::marker::Unpin, B: core::marker::Unpin`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::GemmOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::marker::UnsafeUnpin for hologram_ops::linalg::MatMulOp<M, K, N, D, B>`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::RefUnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::panic::unwind_safe::RefUnwindSafe, B: core::panic::unwind_safe::RefUnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::GemmOp<M, K, N, D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+- `impl<const M: u64, const K: u64, const N: u64, D, B> core::panic::unwind_safe::UnwindSafe for hologram_ops::linalg::MatMulOp<M, K, N, D, B> where D: core::panic::unwind_safe::UnwindSafe, B: core::panic::unwind_safe::UnwindSafe`
+
+
+## Unreleased
+
+`.holo` format v4 + the AI application surface (specs/refactor/03 §v4):
+
+- **Format**: `hologram-archive`'s `FORMAT_VERSION` is now **4** (snapshot text is
+  value-free, so `api/hologram-archive.txt` is unchanged). v4 appends the
+  `inference-model` layer kind (discriminant 4) to the manifest's closed kind set;
+  the section set is unchanged and v2/v3 archives remain loadable
+  (`MIN_READ_VERSION` stays 2). Writers emit v4 only.
+- **hologram-space** (not covered by the api/ snapshot set): `LayerKind::InferenceModel = 4`,
+  `Layer::inference_model(content, entry, engine)`, and new `ManifestError` variants
+  `EmptyLayerEntry` / `MissingEngineTag` / `DuplicateLayerEntry`.
+- **hologram-cli**: new `hologram ai` subcommand group (download / compile /
+  inspect / infer), cfg-gated behind the new `ai` cargo feature (default off; the
+  sibling `hologram-ai` dependency is documented but commented out until that
+  crate is published — see `crates/hologram-cli/src/ai.rs`).
+- **hologram-ffi**: new `ai` cargo feature (default off) adding the
+  `hologram_ai_*` C ABI surface (compile / download / app load / model listing /
+  JSON session invoke) and the `HOLOGRAM_ERROR_AI_*` error band (100–111), all
+  cfg-gated, plus cfg-gated `ai-compile` / `ai-download` / `ai-app` /
+  `ai-session` FEATURES probes. Default-feature public API is unchanged, so
+  `api/hologram-ffi.txt` is unchanged.
+
+_Snapshot note_: the api/*.txt snapshots are tool-generated
+(`scripts/update-api-snapshots.sh`); no snapshot diff results from this change
+(default features, value-free consts), so they were not regenerated.
+
+
 ## v0.12.1
 
 _No public-API changes._

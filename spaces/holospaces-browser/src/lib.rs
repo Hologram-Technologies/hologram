@@ -73,8 +73,8 @@ fn capabilities(memory_bytes: f64) -> Capabilities {
     Capabilities {
         storage_roots: Vec::new(),
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: memory_bytes as u64,
@@ -2338,7 +2338,7 @@ impl X64Workspace {
             ));
         }
         let occupied_blocks: Vec<u64> = payload
-            .chunks_exact(8)
+            .windows(8).step_by(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
             .collect();
         // Every named block must lie within the declared disk (a stray index would map

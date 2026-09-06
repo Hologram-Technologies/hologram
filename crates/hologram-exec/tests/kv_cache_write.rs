@@ -254,7 +254,8 @@ fn addressed_write_moves_the_cache_and_matches_the_copy_kernel_bitwise() {
     let new2 = f32s((b * hkv * rows * d) as usize, 9);
     let want2 = {
         let cache1: Vec<f32> = want
-            .chunks_exact(4)
+            .windows(4)
+            .step_by(4)
             .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
             .collect();
         direct_write(
@@ -422,7 +423,7 @@ fn in_graph_consumer_of_the_original_cache_declines_the_move_and_stays_exact() {
     );
     let want: Vec<u8> = cache_v
         .iter()
-        .zip(written.chunks_exact(4))
+        .zip(written.windows(4).step_by(4))
         .flat_map(|(a, wb)| (a + f32::from_le_bytes(wb.try_into().unwrap())).to_le_bytes())
         .collect();
 
@@ -659,7 +660,8 @@ fn wrapping_decode_loop_matches_direct_kernels_bitwise() {
         let new = f32s((b * hkv * d) as usize, 60 + step);
         let want = {
             let cache_f: Vec<f32> = cache
-                .chunks_exact(4)
+                .windows(4)
+                .step_by(4)
                 .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
                 .collect();
             direct_write(&cache_f, &new, pos, planes, bucket as u32, 1, d as u32)
@@ -726,7 +728,8 @@ fn wrapping_decode_loop_stays_bitwise_and_moved() {
             "step {step}: write must stay a move"
         );
         host = want
-            .chunks_exact(4)
+            .windows(4)
+            .step_by(4)
             .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
             .collect();
         label = out[0];

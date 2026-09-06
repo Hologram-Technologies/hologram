@@ -8,7 +8,10 @@
 //! is a tracked upgrade — uor-addr ships only commutative `compose_g2_product_blake3`, and the
 //! ordered PrismModel lives behind the compute engine, excluded by RZ).
 
-use crate::{address_bytes, Capabilities, KappaLabel, KappaLabel71, RealizationError, References};
+use crate::{
+    address_bytes, Capabilities, KappaLabel, KappaLabel71, NetworkEndpointScope, RealizationError,
+    References,
+};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -172,6 +175,8 @@ pub struct CapabilitySet {
     pub caps: Capabilities,
 }
 impl CapabilitySet {
+    const ENDPOINT_EXTENSION: &'static [u8; 4] = b"NEP1";
+
     pub fn new(caps: Capabilities) -> Self {
         Self { caps }
     }
@@ -190,7 +195,17 @@ impl CapabilitySet {
         p.extend_from_slice(&c.memory_max_bytes.to_le_bytes());
         p.extend_from_slice(&c.cpu_time_per_event_ms.to_le_bytes());
         p.extend_from_slice(&c.priority_weight.to_le_bytes());
-        p.push((c.network_fetch as u8) | ((c.network_announce as u8) << 1));
+        // The legacy byte is retained at zero so all pre-scope capability sets that did not grant
+        // ambient network access keep their exact canonical identity. Old readers see new endpoint
+        // extensions as no network authority; new readers reject legacy nonzero ambient flags.
+        p.push(0);
+        let fetch = canonical_endpoint_order(&c.network_fetch_endpoints);
+        let announce = canonical_endpoint_order(&c.network_announce_endpoints);
+        if !fetch.is_empty() || !announce.is_empty() {
+            p.extend_from_slice(Self::ENDPOINT_EXTENSION);
+            encode_endpoint_scopes(&mut p, &fetch);
+            encode_endpoint_scopes(&mut p, &announce);
+        }
         (refs, p)
     }
     /// Decode a capability-set canonical form back to its [`Capabilities`] view — the inverse of
@@ -213,6 +228,29 @@ impl CapabilitySet {
         let cpu_time_per_event_ms = read_u64(&payload, &mut cur)?;
         let priority_weight = read_u32(&payload, &mut cur)?;
         let flags = *payload.get(cur).ok_or(RealizationError::Truncated)?;
+        cur += 1;
+        if flags != 0 {
+            // Boolean network authority had no endpoint boundary. It is intentionally not mapped
+            // to a wildcard because doing so would preserve unsafe ambient access.
+            return Err(RealizationError::Malformed);
+        }
+        let (network_fetch_endpoints, network_announce_endpoints) = if cur == payload.len() {
+            (Vec::new(), Vec::new())
+        } else {
+            let magic_end = cur
+                .checked_add(Self::ENDPOINT_EXTENSION.len())
+                .ok_or(RealizationError::Truncated)?;
+            if payload.get(cur..magic_end) != Some(Self::ENDPOINT_EXTENSION.as_slice()) {
+                return Err(RealizationError::Malformed);
+            }
+            cur = magic_end;
+            let fetch = decode_endpoint_scopes(&payload, &mut cur)?;
+            let announce = decode_endpoint_scopes(&payload, &mut cur)?;
+            if cur != payload.len() {
+                return Err(RealizationError::Malformed);
+            }
+            (fetch, announce)
+        };
         Ok(Capabilities {
             storage_roots: refs[..ns].to_vec(),
             publish_channels: refs[ns..ns + np].to_vec(),
@@ -221,10 +259,57 @@ impl CapabilitySet {
             memory_max_bytes,
             cpu_time_per_event_ms,
             priority_weight,
-            network_fetch: flags & 1 != 0,
-            network_announce: flags & 2 != 0,
+            network_fetch_endpoints,
+            network_announce_endpoints,
         })
     }
+}
+
+fn canonical_endpoint_order(scopes: &[NetworkEndpointScope]) -> Vec<NetworkEndpointScope> {
+    let mut scopes = scopes.to_vec();
+    scopes.sort();
+    scopes.dedup();
+    scopes
+}
+
+fn encode_endpoint_scopes(payload: &mut Vec<u8>, scopes: &[NetworkEndpointScope]) {
+    payload.extend_from_slice(&(scopes.len() as u32).to_le_bytes());
+    for scope in scopes {
+        let bytes = scope.as_str().as_bytes();
+        payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        payload.extend_from_slice(bytes);
+    }
+}
+
+fn decode_endpoint_scopes(
+    payload: &[u8],
+    cur: &mut usize,
+) -> Result<Vec<NetworkEndpointScope>, RealizationError> {
+    const MAX_ENDPOINT_SCOPES: usize = 1024;
+    const MAX_ENDPOINT_SCOPE_BYTES: usize = 2048;
+
+    let count = read_u32(payload, cur)? as usize;
+    if count > MAX_ENDPOINT_SCOPES {
+        return Err(RealizationError::Malformed);
+    }
+    let mut scopes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = read_u32(payload, cur)? as usize;
+        if len == 0 || len > MAX_ENDPOINT_SCOPE_BYTES {
+            return Err(RealizationError::Malformed);
+        }
+        let end = cur.checked_add(len).ok_or(RealizationError::Truncated)?;
+        let value =
+            core::str::from_utf8(payload.get(*cur..end).ok_or(RealizationError::Truncated)?)
+                .map_err(|_| RealizationError::Malformed)?;
+        let scope = NetworkEndpointScope::parse(value).map_err(|_| RealizationError::Malformed)?;
+        if scopes.last().is_some_and(|previous| previous >= &scope) {
+            return Err(RealizationError::Malformed);
+        }
+        scopes.push(scope);
+        *cur = end;
+    }
+    Ok(scopes)
 }
 realization!(
     CapabilitySet,
@@ -691,10 +776,11 @@ realization!(
 // One format: an application is a manifest naming an ordered list of κ-referenced layers plus
 // the child apps it composes (D9). A tensor-only archive is the degenerate single-layer case.
 
-/// A `.holo` v3 layer's kind (spec 03 §v3 structure) — a **closed** enum, extended only by a
-/// format-version bump (exhaustive matching, no catch-all). The kind alone fixes whether a layer
-/// bears an exit code: an application is "a binary with an exit code", so only the code-bearing
-/// kinds may serve as a manifest's `primary` (an app's exit code cannot be undefined).
+/// A `.holo` layer's kind (spec 03 §v3 structure, §v4) — a **closed** enum, extended only by a
+/// format-version bump (exhaustive matching, no catch-all; discriminants are appended, never
+/// renumbered). The kind alone fixes whether a layer bears an exit code: an application is "a
+/// binary with an exit code", so only the code-bearing kinds may serve as a manifest's `primary`
+/// (an app's exit code cannot be undefined).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum LayerKind {
@@ -709,6 +795,11 @@ pub enum LayerKind {
     /// A UI view (D10), attached when its surface is ready; no exit code. Its `aux` tag carries the
     /// `surface` (`portable`, `native(ios)`, …).
     View = 3,
+    /// A packaged AI inference model, invoked as a callable service; no exit code (FORMAT_VERSION 4,
+    /// spec 03 §v4). Its `aux` tag carries the mandatory **engine** identifier (e.g. `uor-r4`) and
+    /// its `entry` names the callable service. Hologram is engine-agnostic: it stores and routes
+    /// the layer; the named engine interprets it.
+    InferenceModel = 4,
 }
 
 impl LayerKind {
@@ -723,24 +814,67 @@ impl LayerKind {
             1 => Ok(LayerKind::TensorPlan),
             2 => Ok(LayerKind::RootfsImage),
             3 => Ok(LayerKind::View),
+            4 => Ok(LayerKind::InferenceModel),
             _ => Err(RealizationError::Malformed),
         }
     }
 }
 
+/// Canonical guest-contract selector for the legacy core-Wasm ABI.
+///
+/// An empty Wasm layer `aux` remains a byte-compatible alias for this contract. New producers may
+/// write this explicit identifier when they need the selector to be visible in canonical identity.
+pub const WASM_CONTRACT_CORE_V1: &str = "hologram:guest/core-wasm@1";
+
+/// Canonical guest-contract selector for the import-free Component Model ABI.
+pub const WASM_CONTRACT_COMPONENT_V1: &str = "hologram:guest/component@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram object-store read interface.
+pub const WASM_CONTRACT_COMPONENT_STORE_READ_V1: &str = "hologram:guest/component-store-read@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram object-store read interface over a fully resolved,
+/// bounded typed realization closure. The exact-root store-read selector
+/// remains distinct so consumers cannot widen existing grants implicitly.
+pub const WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1: &str =
+    "hologram:guest/component-store-graph-read@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram object-store write interface.
+pub const WASM_CONTRACT_COMPONENT_STORE_WRITE_V1: &str = "hologram:guest/component-store-write@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram channel publish interface.
+pub const WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1: &str =
+    "hologram:guest/component-channel-publish@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated Hologram channel subscribe interface.
+pub const WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1: &str =
+    "hologram:guest/component-channel-subscribe@1";
+
+/// Canonical guest-contract selector for the Component Model ABI with the
+/// capability-gated, host-mediated HTTPS fetch interface.
+pub const WASM_CONTRACT_COMPONENT_NETWORK_FETCH_V1: &str =
+    "hologram:guest/component-network-fetch@1";
+
 /// One layer of a `.holo` v3 application: a κ-referenced payload plus its boot descriptor. The
 /// `entry` is the layer's entrypoint (like `main`); `aux` is the kind-specific tag — the **arch**
-/// for a rootfs-image (mandatory, ISA fixed at provision) or the **surface** for a view, empty for
-/// the portable code/tensor kinds.
+/// for a rootfs-image (mandatory, ISA fixed at provision), the **surface** for a view, or the
+/// **engine** for an inference-model (mandatory, v4), a closed guest-contract selector for Wasm,
+/// and empty for tensor plans. Empty Wasm `aux` is the byte-compatible core-Wasm v1 alias.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Layer {
     pub kind: LayerKind,
-    /// The layer's payload κ (a codemodule, tensor plan, rootfs image, or view bundle). Dedup
-    /// spans layers: a model shared by two layers is stored once (Law L3).
+    /// The layer's payload κ (a codemodule, tensor plan, rootfs image, view bundle, or inference
+    /// model). Dedup spans layers: a model shared by two layers is stored once (Law L3).
     pub content: KappaLabel71,
-    /// Entrypoint name (e.g. `_start`, a session id, `boot`).
+    /// Entrypoint name (e.g. `_start`, a session id, `boot`, or a callable service name for an
+    /// inference-model layer).
     pub entry: String,
-    /// Kind-specific tag: arch for rootfs-image, surface for view, empty otherwise.
+    /// Kind-specific tag: guest contract for Wasm, arch for rootfs-image, surface for view, engine
+    /// for inference-model, and empty for tensor plans.
     pub aux: String,
 }
 
@@ -752,6 +886,28 @@ impl Layer {
             content,
             entry: entry.into(),
             aux: String::new(),
+        }
+    }
+    /// A wasm layer with an explicit canonical guest-contract selector.
+    ///
+    /// [`WASM_CONTRACT_CORE_V1`], [`WASM_CONTRACT_COMPONENT_V1`],
+    /// [`WASM_CONTRACT_COMPONENT_STORE_READ_V1`],
+    /// [`WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1`],
+    /// [`WASM_CONTRACT_COMPONENT_STORE_WRITE_V1`],
+    /// [`WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1`], and
+    /// [`WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1`], and
+    /// [`WASM_CONTRACT_COMPONENT_NETWORK_FETCH_V1`] are the accepted selectors.
+    /// Use [`Layer::wasm`] to retain the empty-tag compatibility encoding.
+    pub fn wasm_with_contract(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        contract: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LayerKind::WasmCodemodule,
+            content,
+            entry: entry.into(),
+            aux: contract.into(),
         }
     }
     /// A tensor-plan layer (no exit code) — the degenerate single-layer archive is one of these.
@@ -785,6 +941,21 @@ impl Layer {
             aux: surface.into(),
         }
     }
+    /// An inference-model layer (v4; no exit code) served by `engine` under the callable service
+    /// name `entry`. Hologram is engine-agnostic — `engine` is an opaque identifier (e.g.
+    /// `"uor-r4"`) resolved by the host at invocation time.
+    pub fn inference_model(
+        content: KappaLabel71,
+        entry: impl Into<String>,
+        engine: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: LayerKind::InferenceModel,
+            content,
+            entry: entry.into(),
+            aux: engine.into(),
+        }
+    }
 }
 
 /// Why an [`AppManifest`] is not loadable (spec 03 §Encoding decisions — validated at load, before
@@ -800,10 +971,19 @@ pub enum ManifestError {
     PrimaryNotExitBearing,
     /// A rootfs-image layer is missing its mandatory `arch` tag (ISA fixed at provision).
     RootfsMissingArch,
-    /// A portable layer (wasm-codemodule / tensor-plan) carries an `arch`/`aux` tag it must not.
+    /// A tensor-plan carries an `aux` tag it must not.
     PortableLayerHasArch,
+    /// A wasm-codemodule names a guest contract outside the closed supported identifier set.
+    UnsupportedWasmContract,
     /// A view layer is missing its `surface` tag.
     ViewMissingSurface,
+    /// An inference-model layer (v4) is missing its callable service name (`entry`).
+    EmptyLayerEntry,
+    /// An inference-model layer (v4) is missing its mandatory engine tag (`aux`).
+    MissingEngineTag,
+    /// Two layers share one non-empty `entry` name — service names are the invoke seam, so they
+    /// must be unique within a manifest.
+    DuplicateLayerEntry,
 }
 
 /// `https://hologram.foundation/realization/app-manifest` — a `.holo` v3 application (spec 03).
@@ -854,33 +1034,28 @@ impl AppManifest {
         if self.layers.is_empty() {
             return Err(ManifestError::NoLayers);
         }
-        if let Some(i) = self.primary {
-            let layer = self
-                .layers
-                .get(i as usize)
-                .ok_or(ManifestError::PrimaryOutOfRange)?;
-            if !layer.kind.has_exit_semantics() {
-                return Err(ManifestError::PrimaryNotExitBearing);
-            }
-        }
+        self.validate_primary()?;
         for layer in &self.layers {
-            match layer.kind {
-                LayerKind::RootfsImage => {
-                    if layer.aux.is_empty() {
-                        return Err(ManifestError::RootfsMissingArch);
-                    }
-                }
-                LayerKind::View => {
-                    if layer.aux.is_empty() {
-                        return Err(ManifestError::ViewMissingSurface);
-                    }
-                }
-                LayerKind::WasmCodemodule | LayerKind::TensorPlan => {
-                    if !layer.aux.is_empty() {
-                        return Err(ManifestError::PortableLayerHasArch);
-                    }
-                }
-            }
+            validate_layer_descriptor(layer)?;
+        }
+        if has_duplicate_entries(&self.layers) {
+            return Err(ManifestError::DuplicateLayerEntry);
+        }
+        Ok(())
+    }
+
+    /// `primary`, when present, must index a layer with exit semantics (an app's exit code cannot
+    /// be undefined). `None` is a non-executable / library artifact.
+    fn validate_primary(&self) -> Result<(), ManifestError> {
+        let Some(i) = self.primary else {
+            return Ok(());
+        };
+        let layer = self
+            .layers
+            .get(i as usize)
+            .ok_or(ManifestError::PrimaryOutOfRange)?;
+        if !layer.kind.has_exit_semantics() {
+            return Err(ManifestError::PrimaryNotExitBearing);
         }
         Ok(())
     }
@@ -951,10 +1126,11 @@ impl AppManifest {
         if child_refs.len() != expected_child_refs {
             return Err(RealizationError::Malformed);
         }
-        let children = child_refs
-            .chunks_exact(2)
-            .map(|c| (c[0], c[1]))
-            .collect::<Vec<_>>();
+        let mut children = Vec::with_capacity(n_children);
+        for child_index in 0..n_children {
+            let offset = child_index * 2;
+            children.push((child_refs[offset], child_refs[offset + 1]));
+        }
         Ok(AppManifest {
             primary,
             requires,
@@ -963,6 +1139,43 @@ impl AppManifest {
         })
     }
 }
+
+/// Per-layer descriptor invariants (spec 03 §Encoding decisions + §v4): which kinds require or
+/// constrain the `aux` tag, and the v4 inference-model service-name / engine-tag requirements.
+fn validate_layer_descriptor(layer: &Layer) -> Result<(), ManifestError> {
+    match layer.kind {
+        LayerKind::RootfsImage if layer.aux.is_empty() => Err(ManifestError::RootfsMissingArch),
+        LayerKind::View if layer.aux.is_empty() => Err(ManifestError::ViewMissingSurface),
+        LayerKind::WasmCodemodule
+            if !matches!(
+                layer.aux.as_str(),
+                "" | WASM_CONTRACT_CORE_V1
+                    | WASM_CONTRACT_COMPONENT_V1
+                    | WASM_CONTRACT_COMPONENT_STORE_READ_V1
+                    | WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1
+                    | WASM_CONTRACT_COMPONENT_STORE_WRITE_V1
+                    | WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1
+                    | WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1
+                    | WASM_CONTRACT_COMPONENT_NETWORK_FETCH_V1
+            ) =>
+        {
+            Err(ManifestError::UnsupportedWasmContract)
+        }
+        LayerKind::TensorPlan if !layer.aux.is_empty() => Err(ManifestError::PortableLayerHasArch),
+        LayerKind::InferenceModel if layer.entry.is_empty() => Err(ManifestError::EmptyLayerEntry),
+        LayerKind::InferenceModel if layer.aux.is_empty() => Err(ManifestError::MissingEngineTag),
+        _ => Ok(()),
+    }
+}
+
+/// Whether two layers share one non-empty `entry` name — service names are the invoke seam, so
+/// they must be unique within a manifest (empty entries, e.g. view layers, are exempt).
+fn has_duplicate_entries(layers: &[Layer]) -> bool {
+    layers.iter().enumerate().any(|(i, layer)| {
+        !layer.entry.is_empty() && layers[..i].iter().any(|l| l.entry == layer.entry)
+    })
+}
+
 realization!(
     AppManifest,
     "https://hologram.foundation/realization/app-manifest"
@@ -2146,6 +2359,60 @@ mod tests {
     }
 
     #[test]
+    fn legacy_wasm_constructor_keeps_the_empty_tag_identity() {
+        let legacy = AppManifest {
+            primary: Some(0),
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer::wasm(k(b"wasm"), "_start")],
+            children: alloc::vec![],
+        };
+        let pre_contract_shape = AppManifest {
+            primary: Some(0),
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer {
+                kind: LayerKind::WasmCodemodule,
+                content: k(b"wasm"),
+                entry: "_start".into(),
+                aux: String::new(),
+            }],
+            children: alloc::vec![],
+        };
+
+        assert_eq!(legacy.canonicalize(), pre_contract_shape.canonicalize());
+        assert_eq!(legacy.kappa(), pre_contract_shape.kappa());
+        legacy.validate().unwrap();
+    }
+
+    #[test]
+    fn explicit_wasm_contracts_validate_and_round_trip() {
+        for contract in [
+            WASM_CONTRACT_CORE_V1,
+            WASM_CONTRACT_COMPONENT_V1,
+            WASM_CONTRACT_COMPONENT_STORE_READ_V1,
+            WASM_CONTRACT_COMPONENT_STORE_GRAPH_READ_V1,
+            WASM_CONTRACT_COMPONENT_STORE_WRITE_V1,
+            WASM_CONTRACT_COMPONENT_CHANNEL_PUBLISH_V1,
+            WASM_CONTRACT_COMPONENT_CHANNEL_SUBSCRIBE_V1,
+            WASM_CONTRACT_COMPONENT_NETWORK_FETCH_V1,
+        ] {
+            let manifest = AppManifest {
+                primary: Some(0),
+                requires: k(b"caps"),
+                layers: alloc::vec![Layer::wasm_with_contract(k(b"wasm"), "_start", contract,)],
+                children: alloc::vec![],
+            };
+
+            manifest.validate().unwrap();
+            let decoded = AppManifest::decode(&manifest.canonicalize()).unwrap();
+            assert_eq!(decoded.primary, manifest.primary);
+            assert_eq!(decoded.requires, manifest.requires);
+            assert_eq!(decoded.layers[0].aux, contract);
+            assert_eq!(decoded.layers, manifest.layers);
+            assert_eq!(decoded.children, manifest.children);
+        }
+    }
+
+    #[test]
     fn app_manifest_dispatches_through_registry() {
         let m = full_app();
         let refs = references(&m.canonicalize(), REGISTRY).unwrap();
@@ -2182,7 +2449,7 @@ mod tests {
     }
 
     #[test]
-    fn rootfs_requires_arch_and_portable_kinds_reject_it() {
+    fn layer_aux_tags_are_validated_by_kind() {
         let no_arch = AppManifest {
             layers: alloc::vec![
                 Layer::wasm(k(b"w"), "_start"),
@@ -2196,19 +2463,122 @@ mod tests {
             ..full_app()
         };
         assert_eq!(no_arch.validate(), Err(ManifestError::RootfsMissingArch));
-        let wasm_with_arch = AppManifest {
+        let wasm_with_unknown_contract = AppManifest {
             layers: alloc::vec![Layer {
                 kind: LayerKind::WasmCodemodule,
                 content: k(b"w"),
                 entry: "_start".into(),
-                aux: "riscv64".into(), // portable kind must not carry arch
+                aux: "hologram:guest/unknown@1".into(),
             }],
             ..full_app()
         };
         assert_eq!(
-            wasm_with_arch.validate(),
+            wasm_with_unknown_contract.validate(),
+            Err(ManifestError::UnsupportedWasmContract)
+        );
+        let tensor_with_aux = AppManifest {
+            layers: alloc::vec![Layer {
+                kind: LayerKind::TensorPlan,
+                content: k(b"t"),
+                entry: "session".into(),
+                aux: "not-allowed".into(),
+            }],
+            primary: None,
+            ..full_app()
+        };
+        assert_eq!(
+            tensor_with_aux.validate(),
             Err(ManifestError::PortableLayerHasArch)
         );
+    }
+
+    // ── .holo v4 inference-model layers (spec 03 §v4) ──
+
+    /// A v4 model-only app: inference-model layers, no primary (a library artifact — invoking it
+    /// is calling a service, not running an exit-bearing binary).
+    fn model_only_app() -> AppManifest {
+        AppManifest {
+            primary: None,
+            requires: k(b"caps"),
+            layers: alloc::vec![Layer::inference_model(
+                k(b"model-a"),
+                "ai.default",
+                "uor-r4"
+            )],
+            children: alloc::vec![],
+        }
+    }
+
+    #[test]
+    fn inference_model_kind_decodes_and_has_no_exit_semantics() {
+        assert_eq!(LayerKind::from_u8(4), Ok(LayerKind::InferenceModel));
+        assert!(LayerKind::from_u8(5).is_err());
+        assert!(!LayerKind::InferenceModel.has_exit_semantics());
+    }
+
+    #[test]
+    fn model_only_manifest_validates_and_round_trips() {
+        let m = model_only_app();
+        m.validate().unwrap();
+        let decoded = AppManifest::decode(&m.canonicalize()).unwrap();
+        assert_eq!(decoded.primary, None);
+        assert_eq!(decoded.layers, m.layers);
+        assert_eq!(decoded.layers[0].kind, LayerKind::InferenceModel);
+        assert_eq!(decoded.layers[0].entry, "ai.default");
+        assert_eq!(decoded.layers[0].aux, "uor-r4");
+    }
+
+    #[test]
+    fn inference_model_primary_is_rejected() {
+        // An inference-model layer has no exit code, so it cannot be an app's primary.
+        let bad = AppManifest {
+            primary: Some(0),
+            ..model_only_app()
+        };
+        assert_eq!(bad.validate(), Err(ManifestError::PrimaryNotExitBearing));
+    }
+
+    #[test]
+    fn inference_model_requires_entry_and_engine() {
+        let no_entry = AppManifest {
+            layers: alloc::vec![Layer {
+                kind: LayerKind::InferenceModel,
+                content: k(b"m"),
+                entry: String::new(), // the callable service name is mandatory
+                aux: "uor-r4".into(),
+            }],
+            ..model_only_app()
+        };
+        assert_eq!(no_entry.validate(), Err(ManifestError::EmptyLayerEntry));
+        let no_engine = AppManifest {
+            layers: alloc::vec![Layer::inference_model(k(b"m"), "ai.default", "")],
+            ..model_only_app()
+        };
+        assert_eq!(no_engine.validate(), Err(ManifestError::MissingEngineTag));
+    }
+
+    #[test]
+    fn duplicate_service_entries_are_rejected() {
+        let dup = AppManifest {
+            layers: alloc::vec![
+                Layer::inference_model(k(b"a"), "ai.default", "uor-r4"),
+                Layer::inference_model(k(b"b"), "ai.default", "uor-r4"),
+            ],
+            ..model_only_app()
+        };
+        assert_eq!(dup.validate(), Err(ManifestError::DuplicateLayerEntry));
+        // Distinct service names over shared content are fine (dedup spans layers, Law L3);
+        // empty view entries never collide.
+        let ok = AppManifest {
+            layers: alloc::vec![
+                Layer::inference_model(k(b"a"), "ai.default", "uor-r4"),
+                Layer::inference_model(k(b"a"), "ai.alt", "uor-r4"),
+                Layer::view(k(b"v1"), "portable"),
+                Layer::view(k(b"v2"), "native(ios)"),
+            ],
+            ..model_only_app()
+        };
+        ok.validate().unwrap();
     }
 
     #[test]
@@ -2391,28 +2761,32 @@ mod tests {
         let policy = Capabilities {
             storage_roots: alloc::vec![],
             storage_quota_bytes: 1000,
-            network_fetch: true,
-            network_announce: false,
+            network_fetch_endpoints: alloc::vec![crate::NetworkEndpointScope::parse(
+                "https://example.com:443/",
+            )
+            .unwrap()],
+            network_announce_endpoints: alloc::vec![],
             publish_channels: alloc::vec![],
             subscribe_channels: alloc::vec![],
             memory_max_bytes: 0,
             cpu_time_per_event_ms: 0,
             priority_weight: 0,
         };
+        let target = crate::NetworkEndpointScope::parse("https://example.com:443/api").unwrap();
         assert!(
-            policy.admits_network_op(NetworkOp::Fetch, 0),
+            policy.admits_network_op(NetworkOp::Fetch, Some(&target), 0),
             "fetch granted"
         );
         assert!(
-            !policy.admits_network_op(NetworkOp::Announce, 0),
+            !policy.admits_network_op(NetworkOp::Announce, Some(&target), 0),
             "announce not granted"
         );
         assert!(
-            policy.admits_network_op(NetworkOp::Store, 500),
+            policy.admits_network_op(NetworkOp::Store, None, 500),
             "store within quota"
         );
         assert!(
-            !policy.admits_network_op(NetworkOp::Store, 2000),
+            !policy.admits_network_op(NetworkOp::Store, None, 2000),
             "store over quota refused"
         );
         // Per-capability accounting: a second capability's quota is independent, not global.
@@ -2421,9 +2795,61 @@ mod tests {
             ..policy.clone()
         };
         assert!(
-            other.admits_network_op(NetworkOp::Store, 2000),
+            other.admits_network_op(NetworkOp::Store, None, 2000),
             "the other cap has its own budget"
         );
+    }
+
+    #[test]
+    fn capability_endpoint_extension_round_trips_and_legacy_ambient_flags_fail_closed() {
+        use crate::Capabilities;
+
+        let empty = Capabilities {
+            storage_roots: alloc::vec![],
+            storage_quota_bytes: 0,
+            network_fetch_endpoints: alloc::vec![],
+            network_announce_endpoints: alloc::vec![],
+            publish_channels: alloc::vec![],
+            subscribe_channels: alloc::vec![],
+            memory_max_bytes: 0,
+            cpu_time_per_event_ms: 0,
+            priority_weight: 0,
+        };
+        let legacy_safe = CapabilitySet::new(empty.clone()).canonicalize();
+        assert_eq!(
+            crate::address_bytes(&legacy_safe).to_string(),
+            "blake3:cf46eb3028b50fde0444a1a648f5ce7cba94013f541c86537df54adf5d203e1c",
+            "legacy no-network CapabilitySet identity is frozen"
+        );
+        assert_eq!(CapabilitySet::to_capabilities(&legacy_safe).unwrap(), empty);
+
+        let mut legacy_ambient = legacy_safe.clone();
+        *legacy_ambient.last_mut().expect("legacy flag byte") = 1;
+        assert_eq!(
+            CapabilitySet::to_capabilities(&legacy_ambient),
+            Err(RealizationError::Malformed),
+            "unscoped legacy fetch must never become a wildcard"
+        );
+
+        let broad = crate::NetworkEndpointScope::parse("https://api.example.com:443/v1").unwrap();
+        let narrow =
+            crate::NetworkEndpointScope::parse("https://api.example.com:443/v1/models").unwrap();
+        let scoped = Capabilities {
+            network_fetch_endpoints: alloc::vec![narrow.clone(), broad.clone(), broad],
+            ..empty
+        };
+        let canonical = CapabilitySet::new(scoped).canonicalize();
+        let decoded = CapabilitySet::to_capabilities(&canonical).expect("scoped capability");
+        assert_eq!(decoded.network_fetch_endpoints.len(), 2);
+        assert_eq!(
+            CapabilitySet::new(decoded.clone()).canonicalize(),
+            canonical,
+            "canonical endpoint ordering is stable"
+        );
+        assert!(decoded.admits(&Capabilities {
+            network_fetch_endpoints: alloc::vec![narrow],
+            ..decoded.clone()
+        }));
     }
 
     #[test]

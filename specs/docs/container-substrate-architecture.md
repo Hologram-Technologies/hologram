@@ -617,7 +617,9 @@ The whole stack is uor-native and self-contained:
   external-hosting gap: durability scales with disk count, not vendor contracts.
 - **Replication is automatic.** Cache-on-fetch + `announce(κ)` (§11.1) means once N peers hold κ
   the network has factor-N durability without coordination. Archival peers favor this through
-  their capability profile (ample `storage_quota_bytes`, `network_announce = true`).
+  their capability profile (ample `storage_quota_bytes` and an exact
+  `network_announce_endpoints` scope for the mediated peer endpoint). Boolean ambient network
+  authority is not representable.
 - **Cold-tier latency** is achieved by ordering the federation chain (§11.2) hot RAM → warm redb →
   cold bare-metal, so an archival peer is queried only on hot/warm misses.
 

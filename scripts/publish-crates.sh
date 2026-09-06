@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish every publishable workspace crate to crates.io in dependency (topological) order —
-# leaves first, the `uor-hologram` facade last. `cargo publish` (>=1.66) waits for each crate to
-# land on the index before returning, so the next crate's path->version deps resolve.
+# leaves first, the `uor-hologram` facade last. After each upload, this script independently polls
+# crates.io for that exact crate/version before allowing any dependent crate to publish.
 #
 # ⚠ crates.io versions are PERMANENT (a bad version can only be *yanked*, never deleted), and a
 # partial run leaves the crates it already published live. This runs behind the `crates-io`
@@ -29,17 +29,35 @@ def visit(n):
 for n in sorted(names): visit(n)
 print(" ".join(out))
 ')"
+version="$(scripts/workspace-version.sh)"
 echo "Publish order (${#order} chars): $order"
 [ "${DRY_RUN:-0}" = "1" ] && { echo "DRY_RUN — not publishing."; exit 0; }
 
 if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-  echo "CARGO_REGISTRY_TOKEN not set — skipping crates.io publish (nothing published)."
-  exit 0
+  echo "CARGO_REGISTRY_TOKEN not set — refusing to publish." >&2
+  exit 1
 fi
 
 for crate in $order; do
   echo "── cargo publish -p ${crate} ──"
-  cargo publish -p "${crate}" \
+  cargo publish --locked -p "${crate}" \
     || { echo "publish FAILED at ${crate} — any crates published above are already LIVE (permanent)."; exit 1; }
+
+  # crates.io accepts the upload before every index/cache edge necessarily serves it. Do not begin
+  # a dependent package until the just-published exact version is downloadable from crates.io.
+  available=0
+  for attempt in $(seq 1 30); do
+    if cargo info "${crate}@${version}" --registry crates-io >/dev/null 2>&1; then
+      available=1
+      break
+    fi
+    echo "waiting for ${crate}@${version} registry propagation (${attempt}/30)"
+    sleep 10
+  done
+  if [ "$available" -ne 1 ]; then
+    echo "publish FAILED: ${crate}@${version} did not become downloadable within 300 seconds." >&2
+    echo "Any crates published above are already LIVE (permanent); refusing dependent publishes." >&2
+    exit 1
+  fi
 done
 echo "All crates published to crates.io."

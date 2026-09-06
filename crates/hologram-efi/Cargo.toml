@@ -1,7 +1,8 @@
 [package]
 name = "hologram-efi"
-version = "0.12.1"
+version = "0.13.0"
 edition = "2021"
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 description = "hologram.efi — the bare-metal UEFI boot binary (bare-metal spec §3). Boots from UEFI firmware, brings up the engine over a block device, and exercises BareMetalKappaStore. Built for x86_64-unknown-uefi; booted in QEMU/OVMF."

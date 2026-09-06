@@ -24,7 +24,8 @@ fn le_f32(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 fn f32s(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4)
+    b.windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }

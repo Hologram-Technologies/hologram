@@ -1,4 +1,4 @@
-@class:LAW @id:LAW-4 @spec:00-overview @phase:P2 @status:pending
+@class:LAW @id:LAW-4 @spec:00-overview @phase:P2 @status:enforced
 Feature: LAW-4 — sync storage and compute, async network and lifecycle
   Scenario: the session boundary is the only async-sync seam
     Given synchronous storage and compute with async network and lifecycle

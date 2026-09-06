@@ -22,8 +22,6 @@ root `CONFORMANCE.md` normative ledger.
 
 | `@status` | scenario | catalog |
 |---|---|---|
-| `pending` | steps skip (undefined) | ⛔ gap |
-| `partial` | some steps assert | 🟡 partial |
 | `enforced` | all steps assert & pass | ✅ enforced |
 
 ## Running
@@ -40,20 +38,12 @@ actual feature file; and each feature file declares exactly one scenario. This k
 ledger and the scenarios from drifting.
 
 The static gate does not assert that an `enforced` scenario actually *passes* — that is
-the runner's job. The `bdd` runner (`tests/bdd.rs`) is wired with
-`fail_on_skipped_with(@status:enforced)`: any scenario tagged `@status:enforced` whose
-steps are undefined (or skipped) becomes a **build failure**, while `@status:pending`
-scenarios are allowed to skip. So an `enforced` row can only be green if its scenario has
-real, passing steps. **The rule — no requirement is "done" until its scenario is green and
-CI-gated — is live for every scenario the moment it turns `enforced`.**
+the runner's job. The `bdd` runner (`tests/bdd.rs`) uses `fail_on_skipped()`: every
+undefined or skipped step is a build failure, without a tag-based exception. An enforced
+row can only be green if its scenario has real, passing steps.
 
 ## Phased rollout
 
-Scenarios land `pending` and turn `enforced` as the phase in their `@phase:` tag
-implements the requirement. The teeth (`fail_on_skipped_with`) are already wired centrally,
-so promoting a scenario is three steps: (1) add its step definitions in
-`crates/hologram-conformance/tests/bdd.rs`, (2) flip its `@status` tag to `enforced`, and
-(3) flip the matching `CONFORMANCE.md` row to `✅` (the meta-gate rejects any mismatch, so
-these move together). **GV-1** (R1 traceability, witnessed against
-`hologram-realizations::ContainerManifest::references()`) is the first enforced scenario
-and the worked example of this path.
+New scenarios must land with executable steps and `@status:enforced`; incomplete scenarios
+are not registered. Promotion requires (1) executable step definitions, (2) the enforced
+tag, and (3) the matching `CONFORMANCE.md` row at `✅`. The meta-gate rejects any mismatch.

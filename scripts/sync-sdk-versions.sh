@@ -77,7 +77,7 @@ for f in "${PEER_FILES[@]}"; do
     echo "::error::SDK peer-dep drift: $f pins @tryhologram/sdk $cur, workspace is $WS — run scripts/sync-sdk-versions.sh"
     rc=1
   else
-    perl -0pi -e "s/(\"\@hologram\/sdk\":\s*\")[0-9]+\.[0-9]+\.[0-9]+/\${1}${WS}/" "$f"
+    perl -0pi -e "s/(\"\@tryhologram\/sdk\":\s*\")[0-9]+\.[0-9]+\.[0-9]+/\${1}${WS}/" "$f"
     echo "  $f: peer @tryhologram/sdk $cur -> $WS"
   fi
 done

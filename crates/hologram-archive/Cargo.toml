@@ -2,7 +2,9 @@
 name = "hologram-archive"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 description = "Hologram .holo archive format (kernel calls + certificates + weights + schedule)."
 
@@ -33,6 +35,9 @@ memmap2           = { workspace = true, optional = true }
 
 [dev-dependencies]
 hologram-compute = { workspace = true }
+# The v4 app-manifest round-trip test frames a real `AppManifest` realization
+# (with an inference-model layer) through the writer/loader.
+hologram-space   = { workspace = true }
 # V&V ONLY — the upstream BLAKE3 reference implementation (by the
 # algorithm's authors) used as an INDEPENDENT external oracle to verify
 # hologram's σ-axis against, mirroring prism-btc validating SHA against

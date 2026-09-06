@@ -47,6 +47,17 @@ pub const FEATURES: &[&str] = &[
     "source-builder.output-alias",
     "errors.structured",
     "errors.locations",
+    // The `ai` surface (`hologram_ai_*` C ABI) exists only with the `ai` cargo
+    // feature, so its probes are cfg-gated likewise: a default build neither
+    // advertises nor answers them (the generated SDK metadata is unchanged).
+    #[cfg(feature = "ai")]
+    "ai-compile",
+    #[cfg(feature = "ai")]
+    "ai-download",
+    #[cfg(feature = "ai")]
+    "ai-app",
+    #[cfg(feature = "ai")]
+    "ai-session",
 ];
 
 /// Iterate generated op metadata from the canonical op catalog.

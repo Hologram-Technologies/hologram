@@ -100,8 +100,8 @@ fn runtime_drives_a_real_wasm_container_through_suspend_resume() {
                 &hologram_space::CapabilitySet::new(Capabilities {
                     storage_roots: vec![],
                     storage_quota_bytes: 0,
-                    network_fetch: false,
-                    network_announce: false,
+                    network_fetch_endpoints: vec![],
+                    network_announce_endpoints: vec![],
                     publish_channels: vec![],
                     subscribe_channels: vec![],
                     memory_max_bytes: 1 << 20,
@@ -173,8 +173,8 @@ fn container_uses_capability_gated_host_storage_imports() {
                 &hologram_space::CapabilitySet::new(Capabilities {
                     storage_roots: vec![granted],
                     storage_quota_bytes: 0,
-                    network_fetch: false,
-                    network_announce: false,
+                    network_fetch_endpoints: vec![],
+                    network_announce_endpoints: vec![],
                     publish_channels: vec![],
                     subscribe_channels: vec![],
                     memory_max_bytes: 1 << 20,
@@ -248,8 +248,8 @@ fn wasm_container_publishes_and_subscriber_callback_records_receipt() {
                     &hologram_space::CapabilitySet::new(Capabilities {
                         storage_roots: vec![],
                         storage_quota_bytes: 0,
-                        network_fetch: false,
-                        network_announce: false,
+                        network_fetch_endpoints: vec![],
+                        network_announce_endpoints: vec![],
                         publish_channels: pubs,
                         subscribe_channels: subs,
                         memory_max_bytes: 1 << 20,

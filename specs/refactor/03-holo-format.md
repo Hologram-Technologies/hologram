@@ -49,9 +49,10 @@ Manifest fields fixed here (they were prose-only before):
   so `resolve_closure(app κ)` fetches a whole application transitively — migration of an
   app between peers is the same operation as migrating any content.
 - **Layer kinds** are a closed enum (exhaustive matching, no catch-all): wasm-codemodule,
-  tensor-plan, rootfs-image, view, (extensible only by format version bump). Each layer
-  carries an entrypoint and, where meaningful, exit-code semantics — an application, like
-  any workload, is "a binary with an exit code."
+  tensor-plan, rootfs-image, view, (extensible only by format version bump — v4 appends
+  inference-model; see §v4). Each layer carries an entrypoint and, where meaningful,
+  exit-code semantics — an application, like any workload, is "a binary with an exit
+  code."
 - **Weights/blob dedup spans layers**: a model shared by two layers is stored once; two
   apps sharing content share κs, so a store holding both holds one copy (Law L3).
 - **Degenerate case**: a v2-style compiled tensor graph is a v3 archive whose manifest has
@@ -161,10 +162,36 @@ from being a hologram application.
 
 ## Compatibility & migration
 
-- FORMAT_VERSION 2 archives remain loadable (read-side compatibility) through at least
-  the first published release cycle; the loader wraps them as single-layer apps in
-  memory. Writers emit v3 only.
+- FORMAT_VERSION 2 and 3 archives remain loadable (read-side compatibility) through at
+  least the first published release cycle; the loader wraps v2 archives as single-layer
+  apps in memory. Writers emit v4 only (see §v4).
 - Format work lands in migration phase P4 (`06-migration.md`), after the crate moves are
   stable, so codec changes never interleave with tree moves.
 - First-party applications (hologram-apps repo) and hologram-ai adopt v3 from their own
   repos once P4 ships in a published release (D1).
+
+## v4: the inference-model layer kind
+
+v4 is a **manifest-content-only** bump: the section set is unchanged; the closed
+`LayerKind` enum gains one appended discriminant — `inference-model = 4` (existing kinds
+0–3 keep theirs, κ-stability). A v3 reader rejects a v4 archive at the version gate,
+exactly as it rejects any newer version.
+
+- **Semantics**: an inference-model layer is a packaged AI model invoked as a **callable
+  service**, not a booted process. It carries **no exit code** (it can never be a
+  manifest's `primary` — the existing primary-must-be-exit-bearing rule covers this). Its
+  `entry` is the mandatory, non-empty service name; its `aux` tag is the mandatory
+  **engine identifier** (e.g. `uor-r4`). A model-only archive (`primary` absent, only
+  inference-model layers) is a valid non-executable / library artifact.
+- **Engine-agnosticism**: hologram stores, dedups, addresses, and routes the layer; the
+  named engine interprets and executes it. The format fixes the slots (content κ, service
+  name, engine tag) and nothing about the engine's algorithms — no engine code, no
+  engine dependency, no tensor-plan changes land in hologram itself.
+- **Service-name uniqueness**: non-empty `entry` names must be unique across a manifest's
+  layers — service names are the invoke seam, so two layers may not answer to one name
+  (empty entries, e.g. view layers, are exempt).
+- **Validation additions** (at manifest load, with the v3 checks): an inference-model
+  layer missing its service name ⇒ `EmptyLayerEntry`; missing its engine tag ⇒
+  `MissingEngineTag`; a duplicated non-empty entry ⇒ `DuplicateLayerEntry`. The v3 rule
+  that portable kinds carry no `aux` tag does not extend to inference-model — its engine
+  tag is mandatory, not forbidden.

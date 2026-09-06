@@ -99,6 +99,13 @@ pub mod space {
     pub use hologram_space::*;
 }
 
+#[cfg(feature = "client")]
+pub mod runtime {
+    //! Facade for lifecycle/runtime types used with [`Client`](crate::Client).
+
+    pub use hologram_runtime::*;
+}
+
 // The `Client` facade (D4) — the single programmatic surface. Lifted to the crate root so
 // callers write `hologram::Client`, per 05-tooling.md.
 #[cfg(feature = "client")]

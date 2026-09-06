@@ -226,8 +226,8 @@ impl SyncOpfsBridge {
         let out = js_sys::Array::new();
         for i in 0..n {
             let mut k = [0u8; 71];
-            for j in 0..71 {
-                k[j] = self.u8.get_index(OFF_PAYLOAD + 4 + (i * 71 + j) as u32);
+            for (j, byte) in k.iter_mut().enumerate() {
+                *byte = self.u8.get_index(OFF_PAYLOAD + 4 + (i * 71 + j) as u32);
             }
             if let Ok(s) = String::from_utf8(k.to_vec()) {
                 out.push(&JsValue::from_str(&s));

@@ -1,19 +1,24 @@
 //! `.holo` binary layout (spec X.1).
 
 pub const MAGIC: [u8; 4] = *b"HOLO";
-/// `.holo` format version (spec `refactor/03`). **v3** makes `.holo` the one
-/// application container: it adds the [`SectionKind::AppManifest`] section —
-/// an IRI-tagged `AppManifest` realization naming an application's ordered,
-/// κ-referenced layers plus its composed children — on top of the v2
-/// tensor-graph sections (kinds 0–14, unchanged). A tensor-only archive is the
-/// degenerate single-layer case. **v2** enriched the `Inputs`/`Outputs` port
-/// wire format with a port `name` and full `shape`, and added the open
-/// [`SectionKind::Extension`] section.
+/// `.holo` format version (spec `refactor/03`). **v4** appends the
+/// `inference-model` layer kind (discriminant 4, `hologram-space::LayerKind`)
+/// to the manifest's closed kind set — an engine-agnostic AI-model layer whose
+/// `aux` tag is the mandatory engine identifier and whose `entry` names a
+/// callable service. The section set is unchanged (v4 is manifest-content
+/// only). **v3** makes `.holo` the one application container: it adds the
+/// [`SectionKind::AppManifest`] section — an IRI-tagged `AppManifest`
+/// realization naming an application's ordered, κ-referenced layers plus its
+/// composed children — on top of the v2 tensor-graph sections (kinds 0–14,
+/// unchanged). A tensor-only archive is the degenerate single-layer case.
+/// **v2** enriched the `Inputs`/`Outputs` port wire format with a port `name`
+/// and full `shape`, and added the open [`SectionKind::Extension`] section.
 ///
-/// Writers emit v3 only; readers accept [`MIN_READ_VERSION`]`..=FORMAT_VERSION`
-/// so a v2 tensor archive stays loadable (the loader treats it as a single
-/// tensor-plan layer). v1 archives (flat unnamed ports) are not loadable.
-pub const FORMAT_VERSION: u16 = 3;
+/// Writers emit v4 only; readers accept [`MIN_READ_VERSION`]`..=FORMAT_VERSION`
+/// so v2/v3 archives stay loadable (the loader treats a v2 tensor archive as a
+/// single tensor-plan layer). v1 archives (flat unnamed ports) are not
+/// loadable.
+pub const FORMAT_VERSION: u16 = 4;
 
 /// Lowest `.holo` version this build still reads (the v2 read-shim, spec 03
 /// §Compatibility). Below this the archive is rejected with

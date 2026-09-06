@@ -32,7 +32,7 @@
 | **CS** | Specification conformance (holospaces docs) — the documentation vs arc42 / C4 / OPM ISO 19450 / ISO 15288, via validators V1–V8 — spec 06 §docs (MG-8) | validator scripts (`specs/holospaces/scripts/v*-*`) |
 | **LAW** | Repo-wide laws (SPINE-1..6, κ-only identity, capability attenuation, async/sync, one surface) — refactor spec 00 | BDD scenarios (features/suites/s0_laws) |
 | **SP** | Space contract trait set + laws + TCK battery; external-repo parity (D21) — spec 02 | BDD scenarios (s1_space_contract) |
-| **HF** | `.holo` v3 container, attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
+| **HF** | `.holo` v3/v4 container (v4 appends the inference-model layer kind), attenuated nesting, per-layer certificates — spec 03 | BDD scenarios (s2_holo_format) |
 | **NW** | Network κ-realization, KappaSync/DHT, public/restricted/private tiers — spec 04 | BDD scenarios (s3_networks) |
 | **TL** | One binary, one public facade crate, FFI over Client — spec 05 | BDD scenarios (s4_tooling) |
 | **MG** | Phased always-green migration gates (P0–P6) — spec 06 | BDD scenarios (s5_migration) |
@@ -374,29 +374,30 @@ addressing and warm-start do.
 |---|---|---|---|---|
 | **LAW-0** | Harness smoke: the conformance runner discovers and executes feature files. | BDD scenario | `s0_laws/_smoke.feature::the harness discovers and runs feature files` | ✅ |
 | **LAW-1** | SPINE-1: a realization with no canonical bytes is unrepresentable; identity is verified by re-derivation, never trusted. | BDD scenario (witnessed against `hologram-substrate-core::verify_kappa` + a `ContainerManifest`) | `s0_laws/spine.feature::canonical bytes or nothing` | ✅ |
-| **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ⛔ |
+| **LAW-2** | κ-only identity: no contract or stored form exposes a UUID / PeerId / Multiaddr / path / hostname as identity; transport ids never leak. | BDD scenario | `s0_laws/identity.feature::no second naming surface` | ✅ |
 | **LAW-3** | Contracts are hologram's, spaces are anyone's: the space contract has no sealed traits or crate-private seams; a space may live in any repository (D2/D21). | BDD scenario (witnessed by `hologram-spike-sp3` — a separate crate — implementing the contract and being accepted by `Client`) | `s0_laws/open_contract.feature::the space contract is open to any repo` | ✅ |
-| **LAW-4** | Sync storage + compute, async network/lifecycle: `KappaStore` and the tensor hot path are synchronous (sync OPFS in a Worker → wasm-safe); network sync + lifecycle are async; the async↔sync seam is the network/boot boundary, never storage; Send-bound is maybe-Send (D14; P0.5 spike). | BDD scenario | `s0_laws/async_sync_seam.feature::the session boundary is the only async-sync seam` | ⛔ |
-| **LAW-5** | Capability attenuation only: a delegated capability is always a subset of the grantor's; amplification is unrepresentable. | BDD scenario | `s0_laws/attenuation.feature::delegation cannot amplify` | ⛔ |
-| **LAW-6** | One programmatic surface: CLI / FFI / SDK are thin shells over the `Client` facade; behavior lives in exactly one place. | BDD scenario | `s0_laws/one_surface.feature::entry points are thin shells` | ⛔ |
+| **LAW-4** | Sync storage + compute, async network/lifecycle: `KappaStore` and the tensor hot path are synchronous (sync OPFS in a Worker → wasm-safe); network sync + lifecycle are async; the async↔sync seam is the network/boot boundary, never storage; Send-bound is maybe-Send (D14; P0.5 spike). | BDD scenario | `s0_laws/async_sync_seam.feature::the session boundary is the only async-sync seam` | ✅ |
+| **LAW-5** | Capability attenuation only: a delegated capability is always a subset of the grantor's; amplification is unrepresentable. | BDD scenario | `s0_laws/attenuation.feature::delegation cannot amplify` | ✅ |
+| **LAW-6** | One programmatic surface: CLI / FFI / SDK are thin shells over the `Client` facade; behavior lives in exactly one place. | BDD scenario | `s0_laws/one_surface.feature::entry points are thin shells` | ✅ |
 
 ## SP — space contract + TCK (refactor spec 02; BDD)
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **SP-1** | Every space implements the identical contract surface; passing `hologram-tck` is the definition of conformance. | BDD scenario (witnessed against the reference `MemKappaStore` via the shared `hologram-tck` battery) | `s1_space_contract/tck.feature::passing the TCK is conformance` | ✅ |
-| **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ⛔ |
+| **SP-2** | An external-repo space passes the TCK as a dev-dependency and is accepted by `Client` with no facade change (D21). | BDD scenario | `s1_space_contract/external_parity.feature::external space is first-class` | ✅ |
 | **SP-3** | A `Space` composes a synchronous store + sync compute with an async network/boot seam; `Client` drives compile→store→boot end to end through the one async↔sync boundary (D14/D28; witnessed by `hologram-spike-sp3`). | BDD scenario | `s1_space_contract/composition.feature::a space composes async network with sync storage and compute` | ✅ |
 | **SP-4** | The reference HAL seams (`Entropy`/`Clock`/`Spawner`, spec 02 §4) are hermetic and deterministic — equally-seeded entropy reproduces the same stream, the clock advances only when told, and the background spawner is inert — so V&V is reproducible. | BDD scenario (witnessed against `hologram-space`'s `SeededEntropy`/`ManualClock`/`NoopSpawner`) | `s1_space_contract/hal_seams.feature::the reference HAL seams are hermetic and deterministic` | ✅ |
 | **SP-5** | Headless is a first-class conformance profile (spec 02 §5): a space with no display satisfies `Surface` via the null projection — `project` yields the canonical empty-projection κ and `intent` refuses with a typed headless error. | BDD scenario (witnessed against `hologram-space`'s `NullSurface`) | `s1_space_contract/surface_headless.feature::a headless space satisfies the Surface contract via the null projection` | ✅ |
 
-## HF — .holo v3 format (refactor spec 03; BDD)
+## HF — .holo v3/v4 format (refactor spec 03; BDD)
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
 | **HF-1** | `.holo` v3 is the one application container; a tensor-only archive is the degenerate single-layer case. | BDD scenario | `s2_holo_format/container.feature::single format covers tensor-only` | ✅ |
 | **HF-2** | App nesting is capability-attenuated: a child's κ refs + delegated CapabilitySet are a subset of the parent's. | BDD scenario | `s2_holo_format/nesting.feature::nested app cannot exceed parent` | ✅ |
 | **HF-3** | v3 per-layer certificates verify; inspection APIs never strip them. | BDD scenario | `s2_holo_format/certificates.feature::per-layer certificates verify` | ✅ |
+| **HF-4** | v4 appends the `inference-model` layer kind (discriminant 4, closed enum — appended, never renumbered): non-exit-bearing (never a manifest `primary`), mandatory engine tag (`aux`) and service name (`entry`), unique non-empty entries per manifest; writers emit v4, v2/v3 archives remain loadable. Space-side validation: the `inference_model_*` and `duplicate_service_entries_are_rejected` unit tests in `realizations.rs`. | unit + round-trip tests | `crates/hologram-archive/tests/app_manifest_v3.rs::v4_archive_round_trips_an_inference_model_layer` | ✅ |
 
 ## NW — networks (refactor spec 04; BDD)
 
@@ -409,21 +410,21 @@ addressing and warm-start do.
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **TL-1** | Exactly one binary named `hologram` ships. | BDD scenario | `s4_tooling/one_binary.feature::exactly one binary` | ⛔ |
-| **TL-2** | Exactly one public crate (`hologram`) is imported with features; users never import subcrates. | BDD scenario | `s4_tooling/one_facade.feature::one public crate` | ⛔ |
-| **TL-3** | Leaf tier (D22): dependencies flow core → spaces → leaf {facade+Client, cli, packaging}; nothing depends on a leaf crate. | BDD scenario | `s4_tooling/leaf_tier.feature::nothing depends on a leaf crate` | ⛔ |
-| **TL-4** | Deploy is `put` + `announce` (+ `--page`): `hologram app publish` makes an app reachable and the same κ resolves and runs across every access rung (D25, spec 08). | BDD scenario | `s4_tooling/deploy.feature::one app publishes to every rung by κ` | ⛔ |
+| **TL-1** | Exactly one binary named `hologram` ships. | BDD scenario | `s4_tooling/one_binary.feature::exactly one binary` | ✅ |
+| **TL-2** | Exactly one public crate (`hologram`) is imported with features; users never import subcrates. | BDD scenario | `s4_tooling/one_facade.feature::one public crate` | ✅ |
+| **TL-3** | Leaf tier (D22): dependencies flow core → spaces → leaf {facade+Client, cli, packaging}; nothing depends on a leaf crate. | BDD scenario | `s4_tooling/leaf_tier.feature::nothing depends on a leaf crate` | ✅ |
+| **TL-4** | Deploy is `put` + `announce` (+ `--page`): `hologram app publish` makes an app reachable and the same κ resolves and runs across every access rung (D25, spec 08). | BDD scenario | `s4_tooling/deploy.feature::one app publishes to every rung by κ` | ✅ |
 
 ## MG — migration gates (refactor spec 06; BDD)
 
 | ID | Statement | Enforcement | Witness | Status |
 |---|---|---|---|---|
-| **MG-1** | Every phase boundary P0–P6 is always-green: the full holospaces V&V passes before the next phase starts. | BDD scenario | `s5_migration/always_green.feature::each phase boundary is green` | ⛔ |
-| **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ⛔ |
-| **MG-3** | P0.5 de-risk spike (D28): the Space+Client vertical slice compiles and runs on native AND wasm32, resolving the Send-bound question, before any P1 move. | BDD scenario | `s5_migration/p05_spike.feature::the de-risk spike proves composition before P1` | ⛔ |
-| **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ⛔ |
+| **MG-1** | Every phase boundary P0–P6 is always-green: the full holospaces V&V passes before the next phase starts. | BDD scenario | `s5_migration/always_green.feature::each phase boundary is green` | ✅ |
+| **MG-2** | P0 sync exit criteria (D23) are met before any refactor move: holospaces ports to hologram HEAD, V&V green, bridge tag cut. | BDD scenario | `s5_migration/p0_sync.feature::p0 exit criteria met` | ✅ |
+| **MG-3** | P0.5 de-risk spike (D28): the Space+Client vertical slice compiles and runs on native AND wasm32, resolving the Send-bound question, before any P1 move. | BDD scenario | `s5_migration/p05_spike.feature::the de-risk spike proves composition before P1` | ✅ |
+| **MG-4** | Perf gate (D27): hologram-bench roofline/kernel baselines are captured at P1 preflight and re-run each release; a regression past threshold blocks the release. | BDD scenario | `s5_migration/perf_gate.feature::perf regression blocks a release` | ✅ |
 | **MG-5** | κ-stability (ground rule 5): golden vectors re-derive bit-identically across every crate move; a κ break is a versioned format change, never a move. | BDD scenario (frozen σ-axis + realization κs re-derived vs `hologram-substrate-core`/`-realizations`) | `s5_migration/kappa_stability.feature::golden vectors re-derive bit-identically across moves` | ✅ |
-| **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ⛔ |
+| **MG-6** | P0 gate (D24/D29): written MIT→dual relicense consent and a holospaces-restructuring spec review are recorded before any code moves. | BDD scenario | `s5_migration/p0_license_review.feature::license consent and restructuring review precede any move` | ✅ |
 | **MG-7** | holospaces' V&V is absorbed into hologram's unified conformance ledger (spec 06): its component-conformance (CC) catalog + spec-conformance (CS) suites run under the one meta-gate, each witnessed against its external authority (hash KATs, the native-executor oracle, the substrate TCK, QEMU, Playwright) and never by self-reference; the `vv/` artifacts are content-addressed and verified on import. | BDD scenario | `s5_migration/vv_absorption.feature::the holospaces CC catalog is absorbed into the unified conformance ledger` | ✅ |
 | **MG-8** | holospaces' specification conformance (CS) is absorbed into the unified ledger (spec 06 §docs): the docs V&V (validators V1–V8) runs under the one framework, each CS row witnessed against its external standard (arc42 / C4 / OPM ISO 19450 / ISO 15288) and never by self-reference; the toolchain + pins are content-addressed on import. | BDD scenario | `s5_migration/cs_absorption.feature::the holospaces CS catalog is absorbed into the unified conformance ledger` | ✅ |
 

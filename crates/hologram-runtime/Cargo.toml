@@ -2,7 +2,9 @@
 name = "hologram-runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 description = "Substrate-portable Container Runtime orchestration (spec §4): lifecycle, snapshot-as-κ, capability enforcement over a ContainerEngine seam + KappaStore. Engine backends behind features: engine-wasmtime (std, Wasmtime) and engine-wasmi (no_std, wasmi)."
 
@@ -16,7 +18,7 @@ wasmtime = { workspace = true, optional = true }
 rand_chacha = { version = "0.3", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false, features = ["getrandom"], optional = true }
 # engine-wasmi (no_std, wasmi interpreter)
-wasmi = { version = "2.0.0-beta.2", default-features = false, optional = true }
+wasmi = { version = "=2.0.0-beta.2", default-features = false, optional = true }
 
 [dev-dependencies]
 hologram-tck = { workspace = true }

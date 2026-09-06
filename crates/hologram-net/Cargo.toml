@@ -2,7 +2,9 @@
 name = "hologram-net"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 description = "The uor-native network layer (SPINE-4 KappaSync): bare-metal frame protocol, HTTP-CAS gateway, and κ-XOR Kademlia DHT over TCP. Consolidates the substrate net crates; transports move to spaces in P2 (spec 04)."
 

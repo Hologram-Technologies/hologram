@@ -147,8 +147,11 @@ fn capability_set_decoder_never_panics() {
     let seed = CapabilitySet::new(hologram_space::Capabilities {
         storage_roots: vec![k(b"s0"), k(b"s1")],
         storage_quota_bytes: 1000,
-        network_fetch: true,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
         publish_channels: vec![k(b"pub")],
         subscribe_channels: vec![],
         memory_max_bytes: 2000,

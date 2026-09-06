@@ -202,10 +202,8 @@ pub async fn opfs_gc(pins: JsValue) -> Result<u32, JsValue> {
                 Ok(a) => a,
                 Err(_) => continue,
             };
-            if !reachable.contains(&arr) {
-                if opfs_delete(s).await? {
-                    deleted += 1;
-                }
+            if !reachable.contains(&arr) && opfs_delete(s).await? {
+                deleted += 1;
             }
         }
     }

@@ -305,7 +305,8 @@ fn rm35_then(w: &mut ConformanceWorld) {
 /// Decode a little-endian f32 buffer (the cast-graph output layout).
 fn as_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -507,8 +508,8 @@ async fn rm29_when(w: &mut ConformanceWorld) {
         memory_max_bytes: 1 << 20,
         cpu_time_per_event_ms: 100,
         priority_weight: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
     };
     let caps_k = store
         .put("blake3", &CapabilitySet::new(caps).canonicalize())
@@ -960,8 +961,8 @@ async fn rm25_when(w: &mut ConformanceWorld) {
     let caps = Capabilities {
         storage_roots: Vec::new(),
         storage_quota_bytes: 0,
-        network_fetch: false,
-        network_announce: false,
+        network_fetch_endpoints: vec![],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: 4 << 20,

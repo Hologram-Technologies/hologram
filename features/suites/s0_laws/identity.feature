@@ -1,4 +1,4 @@
-@class:LAW @id:LAW-2 @spec:00-overview @phase:P1 @status:pending
+@class:LAW @id:LAW-2 @spec:00-overview @phase:P1 @status:enforced
 Feature: κ-only identity
   Scenario: no second naming surface
     Given a contract type and a stored realization

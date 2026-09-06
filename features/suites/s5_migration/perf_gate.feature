@@ -1,4 +1,4 @@
-@class:MG @id:MG-4 @spec:06-migration @phase:P1 @status:pending
+@class:MG @id:MG-4 @spec:06-migration @phase:P1 @status:enforced
 Feature: MG-4 — perf release gate
   Scenario: perf regression blocks a release
     Given roofline and kernel baselines captured at P1 preflight

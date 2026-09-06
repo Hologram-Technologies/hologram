@@ -119,10 +119,12 @@ fn decode_blake3(operand: &KappaLabel<LABEL>) -> Result<[u8; 32], CompositionFai
         return Err(CompositionFailure::MalformedOperand);
     }
     let mut raw = [0u8; 32];
-    for (i, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let hi = hex_nibble(pair[0]).ok_or(CompositionFailure::MalformedOperand)?;
-        let lo = hex_nibble(pair[1]).ok_or(CompositionFailure::MalformedOperand)?;
-        raw[i] = (hi << 4) | lo;
+    let bytes = hex.as_bytes();
+    for (i, byte) in raw.iter_mut().enumerate() {
+        let offset = i * 2;
+        let hi = hex_nibble(bytes[offset]).ok_or(CompositionFailure::MalformedOperand)?;
+        let lo = hex_nibble(bytes[offset + 1]).ok_or(CompositionFailure::MalformedOperand)?;
+        *byte = (hi << 4) | lo;
     }
     Ok(raw)
 }

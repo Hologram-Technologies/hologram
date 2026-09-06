@@ -5,6 +5,7 @@
 name = "uor-hologram"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -80,32 +81,32 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.12.1"
+version = "0.13.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 repository = "https://github.com/Hologram-Technologies/hologram"
 
 [workspace.dependencies]
-hologram-types    = { path = "crates/hologram-types", default-features = false }
-hologram-ops      = { path = "crates/hologram-ops", default-features = false }
-hologram-graph    = { path = "crates/hologram-graph", default-features = false }
-hologram-compiler = { path = "crates/hologram-compiler", default-features = false }
-hologram-exec     = { path = "crates/hologram-exec", default-features = false }
-hologram-compute  = { path = "crates/hologram-compute", default-features = false }
-hologram-archive  = { path = "crates/hologram-archive", default-features = false }
-hologram-cli      = { path = "crates/hologram-cli", default-features = false }
-hologram-ffi      = { path = "crates/hologram-ffi", default-features = false }
-hologram-bench    = { path = "crates/hologram-bench", default-features = false }
-hologram-space    = { path = "crates/hologram-space", default-features = false }
+hologram-types    = { version = "=0.13.0", path = "crates/hologram-types", default-features = false }
+hologram-ops      = { version = "=0.13.0", path = "crates/hologram-ops", default-features = false }
+hologram-graph    = { version = "=0.13.0", path = "crates/hologram-graph", default-features = false }
+hologram-compiler = { version = "=0.13.0", path = "crates/hologram-compiler", default-features = false }
+hologram-exec     = { version = "=0.13.0", path = "crates/hologram-exec", default-features = false }
+hologram-compute  = { version = "=0.13.0", path = "crates/hologram-compute", default-features = false }
+hologram-archive  = { version = "=0.13.0", path = "crates/hologram-archive", default-features = false }
+hologram-cli      = { version = "=0.13.0", path = "crates/hologram-cli", default-features = false }
+hologram-ffi      = { version = "=0.13.0", path = "crates/hologram-ffi", default-features = false }
+hologram-bench    = { version = "=0.13.0", path = "crates/hologram-bench", default-features = false }
+hologram-space    = { version = "=0.13.0", path = "crates/hologram-space", default-features = false }
 
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
-hologram-tck            = { path = "crates/hologram-tck", default-features = false }
-hologram-net            = { path = "crates/hologram-net", default-features = false }
-hologram-store          = { path = "crates/hologram-store", default-features = false }
-hologram-runtime        = { path = "crates/hologram-runtime", default-features = false }
-hologram-emulator       = { path = "crates/hologram-emulator", default-features = false }
+hologram-tck            = { version = "=0.13.0", path = "crates/hologram-tck", default-features = false }
+hologram-net            = { version = "=0.13.0", path = "crates/hologram-net", default-features = false }
+hologram-store          = { version = "=0.13.0", path = "crates/hologram-store", default-features = false }
+hologram-runtime        = { version = "=0.13.0", path = "crates/hologram-runtime", default-features = false }
+hologram-emulator       = { version = "=0.13.0", path = "crates/hologram-emulator", default-features = false }
 
 async-trait        = "0.1"
 spin               = { version = "0.9", default-features = false, features = ["spin_mutex"] }
@@ -114,9 +115,7 @@ redb               = "4"
 # second, non-κ naming surface (SPINE-1 violation) — we replaced it with a pure-κ TCP
 # transport: `hologram-net-tcp` (κ-XOR Kademlia, peers identified by `address_bytes(PeerEndpoint)`,
 # verify-on-receipt at every hop). See architecture §11.1.
-serde                   = { version = "1", features = ["derive"] }
-futures            = "0.3"
-wasmtime           = { version = "45", default-features = false, features = ["cranelift", "runtime"] }
+wasmtime           = { version = "=47.0.4", default-features = false, features = ["cranelift", "runtime"] }
 
 uor-foundation     = "0.5.2"
 uor-foundation-sdk = "0.5.2"
@@ -128,12 +127,8 @@ uor-addr           = { version = "0.2.0", default-features = false }
 # no_std + alloc so the portable peer core (wasm32 / bare-metal) links them.
 miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 ruzstd      = "0.7"
-rkyv        = { version = "0.8", features = ["tinyvec-1"] }
 bytemuck    = { version = "1.14", features = ["derive"] }
 smallvec    = "1.13"
-tinyvec     = "1.6"
-rayon       = "1.8"
-parking_lot = "0.12"
 thiserror   = { version = "2", default-features = false }
 clap        = { version = "4", features = ["derive"] }
 tokio       = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -143,13 +138,14 @@ criterion   = { version = "0.5", features = ["html_reports"] }
 libm        = "0.2"
 memmap2     = "0.9"
 tracing     = "0.1"
+sha2        = "0.10"
 hashbrown   = "0.15"
 nom         = { version = "8.0.0", default-features = false, features = ["alloc"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 syn = { version = "2", default-features = false, features = ["clone-impls", "full", "parsing", "printing"] }
-swc_common        = "23.0.0"
-swc_ecma_ast      = "25.0.0"
-swc_ecma_parser   = "41.0.0"
+swc_common        = "26.0.0"
+swc_ecma_ast      = "29.0.0"
+swc_ecma_parser   = "45.1.1"
 
 [profile.release]
 lto = true

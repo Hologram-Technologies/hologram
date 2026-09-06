@@ -184,7 +184,8 @@ fn leased_label_survives_unrelated_walks_and_ages_out_after_release() {
         assert_eq!(sess.resolve(&out[0]).unwrap(), &want[..]);
         lo = out[0];
         other = want
-            .chunks_exact(4)
+            .windows(4)
+            .step_by(4)
             .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
             .collect();
     }

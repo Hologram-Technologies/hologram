@@ -110,8 +110,11 @@ fn caps(quota: u64, roots: Vec<KappaLabel71>) -> Capabilities {
     Capabilities {
         storage_roots: roots,
         storage_quota_bytes: quota,
-        network_fetch: true,
-        network_announce: false,
+        network_fetch_endpoints: vec![hologram_space::NetworkEndpointScope::parse(
+            "https://example.com:443/",
+        )
+        .unwrap()],
+        network_announce_endpoints: vec![],
         publish_channels: Vec::new(),
         subscribe_channels: Vec::new(),
         memory_max_bytes: 0,

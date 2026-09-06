@@ -264,8 +264,8 @@ mod tests {
         Capabilities {
             storage_roots: alloc::vec::Vec::new(),
             storage_quota_bytes: 0,
-            network_fetch: false,
-            network_announce: false,
+            network_fetch_endpoints: vec![],
+            network_announce_endpoints: vec![],
             publish_channels: alloc::vec::Vec::new(),
             subscribe_channels: alloc::vec::Vec::new(),
             memory_max_bytes: 1 << 20,
