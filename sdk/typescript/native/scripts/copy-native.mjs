@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nativeTargetTag } from "./native-target.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = join(here, "..");
@@ -11,7 +12,7 @@ const root = join(pkg, "..", "..", "..");
 // the runtime loader (src/index.ts `targetTag`) picks the matching one. The build platform is
 // self-detected; override via NATIVE_TARGET_TAG where process can't tell (e.g. linux musl built on
 // a gnu runner → `linux-x64-musl`). Must stay in lockstep with the loader's `targetTag()`.
-const tag = process.env.NATIVE_TARGET_TAG || `${process.platform}-${process.arch}`;
+const tag = process.env.NATIVE_TARGET_TAG || nativeTargetTag();
 const source = candidateSources().find((path) => existsSync(path));
 const destination = join(pkg, "dist", `hologram-${tag}.node`);
 

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-06
+
+### Fixed
+- Made the native SDK smoke test load the same platform-specific N-API binary as
+  the shipped package loader, covering Linux, macOS, Windows, and the existing
+  glibc/musl selection instead of requiring the removed `hologram.node` name.
+- Added pinned Node.js 22 tooling to the devcontainer so the native and
+  TypeScript SDK release gates run in the repository's prescribed environment.
+
 ## [0.13.0] - 2026-09-05
 
 ### Added
