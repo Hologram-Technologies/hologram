@@ -1248,6 +1248,313 @@ impl Cpu {
         self.rip
     }
 
+    /// Canonical suspend image for the x86-64 core.  It contains architectural
+    /// CPU state, RAM, interrupt/timer/console state, workspace, and the sparse
+    /// κ-disk.  TLB/fetch caches are reconstructed and live network transports
+    /// reconnect after resume.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.ram.len() + 4096);
+        out.extend_from_slice(b"HGX64SN\0");
+        out.extend_from_slice(&1u32.to_le_bytes());
+        for value in self.r {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [
+            self.rip,
+            self.rflags,
+            self.insns,
+            self.cr0,
+            self.cr2,
+            self.cr3,
+            self.cr4,
+            self.efer,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.int_counts.iter().chain(self.dr.iter()) {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [
+            self.mmu_stats.protection_faults,
+            self.mmu_stats.not_present_faults,
+            self.mmu_stats.tlb_revalidations,
+            self.mmu_stats.tlb_fills,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.xmm {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for seg in self.seg {
+            out.extend_from_slice(&seg.selector.to_le_bytes());
+            out.extend_from_slice(&seg.base.to_le_bytes());
+            out.push(u8::from(seg.long));
+        }
+        out.push(self.cpl);
+        out.push(self.cur_seg.map_or(u8::MAX, |seg| seg as u8));
+        out.push(u8::from(self.rex_present));
+        match self.fault {
+            None => out.push(0),
+            Some(fault) => {
+                out.push(1);
+                out.extend_from_slice(&fault.addr.to_le_bytes());
+                out.extend_from_slice(&fault.error.to_le_bytes());
+            }
+        }
+        match self.sys.as_deref() {
+            None => out.push(0),
+            Some(sys) => {
+                out.push(1);
+                out.extend_from_slice(&(sys.uart.output.len() as u64).to_le_bytes());
+                out.extend_from_slice(&sys.uart.output);
+                out.extend_from_slice(&(sys.uart.input.len() as u64).to_le_bytes());
+                out.extend_from_slice(&sys.uart.input);
+                out.extend_from_slice(&(sys.uart.in_cursor as u64).to_le_bytes());
+                for value in [
+                    sys.uart.lcr,
+                    sys.uart.ier,
+                    sys.uart.mcr,
+                    sys.uart.scratch,
+                    sys.uart.fcr,
+                ] {
+                    out.push(value);
+                }
+                out.extend_from_slice(&sys.uart.divisor.to_le_bytes());
+                out.push(u8::from(sys.uart.thre_pending));
+                for value in sys.uart.dbg {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.idtr.0.to_le_bytes());
+                out.extend_from_slice(&sys.idtr.1.to_le_bytes());
+                out.extend_from_slice(&sys.gdtr.0.to_le_bytes());
+                out.extend_from_slice(&sys.gdtr.1.to_le_bytes());
+                out.extend_from_slice(&sys.tr_base.to_le_bytes());
+                out.extend_from_slice(&(sys.msr.len() as u64).to_le_bytes());
+                for (register, value) in &sys.msr {
+                    out.extend_from_slice(&register.to_le_bytes());
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.pic.mask.to_le_bytes());
+                out.extend_from_slice(&sys.pic.request.to_le_bytes());
+                for value in [
+                    sys.pic.base_master,
+                    sys.pic.base_slave,
+                    sys.pic.init_master,
+                    sys.pic.init_slave,
+                ] {
+                    out.push(value);
+                }
+                out.extend_from_slice(&sys.pit.reload.to_le_bytes());
+                out.extend_from_slice(&sys.pit.counter.to_le_bytes());
+                out.push(u8::from(sys.pit.write_hi));
+                out.push(u8::from(sys.pit.enabled));
+                out.push(u8::from(sys.pit.ch0_periodic));
+                out.extend_from_slice(&sys.pit.ch2_reload.to_le_bytes());
+                out.extend_from_slice(&sys.pit.ch2_counter.to_le_bytes());
+                out.push(u8::from(sys.pit.ch2_write_hi));
+                out.push(u8::from(sys.pit.ch2_gate));
+                out.push(u8::from(sys.pit.ch2_out));
+                for value in [
+                    sys.lapic.svr,
+                    sys.lapic.lvt_timer,
+                    sys.lapic.initial_count,
+                    sys.lapic.current_count,
+                    sys.lapic.divide,
+                    sys.lapic.tpr,
+                ] {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                for value in sys.lapic.irr.into_iter().chain(sys.lapic.isr) {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.ioapic.id.to_le_bytes());
+                out.extend_from_slice(&sys.ioapic.ioregsel.to_le_bytes());
+                for value in sys.ioapic.redir {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.tsc.to_le_bytes());
+                out.push(u8::from(sys.halted));
+                out.extend_from_slice(&sys.rng.to_le_bytes());
+                out.extend_from_slice(&sys.tdiv.to_le_bytes());
+                out.extend_from_slice(&sys.pci_addr.to_le_bytes());
+                super::snapshot_virtio_blk(sys.virtio.as_ref(), &mut out);
+                super::snapshot_virtio_9p(sys.virtio9p.as_ref(), &mut out);
+            }
+        }
+        out.extend_from_slice(&(self.ram.len() as u64).to_le_bytes());
+        out.extend_from_slice(&self.ram);
+        out
+    }
+
+    /// Restore an exact image produced by [`Cpu::snapshot`].  The decoder rejects
+    /// malformed booleans/enums, duplicate registers, non-canonical κ-disks, and
+    /// trailing bytes.
+    pub fn restore(bytes: &[u8]) -> Result<Self, super::SnapshotError> {
+        use super::SnapshotError;
+        let mut rd = super::SnapshotReader::new(bytes);
+        if rd.bytes(8)? != b"HGX64SN\0" || rd.u32()? != 1 {
+            return Err(SnapshotError::Malformed);
+        }
+        let mut cpu = Self::new(0);
+        for value in &mut cpu.r {
+            *value = rd.u64()?;
+        }
+        for field in [
+            &mut cpu.rip,
+            &mut cpu.rflags,
+            &mut cpu.insns,
+            &mut cpu.cr0,
+            &mut cpu.cr2,
+            &mut cpu.cr3,
+            &mut cpu.cr4,
+            &mut cpu.efer,
+        ] {
+            *field = rd.u64()?;
+        }
+        for value in cpu.int_counts.iter_mut().chain(cpu.dr.iter_mut()) {
+            *value = rd.u64()?;
+        }
+        cpu.mmu_stats = MmuStats {
+            protection_faults: rd.u64()?,
+            not_present_faults: rd.u64()?,
+            tlb_revalidations: rd.u64()?,
+            tlb_fills: rd.u64()?,
+        };
+        for value in &mut cpu.xmm {
+            *value = rd.u128()?;
+        }
+        for seg in &mut cpu.seg {
+            seg.selector = rd.u16()?;
+            seg.base = rd.u64()?;
+            seg.long = read_bool(&mut rd)?;
+        }
+        cpu.cpl = rd.u8()?;
+        if cpu.cpl > 3 {
+            return Err(SnapshotError::Malformed);
+        }
+        cpu.cur_seg = match rd.u8()? {
+            0 => Some(SegId::Es),
+            1 => Some(SegId::Cs),
+            2 => Some(SegId::Ss),
+            3 => Some(SegId::Ds),
+            4 => Some(SegId::Fs),
+            5 => Some(SegId::Gs),
+            u8::MAX => None,
+            _ => return Err(SnapshotError::Malformed),
+        };
+        cpu.rex_present = read_bool(&mut rd)?;
+        cpu.fault = match rd.u8()? {
+            0 => None,
+            1 => Some(PageFault {
+                addr: rd.u64()?,
+                error: rd.u64()?,
+            }),
+            _ => return Err(SnapshotError::Malformed),
+        };
+        cpu.sys = match rd.u8()? {
+            0 => None,
+            1 => {
+                let mut sys = Sys::new();
+                let output_len =
+                    usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                sys.uart.output = rd.bytes(output_len)?.to_vec();
+                let input_len = usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                sys.uart.input = rd.bytes(input_len)?.to_vec();
+                sys.uart.in_cursor =
+                    usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                if sys.uart.in_cursor > sys.uart.input.len() {
+                    return Err(SnapshotError::Malformed);
+                }
+                sys.uart.lcr = rd.u8()?;
+                sys.uart.ier = rd.u8()?;
+                sys.uart.mcr = rd.u8()?;
+                sys.uart.scratch = rd.u8()?;
+                sys.uart.fcr = rd.u8()?;
+                sys.uart.divisor = rd.u16()?;
+                sys.uart.thre_pending = read_bool(&mut rd)?;
+                for value in &mut sys.uart.dbg {
+                    *value = rd.u64()?;
+                }
+                sys.idtr = (rd.u64()?, rd.u16()?);
+                sys.gdtr = (rd.u64()?, rd.u16()?);
+                sys.tr_base = rd.u64()?;
+                let msr_count = rd.u64()?;
+                for _ in 0..msr_count {
+                    if sys.msr.insert(rd.u32()?, rd.u64()?).is_some() {
+                        return Err(SnapshotError::Malformed);
+                    }
+                }
+                sys.pic.mask = rd.u16()?;
+                sys.pic.request = rd.u16()?;
+                sys.pic.base_master = rd.u8()?;
+                sys.pic.base_slave = rd.u8()?;
+                sys.pic.init_master = rd.u8()?;
+                sys.pic.init_slave = rd.u8()?;
+                sys.pit.reload = rd.u16()?;
+                sys.pit.counter = rd.u32()?;
+                sys.pit.write_hi = read_bool(&mut rd)?;
+                sys.pit.enabled = read_bool(&mut rd)?;
+                sys.pit.ch0_periodic = read_bool(&mut rd)?;
+                sys.pit.ch2_reload = rd.u16()?;
+                sys.pit.ch2_counter = rd.u32()?;
+                sys.pit.ch2_write_hi = read_bool(&mut rd)?;
+                sys.pit.ch2_gate = read_bool(&mut rd)?;
+                sys.pit.ch2_out = read_bool(&mut rd)?;
+                for field in [
+                    &mut sys.lapic.svr,
+                    &mut sys.lapic.lvt_timer,
+                    &mut sys.lapic.initial_count,
+                    &mut sys.lapic.current_count,
+                    &mut sys.lapic.divide,
+                    &mut sys.lapic.tpr,
+                ] {
+                    *field = rd.u32()?;
+                }
+                for value in sys.lapic.irr.iter_mut().chain(sys.lapic.isr.iter_mut()) {
+                    *value = rd.u64()?;
+                }
+                sys.ioapic.id = rd.u32()?;
+                sys.ioapic.ioregsel = rd.u32()?;
+                for value in &mut sys.ioapic.redir {
+                    *value = rd.u64()?;
+                }
+                sys.tsc = rd.u64()?;
+                sys.halted = read_bool(&mut rd)?;
+                sys.rng = rd.u64()?;
+                sys.tdiv = rd.u64()?;
+                sys.pci_addr = rd.u32()?;
+                sys.virtio = super::restore_virtio_blk(&mut rd)?;
+                sys.virtio9p = super::restore_virtio_9p(&mut rd)?;
+                Some(Box::new(sys))
+            }
+            _ => return Err(SnapshotError::Malformed),
+        };
+        let ram_len = usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+        cpu.ram = rd.bytes(ram_len)?.to_vec();
+        if !rd.rest().is_empty() || cpu.rip > ram_len as u64 {
+            return Err(SnapshotError::Malformed);
+        }
+        cpu.tlb.clear();
+        cpu.tlb.resize(
+            TLB_SETS,
+            TlbEntry {
+                tag: 0,
+                frame: 0,
+                writable: false,
+                user_ok: false,
+                valid: false,
+                pcid: 0,
+                gen: 0,
+                pgen: 0,
+            },
+        );
+        cpu.tlb_gen = 1;
+        cpu.ifetch_gen = 0;
+        cpu.pcid_gen.fill(1);
+        Ok(cpu)
+    }
+
     /// Read `n` bytes of guest virtual memory — a debug peek (e.g. to dump the bytes
     /// of a faulting instruction during emulator bring-up).
     #[must_use]
@@ -6022,6 +6329,14 @@ enum StringOp {
     Lods,
     Scas,
     Cmps,
+}
+
+fn read_bool(r: &mut super::SnapshotReader<'_>) -> Result<bool, super::SnapshotError> {
+    match r.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(super::SnapshotError::Malformed),
+    }
 }
 
 #[cfg(test)]
