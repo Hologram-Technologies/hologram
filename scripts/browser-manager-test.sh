@@ -9,16 +9,25 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CRATE="$ROOT/spaces/holospaces-browser"
 
+case "${HOLOSPACES_BROWSER_ONLY:-}" in
+  ""|cc12|cc31|cc32|cc34|cc42) ;;
+  *) echo "FAIL: unknown HOLOSPACES_BROWSER_ONLY=${HOLOSPACES_BROWSER_ONLY}" >&2; exit 2 ;;
+esac
+
 if ! command -v wasm-pack >/dev/null || ! command -v node >/dev/null; then
-  echo "SKIP: wasm-pack and/or node not available"
-  exit 0
+  echo "FAIL: wasm-pack and node are required" >&2
+  exit 127
 fi
 
 echo "==> generating the .holo fixture (native executor → reference output κ)"
 ( cd "$ROOT" && cargo run -q -p holospaces --example holo_fixture -- "$CRATE/web" )
 
 echo "==> building the browser peer (wasm32-unknown-unknown)"
-wasm-pack build "$CRATE" --release --target web --out-dir web/pkg
+if [ ! -f "$CRATE/web/pkg/holospaces_web_bg.wasm" ]; then
+  wasm-pack build "$CRATE" --release --target web --out-dir web/pkg
+else
+  echo "==> reusing the browser peer built earlier in this V&V run"
+fi
 
 # The workspace fixtures, the same bytes the Pages deploy ships and the browser
 # imports by κ: the devcontainer OS (the pinned CC-11 Linux image + device tree;
@@ -65,23 +74,32 @@ cd "$CRATE/web"
 # Install the declared browser-test dependencies (playwright, @vscode/test-web,
 # vscode-web) in one go — declared in package.json so nothing is pruned by a
 # later ad-hoc install. A real witness installs its prerequisites; it does not skip.
-npm install >/dev/null 2>&1
-npx --yes playwright install chromium chromium-headless-shell >/dev/null 2>&1
+npm ci >/dev/null 2>&1
+npx --no-install playwright install chromium chromium-headless-shell >/dev/null 2>&1
 
-echo "==> running the Platform Manager console test in Chromium (CC-12)"
-node manager-test.mjs
+run_selected() {
+  local id="$1" description="$2" script="$3"
+  if [ -z "${HOLOSPACES_BROWSER_ONLY:-}" ] || [ "$HOLOSPACES_BROWSER_ONLY" = "$id" ]; then
+    echo "==> $description"
+    node "$script"
+  fi
+}
+
+run_selected cc12 "running the Platform Manager console test in Chromium (CC-12)" manager-test.mjs
+run_selected cc31 "running the devcontainer resume test in Chromium (CC-31: suspend → κ snapshot → OPFS reload → verified resume)" resume-test.mjs
+run_selected cc32 "running the multi-holospace snapshot-keying test (CC-32: distinct identity κ values map to disjoint durable slots)" snapshot-keying-test.mjs
+run_selected cc34 "running the remote LSP-over-bridge test in Chromium (CC-34: holospaces serves editor capability from the devcontainer)" lsp-test.mjs
+run_selected cc42 "running the deployed browser OCI provision-to-boot manager test (CC-42)" manager-test.mjs
+
+if [ -n "${HOLOSPACES_BROWSER_ONLY:-}" ]; then
+  exit 0
+fi
 
 echo "==> running the VS Code workspace test in Chromium (CC-13: κ-verified Monaco + xterm.js, real OS)"
 node workspace-test.mjs
 
 echo "==> running the devcontainer boot test in Chromium (CC-14/CC-20: assemble OCI image + virtio-blk boot in the browser)"
 node devcontainer-test.mjs
-
-echo "==> running the devcontainer resume test in Chromium (CC-30/CC-31: suspend → κ snapshot → gzip → OPFS → reload → verify(L5) → resume, workspace intact)"
-node resume-test.mjs
-
-echo "==> running the multi-holospace snapshot-keying test (CC-31: each holospace's resume state is keyed by its identity κ — distinct holospaces never share an OPFS slot/bleed)"
-node snapshot-keying-test.mjs
 
 echo "==> running the raw terminal test in Chromium (CC-11: raw keystrokes echoed/edited by the guest tty, Ctrl-C interrupts, delta streaming)"
 node terminal-test.mjs
@@ -94,9 +112,6 @@ node cc45-x64-boot-test.mjs
 
 echo "==> running the DEPLOYED provision->boot test in Chromium (a registry image pulled via DevcontainerProvision, assembled SPARSE into OPFS via the deployed assembleIntoOpfs, and BOOTED to userspace — the exact deployed provisioning path no other witness exercised; the regression guard for 'the deploy can't boot a real image')"
 node provision-boot-test.mjs
-
-echo "==> running the LSP-over-bridge test in Chromium (CC-18 deployed / ADR-020: real language intelligence from a server in the devcontainer OS, over the in-process substrate bridge — no Node)"
-node lsp-test.mjs
 
 echo "==> running the devcontainer network test in Chromium (CC-16: virtio-net + userspace NAT, egress tunnelled over a WebSocket relay)"
 node devcontainer-net-test.mjs
