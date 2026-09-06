@@ -61,7 +61,7 @@ x86_64) into `~/.local/bin`. Alternatives:
 
 ```bash
 # pin a version, or install elsewhere (see `install.sh --help`)
-curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh -s -- --version v0.13.0
+curl -fsSL https://raw.githubusercontent.com/Hologram-Technologies/hologram/main/install.sh | sh -s -- --version v0.13.1
 
 # build from source (any platform; needs Rust — no clone required)
 cargo install --git https://github.com/Hologram-Technologies/hologram --locked hologram-cli

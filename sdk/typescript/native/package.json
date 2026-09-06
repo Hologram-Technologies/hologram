@@ -1,6 +1,6 @@
 {
   "name": "@tryhologram/native",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Node native binding adapter for the Hologram TypeScript SDK",
   "license": "MIT OR Apache-2.0",
   "type": "module",
@@ -27,14 +27,14 @@
     "build:all": "npm run build && npm run build:native",
     "prepack": "npm run build:all",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke:native": "npm run build:all && node test/smoke-addon.mjs",
+    "smoke:native": "node test/native-target.mjs && npm run build:all && node test/smoke-addon.mjs",
     "pack:check": "npm pack --dry-run"
   },
   "engines": {
     "node": ">=18"
   },
   "peerDependencies": {
-    "@tryhologram/sdk": "0.13.0"
+    "@tryhologram/sdk": "0.13.1"
   },
   "devDependencies": {
     "typescript": ">=5.4"

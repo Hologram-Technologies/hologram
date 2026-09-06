@@ -1,10 +1,11 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nativeTargetTag } from "../scripts/native-target.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const addon = require(join(here, "..", "dist", "hologram.node"));
+const addon = require(join(here, "..", "dist", `hologram-${nativeTargetTag()}.node`));
 
 assert(addon.abiVersion() === 1, "ABI version");
 assert(addon.featureSupported("source-builder.output-alias") === 1, "output alias feature");

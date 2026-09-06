@@ -81,7 +81,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.13.1"
 edition = "2021"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
@@ -89,24 +89,24 @@ authors = ["UOR Foundation"]
 repository = "https://github.com/Hologram-Technologies/hologram"
 
 [workspace.dependencies]
-hologram-types    = { version = "=0.13.0", path = "crates/hologram-types", default-features = false }
-hologram-ops      = { version = "=0.13.0", path = "crates/hologram-ops", default-features = false }
-hologram-graph    = { version = "=0.13.0", path = "crates/hologram-graph", default-features = false }
-hologram-compiler = { version = "=0.13.0", path = "crates/hologram-compiler", default-features = false }
-hologram-exec     = { version = "=0.13.0", path = "crates/hologram-exec", default-features = false }
-hologram-compute  = { version = "=0.13.0", path = "crates/hologram-compute", default-features = false }
-hologram-archive  = { version = "=0.13.0", path = "crates/hologram-archive", default-features = false }
-hologram-cli      = { version = "=0.13.0", path = "crates/hologram-cli", default-features = false }
-hologram-ffi      = { version = "=0.13.0", path = "crates/hologram-ffi", default-features = false }
-hologram-bench    = { version = "=0.13.0", path = "crates/hologram-bench", default-features = false }
-hologram-space    = { version = "=0.13.0", path = "crates/hologram-space", default-features = false }
+hologram-types    = { version = "=0.13.1", path = "crates/hologram-types", default-features = false }
+hologram-ops      = { version = "=0.13.1", path = "crates/hologram-ops", default-features = false }
+hologram-graph    = { version = "=0.13.1", path = "crates/hologram-graph", default-features = false }
+hologram-compiler = { version = "=0.13.1", path = "crates/hologram-compiler", default-features = false }
+hologram-exec     = { version = "=0.13.1", path = "crates/hologram-exec", default-features = false }
+hologram-compute  = { version = "=0.13.1", path = "crates/hologram-compute", default-features = false }
+hologram-archive  = { version = "=0.13.1", path = "crates/hologram-archive", default-features = false }
+hologram-cli      = { version = "=0.13.1", path = "crates/hologram-cli", default-features = false }
+hologram-ffi      = { version = "=0.13.1", path = "crates/hologram-ffi", default-features = false }
+hologram-bench    = { version = "=0.13.1", path = "crates/hologram-bench", default-features = false }
+hologram-space    = { version = "=0.13.1", path = "crates/hologram-space", default-features = false }
 
 # Deployment substrate (container/storage/network) — see specs/docs/container-substrate-architecture.md
-hologram-tck            = { version = "=0.13.0", path = "crates/hologram-tck", default-features = false }
-hologram-net            = { version = "=0.13.0", path = "crates/hologram-net", default-features = false }
-hologram-store          = { version = "=0.13.0", path = "crates/hologram-store", default-features = false }
-hologram-runtime        = { version = "=0.13.0", path = "crates/hologram-runtime", default-features = false }
-hologram-emulator       = { version = "=0.13.0", path = "crates/hologram-emulator", default-features = false }
+hologram-tck            = { version = "=0.13.1", path = "crates/hologram-tck", default-features = false }
+hologram-net            = { version = "=0.13.1", path = "crates/hologram-net", default-features = false }
+hologram-store          = { version = "=0.13.1", path = "crates/hologram-store", default-features = false }
+hologram-runtime        = { version = "=0.13.1", path = "crates/hologram-runtime", default-features = false }
+hologram-emulator       = { version = "=0.13.1", path = "crates/hologram-emulator", default-features = false }
 
 async-trait        = "0.1"
 spin               = { version = "0.9", default-features = false, features = ["spin_mutex"] }

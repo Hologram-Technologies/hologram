@@ -169,7 +169,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hologram-efi"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "blake3",
  "hologram-space",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-space"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-store"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "hashbrown 0.15.5",
  "hologram-space",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "hologram-types"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "uor-foundation",
  "uor-foundation-sdk",
