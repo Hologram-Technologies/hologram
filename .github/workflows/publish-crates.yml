@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Print the computed publish order only (no publish)"
+        description: "Package and checksum-preflight the complete graph (no publish)"
         type: boolean
         default: false
 

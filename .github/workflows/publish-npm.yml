@@ -57,15 +57,17 @@ jobs:
         # already probes for it, so it can be added as a 5th leg later without a code change.
         os: [ubuntu-latest, macos-15-intel, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: 1.98.1
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           cache-on-failure: true
           key: publish-npm-native-${{ matrix.os }}
@@ -85,7 +87,7 @@ jobs:
         run: npm run build:native
 
       - name: Upload per-platform addon
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: native-addon-${{ matrix.os }}
           path: sdk/typescript/native/dist/*.node
@@ -99,21 +101,22 @@ jobs:
       contents: read
       id-token: write # OIDC trusted publishing + provenance attestation
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # No `registry-url:` — that would seed .npmrc with an empty `_authToken` line that can shadow
       # OIDC. Auth is set explicitly in the publish step (OIDC by default; NPM_TOKEN when bootstrapping).
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
 
       # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10.x.
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@12.0.2
 
       # Only @tryhologram/wasm's check:driver touches cargo (cargo check --target wasm32).
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
         with:
+          toolchain: 1.98.1
           targets: wasm32-unknown-unknown
 
       - name: Install deps (all three packages)
@@ -128,7 +131,7 @@ jobs:
 
       # --- @tryhologram/native — assemble the bundle: all per-platform .node + tsc output. ---
       - name: Gather every platform's addon into native/dist
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: native-addon-*
           merge-multiple: true
@@ -149,7 +152,7 @@ jobs:
           npm run build --prefix sdk/typescript/wasm
           npm run check:driver --prefix sdk/typescript/wasm
 
-      - name: Publish (or dry-run)
+      - name: Preflight and publish idempotently (or dry-run)
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           # Steady state: unset → OIDC trusted publishing. Bootstrap: set to a granular Automation
@@ -165,20 +168,6 @@ jobs:
               echo "Publishing via OIDC trusted publishing (no token; provenance is automatic)."
             fi
           fi
-          ship() {
-            dir="$1"
-            # --ignore-scripts on BOTH paths: dist is already built above, so skip prepack's cargo
-            # rebuild — and it keeps the dry-run a faithful mirror of the real publish.
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "::group::pack $dir (dry-run)"
-              npm pack --dry-run --ignore-scripts "./$dir"
-              echo "::endgroup::"
-            else
-              # No --provenance: it's automatic under OIDC, and unwanted for a token bootstrap.
-              npm publish "./$dir" --access public --ignore-scripts
-            fi
-          }
-          # sdk first: native + wasm declare it as an exact-version peer.
-          ship sdk/typescript
-          ship sdk/typescript/native
-          ship sdk/typescript/wasm
+          # Packs all three artifacts and checks any already-public immutable integrity values before
+          # the first write. Retries skip exact matches and still publish sdk before its dependents.
+          node scripts/publish-npm.mjs
