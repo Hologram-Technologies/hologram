@@ -13,7 +13,9 @@ if (mode === "build") {
   cargoArgs.push("--release");
 }
 
-const rustc = spawnSync("rustup", ["which", "rustc", "--toolchain", "stable"], {
+// Resolve the workflow/devcontainer's active pinned toolchain. Hardcoding the floating `stable`
+// alias bypasses both the selected compiler and its installed wasm target.
+const rustc = spawnSync("rustup", ["which", "rustc"], {
   encoding: "utf8",
 });
 
@@ -22,7 +24,7 @@ if (rustc.status !== 0) {
   process.exit(rustc.status ?? 1);
 }
 
-const result = spawnSync("rustup", ["run", "stable", "cargo", ...cargoArgs], {
+const result = spawnSync("cargo", cargoArgs, {
   env: { ...process.env, RUSTC: rustc.stdout.trim() },
   stdio: "inherit",
 });

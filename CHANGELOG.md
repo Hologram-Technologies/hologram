@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source archive and commit manifest covered by GitHub OIDC/Sigstore build
   provenance; all third-party release actions and toolchains are commit/version
   pinned.
+- Made the TypeScript WASM package build use the active pinned Rust toolchain
+  instead of silently switching to the floating `stable` alias.
 
 ## [0.13.1] - 2026-09-06
 
