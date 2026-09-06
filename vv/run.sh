@@ -13,35 +13,27 @@
 #   CC-* Component conformance — each component vs its external authority. Each
 #        suite is added here as its component is implemented (conformance-driven).
 # A production V&V result is closed: every catalogued requirement must have an
-# executed green witness. Targets, quarantines, and pending rows are failures.
+# executed green witness. Targets, quarantines, and unwitnessed rows are failures.
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "═══ holospaces V&V ═══"
 echo
-# CS-* (specification conformance) runs the docs V&V (specs/holospaces/scripts/build.sh). The docs
-# source is now in-tree (Phase G1), but the CS build needs the docs toolchain (JDK 21 / Ruby 3 /
-# Structurizr / cmark-gfm / pandoc), so CS stays gated off by default (CC_ONLY=1) for local/CC runs.
-# The docs-conformance CI job (Phase G4) provisions the toolchain and sets CC_ONLY=0 to run CS+CC.
-if [ "${CC_ONLY:-1}" = "1" ]; then
-    echo "── CS-* Specification conformance — SKIPPED (CC_ONLY=1; docs toolchain not present) ──"
-    spec_rc=0
-    spec_skipped=1
-else
-    echo "── CS-* Specification conformance (docs vs arc42 / OPM ISO 19450 / ISO 15288) ──"
-    "$ROOT/specs/holospaces/scripts/build.sh"
-    spec_rc=$?
-    spec_skipped=0
-fi
+# A production V&V invocation is indivisible: specification conformance and
+# component conformance always run together.  A missing docs toolchain is a
+# failed prerequisite, never permission to emit a partial green result.
+echo "── CS-* Specification conformance (docs vs arc42 / OPM ISO 19450 / ISO 15288) ──"
+"$ROOT/specs/holospaces/scripts/build.sh"
+spec_rc=$?
 echo
 
 echo "── CC-* Component conformance (components vs their external authorities) ──"
 # Each suite in vv/suites/ witnesses one implemented component against its
 # imported external authority (provenance in vv/PROVENANCE.md). A component
-# whose CC-* row has no suite is not yet implemented: it is reported as
-# not-yet-witnessed (the catalog row is the authoritative requirement), not a
-# failure. Adding a component without its CC-* witness is a defect.
+# whose CC-* row has no suite cannot pass: it is reported as unwitnessed and
+# makes the production V&V invocation fail. Adding a component without its
+# CC-* witness is a defect.
 cc_rc=0
 witnessed=""
 for suite in "$ROOT"/vv/suites/*.sh; do
@@ -84,34 +76,32 @@ fi
 echo
 
 # CC rows defined in the catalog (arc42 ch.10); those without a green suite
-# above are not-yet-witnessed.
+# above are unwitnessed and fail this invocation.
 all_cc="CC-1 CC-2 CC-3 CC-4 CC-5 CC-6 CC-7 CC-8 CC-9 CC-10 CC-11 CC-12 CC-13 CC-14 CC-15 CC-16 CC-17 CC-18 CC-19 CC-20 CC-21 CC-22 CC-23 CC-24 CC-25 CC-26 CC-27 CC-28 CC-29 CC-30 CC-31 CC-32 CC-33 CC-34 CC-35 CC-36 CC-37 CC-38 CC-39 CC-40 CC-41 CC-42 CC-43 CC-44 CC-45 CC-46 CC-47 CC-48 CC-49 CC-50 CC-51 CC-52 CC-53"
-pending=""
+unwitnessed=""
 for cc in $all_cc; do
     cc_key="${cc//-/}"        # CC-1 -> CC1
     cc_key="${cc_key,,}"      # CC1  -> cc1 (matches suite prefix)
     case " $witnessed " in
         *" $cc_key "*) : ;;
-        *) pending="$pending $cc" ;;
+        *) unwitnessed="$unwitnessed $cc" ;;
     esac
 done
 
 echo "── Summary ──"
-if [ "${spec_skipped:-0}" = "1" ]; then
-    echo "CS-1..CS-6   SKIPPED  (CC_ONLY=1 — docs V&V absorbed in MG-7 Phase G)"
-elif [ "$spec_rc" -eq 0 ]; then
+if [ "$spec_rc" -eq 0 ]; then
     echo "CS-1..CS-6   PASS  (specification conforms to its external standards)"
 else
     echo "CS-1..CS-6   FAIL  (see the build output above)"
 fi
 echo "CC witnessed:$witnessed  (component(s) validated against imported authorities)"
-echo "CC unwitnessed:${pending:- none}"
+echo "CC unwitnessed:${unwitnessed:- none}"
 [ "$port_rc" -eq 0 ] && echo "Portability  PASS  (native · browser · bare-metal peer builds)" || echo "Portability  FAIL"
 echo
-if [ "$spec_rc" -eq 0 ] && [ "$cc_rc" -eq 0 ] && [ "$port_rc" -eq 0 ] && [ -z "$pending" ]; then
+if [ "$spec_rc" -eq 0 ] && [ "$cc_rc" -eq 0 ] && [ "$port_rc" -eq 0 ] && [ -z "$unwitnessed" ]; then
     echo "V&V: GREEN (specification conformance + all implemented components + portability)."
 else
     echo "V&V: FAILED."
 fi
-[ "$spec_rc" -eq 0 ] && [ "$cc_rc" -eq 0 ] && [ "$port_rc" -eq 0 ] && [ -z "$pending" ]
+[ "$spec_rc" -eq 0 ] && [ "$cc_rc" -eq 0 ] && [ "$port_rc" -eq 0 ] && [ -z "$unwitnessed" ]
 exit $?

@@ -32,8 +32,8 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
 
-if ! command -v node >/dev/null 2>&1; then echo "cc49-webrtc-content-net: SKIP — node unavailable" >&2; exit 127; fi
-if ! command -v wasm-pack >/dev/null 2>&1; then echo "cc49-webrtc-content-net: SKIP — wasm-pack unavailable" >&2; exit 127; fi
+if ! command -v node >/dev/null 2>&1; then echo "cc49-webrtc-content-net: FAIL — node unavailable" >&2; exit 127; fi
+if ! command -v wasm-pack >/dev/null 2>&1; then echo "cc49-webrtc-content-net: FAIL — wasm-pack unavailable" >&2; exit 127; fi
 
 # The wasm peer carrying the content-network seam, the WebRTC transport
 # (WebRtcLink), the PRODUCT pump (Console::cn_pump) and the announce/discover

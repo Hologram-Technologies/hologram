@@ -35,7 +35,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC45="$ROOT/vv/artifacts/cc45"
 
-command -v cargo >/dev/null 2>&1 || { echo "cc45-x64-devcontainer: SKIP — cargo absent"; exit 127; }
+command -v cargo >/dev/null 2>&1 || { echo "cc45-x64-devcontainer: FAIL — cargo absent"; exit 127; }
+
+# The merged repository's own digest-pinned devcontainer declaration is a live
+# input to this suite, not an optional fixture. Parse its image, features,
+# lifecycle, and editor customization through the production ingestor.
+cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
+    --test cc44_x64_boot holospaces_parses_its_own_unmodified_devcontainer_config \
+    -- --nocapture || exit 1
 
 # ── Section B: the build-capable disk (occupancy-index boot, O(content)) ──────
 # LIVE: an ≥ 8 GiB disk is declarable and boots promptly because only occupied
@@ -185,8 +192,8 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
     exit 0
 fi
 
-echo "cc45-x64-devcontainer: RED — build-capable disk (occupancy index) is LIVE; full bar pending."
-echo "  done:   occupancy-index boot path — an ≥ 8 GiB disk boots O(content) (witnesses above, green)."
-echo "  needed: the stock linux-amd64 busybox fixture (vv/artifacts/cc45/, run its build.sh) so the"
-echo "          differential witnesses + qemu-system-x86_64 oracle run. See issue #13 / CC-45."
+echo "cc45-x64-devcontainer: FAIL — required CC-45 artifact closure is absent." >&2
+echo "  passed: occupancy-index boot path — an ≥ 8 GiB disk boots O(content)." >&2
+echo "  missing: stock linux-amd64 busybox fixture (vv/artifacts/cc45/; run its build.sh)," >&2
+echo "           required for differential witnesses and the qemu-system-x86_64 oracle." >&2
 exit 1

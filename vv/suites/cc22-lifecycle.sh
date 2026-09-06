@@ -14,7 +14,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc22-lifecycle: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc22-lifecycle: FAIL — cargo unavailable" >&2; exit 127; fi
 
 # (1) build-from-config + (2) ext4 injection (e2fsprogs oracle) — deterministic.
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release \

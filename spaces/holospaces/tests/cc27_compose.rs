@@ -32,8 +32,7 @@ fn art() -> PathBuf {
 #[test]
 fn the_import_resolves_the_compose_service_from_a_repo() {
     if !art().join("cc27/repo.tar.gz").exists() {
-        eprintln!("SKIP cc27 the_import_resolves_the_compose_service_from_a_repo: fixture vv/artifacts/cc27 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc27 the_import_resolves_the_compose_service_from_a_repo: fixture vv/artifacts/cc27 absent (holospaces vv/ tree not imported)");
     }
     let archive = std::fs::read(art().join("cc27/repo.tar.gz")).unwrap();
     let layer = Layer {

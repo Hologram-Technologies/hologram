@@ -113,8 +113,7 @@ fn assemble_personalized(store: &MemKappaStore, p: &Personalization) -> Vec<u8> 
 #[test]
 fn the_operators_dotfiles_are_injected_into_the_assembled_rootfs() {
     if !have("e2fsck") || !have("debugfs") {
-        eprintln!("SKIP: e2fsprogs (e2fsck/debugfs) not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs (e2fsck/debugfs) not available");
     }
     let p = operator_personalization();
     let store = MemKappaStore::new();

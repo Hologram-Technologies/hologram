@@ -10,7 +10,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc26-build: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc26-build: FAIL — cargo unavailable" >&2; exit 127; fi
 
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release --lib dockerfile -- --nocapture || exit 1
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release --test cc26_build -- --nocapture || exit 1

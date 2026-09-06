@@ -162,7 +162,7 @@ jobs:
           working-directory: specs/holospaces
           bundler-cache: true
 
-      - name: Install QEMU (riscv64 · aarch64 · x86-64 · user) + e2fsprogs + OVMF
+      - name: Install V&V system oracles and packaging tools
         run: |
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
                      /etc/apt/sources.list.d/azure-cli.list \
@@ -170,7 +170,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qemu-system-misc qemu-system-arm qemu-system-x86 qemu-user \
-            e2fsprogs ovmf gcc-aarch64-linux-gnu
+            e2fsprogs ovmf gcc-aarch64-linux-gnu device-tree-compiler zip unzip
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
@@ -205,8 +205,6 @@ jobs:
         run: bash scripts/install-tools.sh
 
       - name: Run closed V&V (all CS + every CC · performance · portability)
-        env:
-          CC_ONLY: "0"
         run: bash vv/run.sh
 
       - name: holospaces lib/unit tests (excluded from the generic matrix test)

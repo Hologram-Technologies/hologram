@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC37="$ROOT/vv/artifacts/cc37"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc37-aarch64-devcontainer: SKIP — cargo not available in this environment" >&2
+    echo "cc37-aarch64-devcontainer: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 
@@ -61,9 +61,12 @@ if command -v qemu-system-aarch64 >/dev/null 2>&1; then
             rm -rf "$tmp"; exit 1
         fi
     else
-        echo "cc37-aarch64-devcontainer: (rootfs export helper unavailable — qemu differential skipped)"
+        echo "cc37-aarch64-devcontainer: FAIL — rootfs export helper unavailable" >&2
+        rm -rf "$tmp"
+        exit 1
     fi
     rm -rf "$tmp"
 else
-    echo "cc37-aarch64-devcontainer: qemu-system-aarch64 absent — differential pinned by the in-emulator witness (per cc37/SOURCE.txt)"
+    echo "cc37-aarch64-devcontainer: FAIL — qemu-system-aarch64 is required for the differential witness" >&2
+    exit 127
 fi

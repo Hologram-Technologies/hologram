@@ -14,7 +14,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc18-lsp: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc18-lsp: FAIL — cargo unavailable" >&2; exit 127; fi
 
 # (1) the LSP session is spec-valid + the language server binary + session are in
 # the assembled ext4 rootfs (e2fsprogs oracle) — deterministic.

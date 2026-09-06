@@ -14,7 +14,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "perf-throughput: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "perf-throughput: FAIL — cargo unavailable" >&2; exit 127; fi
 cargo test --release --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --test p2_throughput emulator_boots_real_linux_throughput \
     -- --ignored --nocapture || exit 1

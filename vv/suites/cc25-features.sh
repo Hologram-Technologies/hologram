@@ -15,7 +15,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc25-features: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc25-features: FAIL — cargo unavailable" >&2; exit 127; fi
 
 # (1) the feature is parsed + honoured: the /init installs it before the lifecycle,
 # and the feature's files are in the assembled ext4 rootfs (e2fsprogs) — deterministic.

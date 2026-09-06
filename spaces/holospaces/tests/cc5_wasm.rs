@@ -16,8 +16,8 @@
 //! * `(assert_invalid …)` / `(assert_malformed …)` — must be **rejected**
 //!   (at decode or validation).
 //!
-//! Execution directives (`assert_return`, `invoke`, …) are out of scope for
-//! module validation and are skipped.
+//! Execution directives (`assert_return`, `invoke`, …) are outside this
+//! module-validation witness; execution has its own conformance suites.
 //!
 //! Run by `vv/run.sh`; also `cargo test -p holospaces --test cc5_wasm`.
 
@@ -55,12 +55,9 @@ fn drive_wast(file: &str) -> Counts {
     for directive in wast.directives {
         match directive {
             WastDirective::Module(mut q) | WastDirective::ModuleDefinition(mut q) => {
-                let bytes = match q.encode() {
-                    Ok(b) => b,
-                    // A handful of spec modules are quoted/binary forms not meant
-                    // to round-trip through the text encoder; skip those.
-                    Err(_) => continue,
-                };
+                let bytes = q
+                    .encode()
+                    .unwrap_or_else(|e| panic!("{file}: encode spec-valid module: {e}"));
                 assert!(
                     validate(&bytes).is_ok(),
                     "{file}: a spec-valid module was rejected by holospaces' validator"
@@ -93,8 +90,7 @@ fn drive_wast(file: &str) -> Counts {
 #[test]
 fn validator_agrees_with_the_webassembly_spec_suite() {
     if !artifact_dir().join("func.wast").exists() {
-        eprintln!("SKIP cc5 validator_agrees_with_the_webassembly_spec_suite: fixture vv/artifacts/cc5 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc5 validator_agrees_with_the_webassembly_spec_suite: fixture vv/artifacts/cc5 absent (holospaces vv/ tree not imported)");
     }
     let mut valid = 0;
     let mut rejected = 0;

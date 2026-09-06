@@ -20,7 +20,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
 
-if ! command -v node >/dev/null 2>&1; then echo "cc17-workbench-holospace: SKIP — node unavailable" >&2; exit 127; fi
+if ! command -v node >/dev/null 2>&1; then echo "cc17-workbench-holospace: FAIL — node unavailable" >&2; exit 127; fi
 # The wasm peer the holospace-fs extension boots in the workbench's extension host.
 if [ ! -f "$WEB/pkg/holospaces_web_bg.wasm" ]; then
   "$ROOT/vv/lib/build-wasm-peer.sh" "$ROOT" || exit 1
