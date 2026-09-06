@@ -208,6 +208,24 @@ enum AppCommand {
         #[arg(long)]
         store: std::path::PathBuf,
     },
+    /// Publish one exact `.holo`: persist and pin its bytes, announce its κ through the native
+    /// network, and optionally emit a static browser boot site bound to those same bytes.
+    Publish {
+        /// Input `.holo` archive.
+        archive: std::path::PathBuf,
+        /// Native redb store used by this publishing node.
+        #[arg(long, default_value = "hologram-store.redb")]
+        store: std::path::PathBuf,
+        /// Emit a self-contained static entry site into this directory.
+        #[arg(long)]
+        page: Option<std::path::PathBuf>,
+        /// Native κ-network address used for the announcement.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        listen: String,
+        /// Existing native κ-network peer(s) that receive the provider announcement.
+        #[arg(long = "peer")]
+        peers: Vec<String>,
+    },
 }
 
 /// Parse command-line arguments from the process environment and run the CLI.
@@ -553,7 +571,132 @@ fn run_app(app_cli: AppCli) -> Result<(), CompileError> {
             output,
             store,
         } => app_fat(&input, &output, &store),
+        AppCommand::Publish {
+            archive,
+            store,
+            page,
+            listen,
+            peers,
+        } => app_publish(&archive, &store, page.as_deref(), &listen, &peers),
     }
+}
+
+/// Immutable browser engine bytes shipped by the accepted PrismPM dependency commit. The boot
+/// page fetches them by commit, verifies both SHA-256 digests before evaluation, then rewrites the
+/// generated wasm URL to the already-verified blob. This prevents a CDN or mutable branch from
+/// becoming part of the execution trust boundary.
+const BROWSER_ENGINE_COMMIT: &str = "2bda6a9a9476872dade705bd61ece4209607f6da";
+const BROWSER_ENGINE_JS_SHA256: &str =
+    "7c319a52c0c303a92c2ab7506db634148035d85c63d5b3d99d973f7c547619af";
+const BROWSER_ENGINE_WASM_SHA256: &str =
+    "635242780686453c18a4e5a2dcca990e5b5ab587c828e21eca13176379d0e34f";
+
+fn app_publish(
+    archive: &Path,
+    store_path: &Path,
+    page: Option<&Path>,
+    listen: &str,
+    peers: &[String],
+) -> Result<(), CompileError> {
+    use hologram_space::{KappaStore, KappaSync};
+    use hologram_store::native::NativeKappaStore;
+    use sha2::{Digest, Sha256};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    let bytes = std::fs::read(archive).map_err(|_| CompileError::SourceParse("read archive"))?;
+    // Reject arbitrary content wearing a `.holo` extension before publishing it.
+    hologram_archive::HoloLoader::from_bytes(&bytes)
+        .map_err(CompileError::Archive)?
+        .into_plan()
+        .map_err(CompileError::Archive)?;
+
+    let store = Arc::new(
+        NativeKappaStore::open(store_path)
+            .map_err(|_| CompileError::SourceParse("open publish store"))?,
+    );
+    let kappa = store
+        .put("blake3", &bytes)
+        .map_err(|_| CompileError::SourceParse("store published archive"))?;
+    store
+        .pin(&kappa)
+        .map_err(|_| CompileError::SourceParse("pin published archive"))?;
+
+    let listen_addr: SocketAddr = listen
+        .parse()
+        .map_err(|_| CompileError::SourceParse("invalid publish listen address"))?;
+    let peer_addrs = peers
+        .iter()
+        .map(|peer| {
+            peer.parse::<SocketAddr>()
+                .map_err(|_| CompileError::SourceParse("invalid publish peer address"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| CompileError::SourceParse("create publish network runtime"))?;
+    let announced_from = runtime.block_on(async {
+        let sync = hologram_net::tcp::TcpKappaSync::bind(listen_addr, store.clone())
+            .await
+            .map_err(|_| CompileError::SourceParse("bind publish network"))?;
+        for peer in peer_addrs {
+            sync.add_peer_addr(peer)
+                .await
+                .map_err(|_| CompileError::SourceParse("connect publish peer"))?;
+        }
+        sync.announce(&kappa).await;
+        Ok::<_, CompileError>(sync.local_addr())
+    })?;
+
+    if let Some(page_dir) = page {
+        std::fs::create_dir_all(page_dir)
+            .map_err(|_| CompileError::SourceParse("create publish page directory"))?;
+        std::fs::write(page_dir.join("app.holo"), &bytes)
+            .map_err(|_| CompileError::SourceParse("write published app"))?;
+        let archive_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let html = browser_boot_page(kappa.as_str(), &archive_sha256);
+        std::fs::write(page_dir.join("index.html"), html)
+            .map_err(|_| CompileError::SourceParse("write browser boot page"))?;
+    }
+
+    println!("stored κ={}", kappa.as_str());
+    println!("announced from: {announced_from}");
+    if let Some(page_dir) = page {
+        println!("entry page: {}/", page_dir.display());
+    }
+    Ok(())
+}
+
+fn browser_boot_page(kappa: &str, archive_sha256: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="hologram-app" content="{kappa}">
+<title>Hologram {kappa}</title>
+<style>body{{font:16px system-ui;max-width:52rem;margin:3rem auto;padding:0 1rem}}code,textarea{{font-family:ui-monospace,monospace}}textarea{{width:100%;min-height:5rem}}#status{{white-space:pre-wrap}}</style>
+<h1>Hologram application</h1><p>κ: <code>{kappa}</code></p>
+<label>Input bytes (hex)<textarea id="input"></textarea></label><button id="run" disabled>Run</button>
+<pre id="status">Verifying application and browser engine…</pre>
+<script type="module">
+const COMMIT='{commit}', BASE=`https://cdn.jsdelivr.net/gh/Hologram-Technologies/hologram@${{COMMIT}}/site/public/demo/pkg/`;
+const expected={{app:'{archive_sha256}',js:'{js_sha}',wasm:'{wasm_sha}'}};
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+async function checked(url,want){{const b=await (await fetch(url)).arrayBuffer();if(hex(await crypto.subtle.digest('SHA-256',b))!==want)throw new Error(`digest mismatch: ${{url}}`);return b}}
+const [app,js,wasm]=await Promise.all([checked('./app.holo',expected.app),checked(BASE+'hologram_ffi.js',expected.js),checked(BASE+'hologram_ffi_bg.wasm',expected.wasm)]);
+const wasmUrl=URL.createObjectURL(new Blob([wasm],{{type:'application/wasm'}}));
+const source=new TextDecoder().decode(js).replace("new URL('hologram_ffi_bg.wasm', import.meta.url)",`new URL('${{wasmUrl}}')`);
+const moduleUrl=URL.createObjectURL(new Blob([source],{{type:'text/javascript'}}));
+const engine=await import(moduleUrl);await engine.default();
+const input=document.querySelector('#input'),status=document.querySelector('#status'),run=document.querySelector('#run');run.disabled=false;
+run.onclick=()=>{{try{{const clean=input.value.replace(/\s/g,'');if(clean.length%2)throw new Error('hex input must contain whole bytes');const bytes=Uint8Array.from(clean.match(/../g)||[],x=>parseInt(x,16));const out=engine.wasm_execute(new Uint8Array(app),bytes);status.textContent=`ran {kappa}\noutput (hex): ${{hex(out.buffer)}}`;}}catch(e){{status.textContent=String(e);}}}};
+run.click();
+</script>"#,
+        commit = BROWSER_ENGINE_COMMIT,
+        js_sha = BROWSER_ENGINE_JS_SHA256,
+        wasm_sha = BROWSER_ENGINE_WASM_SHA256,
+    )
 }
 
 /// Convert `input` to a **fat** `.holo` at `output`, embedding every layer/closure κ resolvable from
@@ -980,6 +1123,38 @@ mod tests {
         );
         assert!(fat_plan.section(SectionKind::ContentBlob).is_ok());
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn app_publish_pins_exact_bytes_and_emits_digest_bound_boot_page() {
+        use hologram_archive::HoloWriter;
+        use hologram_space::{address_bytes, KappaStore};
+        use hologram_store::native::NativeKappaStore;
+
+        let dir = std::env::temp_dir().join(format!("holo-publish-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let archive = dir.join("app.holo");
+        let store_path = dir.join("store.redb");
+        let site = dir.join("site");
+        let bytes = HoloWriter::new().finish().unwrap();
+        std::fs::write(&archive, &bytes).unwrap();
+
+        app_publish(&archive, &store_path, Some(&site), "127.0.0.1:0", &[]).unwrap();
+        let kappa = address_bytes(&bytes);
+        let store = NativeKappaStore::open(&store_path).unwrap();
+        assert_eq!(store.get(&kappa).unwrap().unwrap().as_ref(), bytes);
+        assert!(store.pinned_roots().contains(&kappa));
+        assert_eq!(std::fs::read(site.join("app.holo")).unwrap(), bytes);
+        let html = std::fs::read_to_string(site.join("index.html")).unwrap();
+        assert!(html.contains(kappa.as_str()));
+        assert!(html.contains(BROWSER_ENGINE_COMMIT));
+        assert!(html.contains(BROWSER_ENGINE_JS_SHA256));
+        assert!(html.contains(BROWSER_ENGINE_WASM_SHA256));
+        assert!(html.contains("crypto.subtle.digest('SHA-256'"));
+        assert!(html.contains("wasm_execute"));
+
+        drop(store);
         std::fs::remove_dir_all(&dir).ok();
     }
 

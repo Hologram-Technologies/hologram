@@ -2,7 +2,9 @@
 name = "hologram-tck"
 version = { workspace = true }
 edition = { workspace = true }
+rust-version = { workspace = true }
 license = { workspace = true }
+repository = { workspace = true }
 authors = { workspace = true }
 description = "Technology Compatibility Kit: the reusable KappaStore conformance battery every Hologram storage backend must pass (ST/SPINE invariants), plus the reference in-memory store (MemKappaStore). See specs/refactor/02-space-contract.md."
 

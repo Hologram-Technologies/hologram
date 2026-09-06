@@ -1126,10 +1126,11 @@ impl AppManifest {
         if child_refs.len() != expected_child_refs {
             return Err(RealizationError::Malformed);
         }
-        let children = child_refs
-            .chunks_exact(2)
-            .map(|c| (c[0], c[1]))
-            .collect::<Vec<_>>();
+        let mut children = Vec::with_capacity(n_children);
+        for child_index in 0..n_children {
+            let offset = child_index * 2;
+            children.push((child_refs[offset], child_refs[offset + 1]));
+        }
         Ok(AppManifest {
             primary,
             requires,

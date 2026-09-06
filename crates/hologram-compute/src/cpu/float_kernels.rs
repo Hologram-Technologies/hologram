@@ -555,9 +555,15 @@ pub fn matmul_dequant_float<W: Workspace>(
                 && dtype_ok
                 && channels == n
                 && inner == 1
-                && zps
-                    .chunks_exact(4)
-                    .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0);
+                && (0..zps.len() / 4).all(|index| {
+                    let offset = index * 4;
+                    i32::from_le_bytes([
+                        zps[offset],
+                        zps[offset + 1],
+                        zps[offset + 2],
+                        zps[offset + 3],
+                    ]) == 0
+                });
             if !symmetric || k > mm_act_quant::K_MAX {
                 return Err(BackendError::UnsupportedOp(
                     "matmul_dequant: W8A8 requires symmetric per-channel i8/i4/e8cb within the k bound",
@@ -621,9 +627,15 @@ pub fn matmul_dequant_float<W: Workspace>(
             && m <= crate::kernel_call::decode_gate::FUSED_W8A32_MAX_M
             && channels == n
             && inner == 1
-            && zps
-                .chunks_exact(4)
-                .all(|z| i32::from_le_bytes([z[0], z[1], z[2], z[3]]) == 0)
+            && (0..zps.len() / 4).all(|index| {
+                let offset = index * 4;
+                i32::from_le_bytes([
+                    zps[offset],
+                    zps[offset + 1],
+                    zps[offset + 2],
+                    zps[offset + 3],
+                ]) == 0
+            })
         {
             if let (Ok(a32), Ok(scale32), Ok(out32)) = (
                 bytemuck::try_cast_slice::<u8, f32>(a),

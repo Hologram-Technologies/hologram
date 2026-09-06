@@ -2,7 +2,9 @@
 name = "hologram-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 authors.workspace = true
 description = "Hologram CLI: the one `hologram` binary — compile/execute/bench/inspect plus the deployment-substrate node (store/route/serve)."
 
@@ -30,6 +32,7 @@ hologram-runtime      = { workspace = true, features = ["engine-wasmtime"] }
 hologram-net          = { workspace = true, features = ["live", "tcp"] }
 pollster              = { workspace = true }
 tokio                 = { version = "1", features = ["rt", "macros"] }
+sha2                  = { workspace = true }
 # ── Uncomment to build `--features ai` (and set `ai = ["dep:hologram-ai"]`
 # below). Sibling-repo path during development; becomes a git pin once
 # hologram-ai is published/pinned. Kept commented because an optional path dep

@@ -2338,7 +2338,7 @@ impl X64Workspace {
             ));
         }
         let occupied_blocks: Vec<u64> = payload
-            .chunks_exact(8)
+            .windows(8).step_by(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
             .collect();
         // Every named block must lie within the declared disk (a stray index would map

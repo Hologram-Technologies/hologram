@@ -1,4 +1,4 @@
-@class:TL @id:TL-4 @spec:08-form-factor @phase:P5 @status:pending
+@class:TL @id:TL-4 @spec:08-form-factor @phase:P5 @status:enforced
 Feature: TL-4 — deploy by κ
   Scenario: one app publishes to every rung by κ
     Given a compiled .holo app with a stable κ

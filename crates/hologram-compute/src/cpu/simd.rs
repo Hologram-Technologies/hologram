@@ -1011,22 +1011,11 @@ mod x86 {
             matmul_f32_fma_strided(a, b, out, m, k, n, lda, ldb, ldc, accumulate);
             return;
         }
-        if m >= n && m >= k {
-            let h = m / 2;
-            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
-            matmul_f32_recursive(
-                a.add(h * lda),
-                b,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldb,
-                ldc,
-                accumulate,
-            );
-        } else if n >= m && n >= k {
+        // Prefer N when dimensions tie. Completing a column half across all M rows keeps its B
+        // submatrix hot for the sibling M branches; choosing M first instead evicts and rereads
+        // the same B range at every scale boundary. This is still the same largest-dimension
+        // cache-oblivious recursion and does not change the ascending K reduction order.
+        if n >= m && n >= k {
             let h = n / 2;
             matmul_f32_recursive(a, b, out, m, k, h, lda, ldb, ldc, accumulate);
             matmul_f32_recursive(
@@ -1036,6 +1025,21 @@ mod x86 {
                 m,
                 k,
                 n - h,
+                lda,
+                ldb,
+                ldc,
+                accumulate,
+            );
+        } else if m >= k {
+            let h = m / 2;
+            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a.add(h * lda),
+                b,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldb,
                 ldc,
@@ -1283,22 +1287,7 @@ mod x86 {
             matmul_f32_packed_b(a, bpacked, out, m, k, n, lda, ldc, k_stride, accumulate);
             return;
         }
-        if m >= n && m >= k && m > LEAF {
-            let h = m / 2;
-            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
-            matmul_f32_packed_recursive(
-                a.add(h * lda),
-                bpacked,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldc,
-                k_stride,
-                accumulate,
-            );
-        } else if n >= m && n >= k && n > LEAF {
+        if n >= m && n >= k && n > LEAF {
             // Split N on a 16-column panel boundary so packed panels stay whole.
             let mut h = (n / 2) & !15;
             if h < 16 {
@@ -1312,6 +1301,21 @@ mod x86 {
                 m,
                 k,
                 n - h,
+                lda,
+                ldc,
+                k_stride,
+                accumulate,
+            );
+        } else if m >= k && m > LEAF {
+            let h = m / 2;
+            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a.add(h * lda),
+                bpacked,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldc,
                 k_stride,
@@ -1794,22 +1798,7 @@ mod aarch {
             matmul_f32_fma_strided(a, b, out, m, k, n, lda, ldb, ldc, accumulate);
             return;
         }
-        if m >= n && m >= k {
-            let h = m / 2;
-            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
-            matmul_f32_recursive(
-                a.add(h * lda),
-                b,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldb,
-                ldc,
-                accumulate,
-            );
-        } else if n >= m && n >= k {
+        if n >= m && n >= k {
             let h = n / 2;
             matmul_f32_recursive(a, b, out, m, k, h, lda, ldb, ldc, accumulate);
             matmul_f32_recursive(
@@ -1819,6 +1808,21 @@ mod aarch {
                 m,
                 k,
                 n - h,
+                lda,
+                ldb,
+                ldc,
+                accumulate,
+            );
+        } else if m >= k {
+            let h = m / 2;
+            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a.add(h * lda),
+                b,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldb,
                 ldc,
@@ -2036,22 +2040,7 @@ mod aarch {
             matmul_f32_packed_b(a, bpacked, out, m, k, n, lda, ldc, k_stride, accumulate);
             return;
         }
-        if m >= n && m >= k && m > LEAF {
-            let h = m / 2;
-            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
-            matmul_f32_packed_recursive(
-                a.add(h * lda),
-                bpacked,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldc,
-                k_stride,
-                accumulate,
-            );
-        } else if n >= m && n >= k && n > LEAF {
+        if n >= m && n >= k && n > LEAF {
             // Split N on a 16-column panel boundary so packed panels stay whole.
             let mut h = (n / 2) & !15;
             if h < 16 {
@@ -2065,6 +2054,21 @@ mod aarch {
                 m,
                 k,
                 n - h,
+                lda,
+                ldc,
+                k_stride,
+                accumulate,
+            );
+        } else if m >= k && m > LEAF {
+            let h = m / 2;
+            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a.add(h * lda),
+                bpacked,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldc,
                 k_stride,
@@ -2616,22 +2620,7 @@ mod wasm_simd {
             matmul_f32_fma_strided(a, b, out, m, k, n, lda, ldb, ldc, accumulate);
             return;
         }
-        if m >= n && m >= k {
-            let h = m / 2;
-            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
-            matmul_f32_recursive(
-                a.add(h * lda),
-                b,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldb,
-                ldc,
-                accumulate,
-            );
-        } else if n >= m && n >= k {
+        if n >= m && n >= k {
             let h = n / 2;
             matmul_f32_recursive(a, b, out, m, k, h, lda, ldb, ldc, accumulate);
             matmul_f32_recursive(
@@ -2641,6 +2630,21 @@ mod wasm_simd {
                 m,
                 k,
                 n - h,
+                lda,
+                ldb,
+                ldc,
+                accumulate,
+            );
+        } else if m >= k {
+            let h = m / 2;
+            matmul_f32_recursive(a, b, out, h, k, n, lda, ldb, ldc, accumulate);
+            matmul_f32_recursive(
+                a.add(h * lda),
+                b,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldb,
                 ldc,
@@ -2850,22 +2854,7 @@ mod wasm_simd {
             matmul_f32_packed_b(a, bpacked, out, m, k, n, lda, ldc, k_stride, accumulate);
             return;
         }
-        if m >= n && m >= k && m > LEAF {
-            let h = m / 2;
-            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
-            matmul_f32_packed_recursive(
-                a.add(h * lda),
-                bpacked,
-                out.add(h * ldc),
-                m - h,
-                k,
-                n,
-                lda,
-                ldc,
-                k_stride,
-                accumulate,
-            );
-        } else if n >= m && n >= k && n > LEAF {
+        if n >= m && n >= k && n > LEAF {
             let mut h = (n / 2) & !15;
             if h < 16 {
                 h = 16;
@@ -2878,6 +2867,21 @@ mod wasm_simd {
                 m,
                 k,
                 n - h,
+                lda,
+                ldc,
+                k_stride,
+                accumulate,
+            );
+        } else if m >= k && m > LEAF {
+            let h = m / 2;
+            matmul_f32_packed_recursive(a, bpacked, out, h, k, n, lda, ldc, k_stride, accumulate);
+            matmul_f32_packed_recursive(
+                a.add(h * lda),
+                bpacked,
+                out.add(h * ldc),
+                m - h,
+                k,
+                n,
                 lda,
                 ldc,
                 k_stride,
@@ -6051,20 +6055,22 @@ fn i4_deinterleave_row(q: &[i8], de: &mut [i8], k: usize) {
         target_feature = "simd128",
         target_feature = "relaxed-simd"
     ))]
-    for (t, pair) in q.chunks_exact(2).enumerate() {
-        de[t] = pair[0].max(0);
-        de[kb + t] = pair[1].max(0);
-        de[2 * kb + t] = (-pair[0]).max(0);
-        de[3 * kb + t] = (-pair[1]).max(0);
+    for t in 0..q.len() / 2 {
+        let offset = t * 2;
+        de[t] = q[offset].max(0);
+        de[kb + t] = q[offset + 1].max(0);
+        de[2 * kb + t] = (-q[offset]).max(0);
+        de[3 * kb + t] = (-q[offset + 1]).max(0);
     }
     #[cfg(not(all(
         target_arch = "wasm32",
         target_feature = "simd128",
         target_feature = "relaxed-simd"
     )))]
-    for (t, pair) in q.chunks_exact(2).enumerate() {
-        de[t] = pair[0];
-        de[kb + t] = pair[1];
+    for t in 0..q.len() / 2 {
+        let offset = t * 2;
+        de[t] = q[offset];
+        de[kb + t] = q[offset + 1];
     }
 }
 

@@ -1,4 +1,4 @@
-@class:TL @id:TL-1 @spec:05-tooling @phase:P5 @status:pending
+@class:TL @id:TL-1 @spec:05-tooling @phase:P5 @status:enforced
 Feature: exactly one binary
   Scenario: exactly one binary
     Given the built workspace

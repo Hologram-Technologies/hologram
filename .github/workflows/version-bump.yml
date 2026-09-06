@@ -107,13 +107,15 @@ jobs:
           cargo generate-lockfile --manifest-path sdk/typescript/native/native/Cargo.toml
           cargo generate-lockfile --manifest-path sdk/typescript/wasm/driver/Cargo.toml
 
-      - name: Install nightly (for rustdoc JSON)
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install pinned nightly (for reproducible rustdoc JSON)
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: nightly-2026-09-05
 
       - name: Install cargo-public-api
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-public-api
+          tool: cargo-public-api@0.52.0
 
       - name: Snapshot public API + update API changelog
         run: |

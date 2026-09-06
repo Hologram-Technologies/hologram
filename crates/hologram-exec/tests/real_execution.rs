@@ -23,7 +23,8 @@ fn f32_to_le(values: &[f32]) -> Vec<u8> {
 
 fn le_to_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }
@@ -166,7 +167,7 @@ fn softmax_rank3_normalizes_over_last_axis() {
         assert!((v - 1.0 / 3.0).abs() < 1e-6, "expected 1/3, got {v}");
     }
     // Each row (last axis = 3) sums to 1 — proves normalization actually ran.
-    for row in result.chunks_exact(3) {
+    for row in result.windows(3).step_by(3) {
         let s: f32 = row.iter().sum();
         assert!((s - 1.0).abs() < 1e-6, "row should sum to 1, got {s}");
     }

@@ -1,4 +1,4 @@
-@class:MG @id:MG-3 @spec:06-migration @phase:P0.5 @status:pending
+@class:MG @id:MG-3 @spec:06-migration @phase:P0.5 @status:enforced
 Feature: MG-3 — P0.5 de-risk spike
   Scenario: the de-risk spike proves composition before P1
     Given the async contract world and the sync compute hot path

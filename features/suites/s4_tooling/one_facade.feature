@@ -1,4 +1,4 @@
-@class:TL @id:TL-2 @spec:05-tooling @phase:P5 @status:pending
+@class:TL @id:TL-2 @spec:05-tooling @phase:P5 @status:enforced
 Feature: one public facade crate
   Scenario: one public crate
     Given a downstream consumer

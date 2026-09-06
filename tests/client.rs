@@ -148,7 +148,8 @@ fn client_compiles_provisions_and_runs_a_cast() {
     let outputs = pollster::block_on(client.run(&kappa, &[input.as_slice()])).expect("run");
 
     let got: Vec<f32> = outputs[0]
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     assert_eq!(got, vec![0.0, 42.0, -7.0, 1024.0]);

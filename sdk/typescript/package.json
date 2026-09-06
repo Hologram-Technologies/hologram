@@ -1,6 +1,6 @@
 {
   "name": "@tryhologram/sdk",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "TypeScript SDK for building and compiling Hologram tensor graphs",
   "license": "MIT OR Apache-2.0",
   "type": "module",

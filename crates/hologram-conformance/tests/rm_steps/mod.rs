@@ -305,7 +305,8 @@ fn rm35_then(w: &mut ConformanceWorld) {
 /// Decode a little-endian f32 buffer (the cast-graph output layout).
 fn as_f32(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }

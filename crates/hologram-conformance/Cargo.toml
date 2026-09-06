@@ -1,7 +1,9 @@
 [package]
 name = "hologram-conformance"
+autotests = false
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "BDD (cucumber) conformance runner + honesty meta-gate for the hologram refactor."
 
@@ -57,6 +59,7 @@ hologram-ffi = { path = "../hologram-ffi" }
 # hologram.* Wasm userland the container ABI requires.
 holospaces = { path = "../../spaces/holospaces" }
 wat = "1"
+serde_json = "1"
 
 [[test]]
 name = "bdd"
@@ -65,3 +68,12 @@ harness = false
 [[test]]
 name = "meta_gate"
 harness = true
+
+[[test]]
+name = "cc_gate"
+
+[[test]]
+name = "cs_gate"
+
+[[test]]
+name = "fat_thin"

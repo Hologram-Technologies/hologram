@@ -46,7 +46,8 @@ impl TestWorkspace {
     }
     fn read_f32(&self, r: BufferRef) -> Vec<f32> {
         self.slots[r.slot as usize]
-            .chunks_exact(4)
+            .windows(4)
+            .step_by(4)
             .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
             .collect()
     }

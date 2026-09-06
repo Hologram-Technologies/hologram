@@ -64,7 +64,8 @@ fn f32_vec(values: &[f32]) -> Vec<u8> {
 }
 fn read_f32_vec(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect()
 }

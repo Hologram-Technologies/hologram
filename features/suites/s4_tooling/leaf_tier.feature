@@ -1,4 +1,4 @@
-@class:TL @id:TL-3 @spec:05-tooling @phase:P1 @status:pending
+@class:TL @id:TL-3 @spec:05-tooling @phase:P1 @status:enforced
 Feature: TL-3 — leaf tier dependency law
   Scenario: nothing depends on a leaf crate
     Given the tiers core, spaces, and leaf (facade plus Client, cli, packaging)

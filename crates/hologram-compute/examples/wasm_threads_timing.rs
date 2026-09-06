@@ -9,8 +9,11 @@
 //!
 //! Iteration signal only; the browser witness stays downstream.
 
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
 use hologram_compute::cpu::decode_attention_engine_for_tests as decode_attention;
 use hologram_compute::cpu::simd::{matmul_i4_pc_omajor, matmul_i8_pc_omajor};
+#[cfg(target_arch = "wasm32")]
 use hologram_compute::cpu::wasm_pool;
 use std::time::Instant;
 
@@ -102,6 +105,12 @@ fn bench(label: &str, k: usize, n: usize, iters: usize) {
     bench_m(label, 1, k, n, iters);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn main() {
+    eprintln!("wasm_threads_timing is a wasm32-wasip1-threads harness");
+}
+
+#[cfg(target_arch = "wasm32")]
 fn main() {
     println!("serial (0 workers):");
     bench("gemv_w8a8", 896, 4864, 300);

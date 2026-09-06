@@ -1,4 +1,4 @@
-@class:SP @id:SP-2 @spec:02-space-contract @phase:P4 @status:pending
+@class:SP @id:SP-2 @spec:02-space-contract @phase:P4 @status:enforced
 Feature: external-repo space parity
   Scenario: external space is first-class
     Given a space living in an external repository depending only on published crates

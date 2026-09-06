@@ -1,8 +1,6 @@
 //! Cucumber runner. Discovers every `.feature` under `features/suites`.
 //!
-//! Pending scenarios (no matching steps) are reported as skipped and do NOT fail
-//! the run. As each phase (P0–P6) implements a suite, add its step definitions and
-//! enable `.fail_on_skipped()` for that suite's tag (see features/README.md).
+//! Every registered scenario must execute. Undefined or skipped steps fail the run.
 use hologram_conformance::ConformanceWorld;
 
 use cucumber::{given, then, when, World};
@@ -31,6 +29,7 @@ use hologram_space::{
     SurfaceError,
 };
 mod common;
+mod completion_steps;
 // RM suite (s7_readme): step definitions binding every README code block to a scenario.
 mod rm_steps;
 use common::SpikeSpace;
@@ -211,7 +210,8 @@ async fn sp3_run(w: &mut ConformanceWorld) {
         .await
         .expect("run the workload");
     let cast: Vec<f32> = outputs[0]
-        .chunks_exact(4)
+        .windows(4)
+        .step_by(4)
         .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
         .collect();
     w.sp3_output = Some(cast);
@@ -895,12 +895,7 @@ fn gv2_assert(w: &mut ConformanceWorld) {
 #[tokio::main]
 async fn main() {
     ConformanceWorld::cucumber()
-        .fail_on_skipped_with(|feat, _rule, sc| {
-            feat.tags
-                .iter()
-                .chain(sc.tags.iter())
-                .any(|t| t.trim_start_matches('@') == "status:enforced")
-        })
+        .fail_on_skipped()
         .run_and_exit(hologram_conformance::SUITES_DIR)
         .await;
 }
