@@ -131,8 +131,7 @@ fn build_rootfs(store: &MemKappaStore) -> (dockerfile::Dockerfile, Vec<u8>) {
 #[test]
 fn the_dockerfile_build_is_assembled() {
     if !cc26_base_present() {
-        eprintln!("SKIP cc26 the_dockerfile_build_is_assembled: fixture vv/artifacts/cc22 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc26 the_dockerfile_build_is_assembled: fixture vv/artifacts/cc22 absent (holospaces vv/ tree not imported)");
     }
     let store = MemKappaStore::new();
     let (df, rootfs) = build_rootfs(&store);
@@ -153,8 +152,7 @@ fn the_dockerfile_build_is_assembled() {
     );
 
     if !have("e2fsck") || !have("debugfs") {
-        eprintln!("SKIP: e2fsprogs not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs not available");
     }
     let img = std::env::temp_dir().join(format!("cc26-{}.img", std::process::id()));
     std::fs::write(&img, &rootfs).unwrap();
@@ -217,8 +215,7 @@ fn the_emulator_runs_the_build() {
 #[ignore]
 fn qemu_runs_the_build() {
     if !have("qemu-system-riscv64") {
-        eprintln!("SKIP: qemu-system-riscv64 not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: qemu-system-riscv64 not available");
     }
     let store = MemKappaStore::new();
     let (_df, rootfs) = build_rootfs(&store);
@@ -281,8 +278,7 @@ fn the_import_resolves_a_dockerfile_build_from_a_repo() {
     use holospaces::boot::devcontainer::{self, ImageSource};
 
     if !art().join("cc26/repo.tar.gz").exists() {
-        eprintln!("SKIP cc26 the_import_resolves_a_dockerfile_build_from_a_repo: fixture vv/artifacts/cc26 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc26 the_import_resolves_a_dockerfile_build_from_a_repo: fixture vv/artifacts/cc26 absent (holospaces vv/ tree not imported)");
     }
     let archive = std::fs::read(art().join("cc26/repo.tar.gz")).unwrap();
     let layer = Layer {

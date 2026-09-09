@@ -20,7 +20,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc30-resume: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc30-resume: FAIL — cargo unavailable" >&2; exit 127; fi
 # Fast witnesses (round-trip identity, virtio, migration, truncation).
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --test cc30_resume -- --nocapture || exit 1
@@ -28,10 +28,3 @@ cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
 cargo test --release --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --test cc30_resume a_suspended_real_linux_machine_resumes_to_the_identical_boot \
     -- --ignored --nocapture || exit 1
-# CC-31 resume terminal: the deployed devcontainer, suspended at its *idle shell*
-# (the steady state the periodic snapshot actually captures — not mid-boot),
-# resumes to a LIVE machine, and the machine snapshot is κ-pure (the console
-# scrollback is a terminal concern, not machine state). Release; boots the
-# devcontainer to userspace.
-cargo test --release --manifest-path "$ROOT/Cargo.toml" -p holospaces \
-    --test cc31_resume_terminal -- --ignored --nocapture || exit 1

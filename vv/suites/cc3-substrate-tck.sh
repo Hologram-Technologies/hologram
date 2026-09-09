@@ -10,7 +10,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc3-substrate-tck: SKIP — cargo not available in this environment" >&2
+    echo "cc3-substrate-tck: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 

@@ -17,7 +17,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
-if ! command -v node >/dev/null 2>&1; then echo "cc19-extensions: SKIP — node unavailable" >&2; exit 127; fi
+if ! command -v node >/dev/null 2>&1; then echo "cc19-extensions: FAIL — node unavailable" >&2; exit 127; fi
 cd "$WEB"
 [ -d node_modules/playwright ] || npm install playwright >/dev/null 2>&1
 # A real witness installs its prerequisites — it does not skip.

@@ -34,7 +34,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC46="$ROOT/vv/artifacts/cc46"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc46-devbus-arch-parity: SKIP — cargo not available in this environment" >&2
+    echo "cc46-devbus-arch-parity: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 

@@ -43,8 +43,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[test]
 fn the_ext4_artifact_matches_its_recorded_digest() {
     if !artifact_path("rootfs.ext4").exists() {
-        eprintln!("SKIP cc7 the_ext4_artifact_matches_its_recorded_digest: fixture vv/artifacts/cc7 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc7 the_ext4_artifact_matches_its_recorded_digest: fixture vv/artifacts/cc7 absent (holospaces vv/ tree not imported)");
     }
     let image = std::fs::read(artifact_path("rootfs.ext4")).expect("read ext4 artifact");
     let recorded = std::fs::read_to_string(artifact_path("rootfs.ext4.sha256")).expect("read sha");
@@ -63,8 +62,7 @@ fn the_ext4_artifact_matches_its_recorded_digest() {
 #[test]
 fn a_real_ext4_filesystem_round_trips_through_the_kappa_disk() {
     if !artifact_path("rootfs.ext4").exists() {
-        eprintln!("SKIP cc7 a_real_ext4_filesystem_round_trips_through_the_kappa_disk: fixture vv/artifacts/cc7 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc7 a_real_ext4_filesystem_round_trips_through_the_kappa_disk: fixture vv/artifacts/cc7 absent (holospaces vv/ tree not imported)");
     }
     pollster::block_on(async {
         let image = std::fs::read(artifact_path("rootfs.ext4")).expect("read ext4 artifact");
@@ -138,16 +136,13 @@ fn a_real_ext4_filesystem_round_trips_through_the_kappa_disk() {
             }
             let _ = std::fs::remove_file(&tmp);
         } else {
-            eprintln!(
-                "cc7: debugfs (e2fsprogs) not on PATH — the byte-exact round trip \
-                 and reproducible κ are witnessed; the ext4-reader differential is skipped"
-            );
+            panic!("MISSING REQUIRED V&V PREREQUISITE: debugfs (e2fsprogs) not on PATH");
         }
     });
 }
 
-/// Resolve `debugfs` if e2fsprogs is installed (it is the ext authority; absent
-/// only in a minimal environment, where the suite skips this differential).
+/// Resolve `debugfs` if e2fsprogs is installed. It is the filesystem authority,
+/// so its absence fails the V&V witness.
 fn debugfs_bin() -> Option<String> {
     for cand in ["debugfs", "/sbin/debugfs", "/usr/sbin/debugfs"] {
         if Command::new(cand).arg("-V").output().is_ok() {

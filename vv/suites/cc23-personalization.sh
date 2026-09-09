@@ -16,7 +16,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc23-personalization: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc23-personalization: FAIL — cargo unavailable" >&2; exit 127; fi
 
 # unit: the personalization is content scoped to the operator (reproducible κ;
 # different operator → different κ), round-trips, and applies secrets + dotfiles.

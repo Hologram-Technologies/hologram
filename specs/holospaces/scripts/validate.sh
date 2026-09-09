@@ -226,13 +226,12 @@ report_line "V7 — OPD/OPL bimodal coherence"       "$V7" "$V7_REASON"
 report_line "V8 — ISO 15288 process superset"      "$V8" "$V8_REASON"
 printf '\n'
 
-# Exit 0 iff every validator is either `pass` or `skip-gap`. A
-# `skip-upstream` (caused by an earlier validator's failure) does NOT
-# permit exit 0 — the upstream failure itself is what fails the run.
+# A release-valid report is closed: missing authority pins or source inputs are
+# failures, not an accepted partial result. Every validator must execute and pass.
 ok=1
 for s in "$V1" "$V2" "$V3" "$V4" "$V5" "$V6" "$V7" "$V8"; do
     case "$s" in
-        pass|skip-gap) ;;
+        pass) ;;
         *) ok=0 ;;
     esac
 done

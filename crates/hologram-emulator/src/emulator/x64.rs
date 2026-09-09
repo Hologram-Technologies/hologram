@@ -588,11 +588,16 @@ const TSC_PER_STEP: u64 = 128;
 struct TlbEntry {
     tag: u64,
     frame: u64,
+    /// Physical address of the leaf PTE, retained so a write hitting a
+    /// read-filled TLB entry can set the architected Dirty bit.
+    leaf: u64,
     /// The effective page permissions (the AND of the R/W and U/S bits across the
     /// walked levels), cached so the fast path enforces write-protection (COW) and
     /// user/supervisor access exactly as a fresh walk would.
     writable: bool,
     user_ok: bool,
+    /// Whether this cached translation has already set the leaf PTE's Dirty bit.
+    dirty: bool,
     /// Cleared by a single-page `INVLPG` (a precise invalidation) without disturbing
     /// the rest of the TLB — so a COW/unmap flush of one page does not cold-flush the
     /// whole address space, which is the difference between a warm and a perpetually
@@ -830,8 +835,10 @@ impl Cpu {
                 TlbEntry {
                     tag: 0,
                     frame: 0,
+                    leaf: 0,
                     writable: false,
                     user_ok: false,
+                    dirty: false,
                     valid: false,
                     pcid: 0,
                     gen: 0,
@@ -957,17 +964,9 @@ impl Cpu {
     /// Translate a linear address for the executing core, latching a [`PageFault`]
     /// (the first level that was not-present) when the walk fails so [`Cpu::step`]
     /// can roll the instruction back and vector `#PF`. Until the fault is taken,
-    /// returns a benign physical address (`0`) so the in-flight access reads/writes
-    /// harmlessly; the instruction is discarded and restarted after the handler
-    /// maps the page. `write` and `user` set the error-code bits.
-    ///
-    /// Physical `0` is deliberately below every device MMIO window
-    /// (`VIRTIO_BLK_BASE` = `0xD000_0000`, the local APIC at `0xFEE0_0000`), so a
-    /// faulting access never resolves to a device — `rd`/`wr` take no MMIO side
-    /// effect on a fault, only a harmless phys-0 scratch read/write that the
-    /// instruction restart overwrites. This phys-0 scratch is load-bearing for the
-    /// early boot's demand-paging: removing it (returning early from `rd`/`wr`)
-    /// regresses the boot to a hang, so the scratch access is kept, not elided.
+    /// returns an address one byte beyond guest RAM so the in-flight access has no
+    /// RAM or MMIO effect; the instruction is discarded and restarted after the
+    /// handler maps the page. `write` and `user` set the error-code bits.
     /// The scratch physical address a faulting access resolves to while its
     /// `#PF` is latched (before `step` rolls the instruction back and vectors the
     /// fault). It sits **one byte past guest RAM** — so `rd` reads `0` (its
@@ -1003,12 +1002,11 @@ impl Cpu {
         let denied = |writable: bool, user_ok: bool| {
             (user && !user_ok) || (write && !writable && (user || wp))
         };
-        // Resolve the frame + its effective permissions, from the TLB or a walk. A
-        // fresh walk also yields the leaf-entry address; a TLB hit yields `None`, so
-        // the A/D bits are touched only when a translation *fills* the TLB (the hot
-        // path adds no cost).
+        // Resolve the frame + its effective permissions from the TLB or a walk. The
+        // leaf PTE address remains cached: hardware sets Dirty on the first write
+        // even when the translation entered the TLB through an earlier read.
         let mut from_tlb = false;
-        let (frame, writable, user_ok, walk_leaf) = {
+        let (frame, writable, user_ok, touch_leaf) = {
             let e = self.tlb[set];
             if e.valid
                 && e.gen == self.tlb_gen
@@ -1017,22 +1015,30 @@ impl Cpu {
                 && e.tag == page
             {
                 from_tlb = true;
-                (e.frame, e.writable, e.user_ok, None)
+                let touch = if write && !e.dirty {
+                    Some((e.leaf, true))
+                } else {
+                    None
+                };
+                (e.frame, e.writable, e.user_ok, touch)
             } else {
                 match self.walk(vaddr) {
                     Ok((pa, w, u, lf)) => {
                         self.mmu_stats.tlb_fills += 1;
+                        let leaf_dirty = self.rd_phys(lf, 8) & (1 << 6) != 0;
                         self.tlb[set] = TlbEntry {
                             tag: page,
                             frame: pa & !0xfff,
+                            leaf: lf,
                             writable: w,
                             user_ok: u,
+                            dirty: leaf_dirty,
                             valid: true,
                             pcid: pcid as u16,
                             gen: self.tlb_gen,
                             pgen: self.pcid_gen[pcid],
                         };
-                        (pa & !0xfff, w, u, Some(lf))
+                        (pa & !0xfff, w, u, Some((lf, write)))
                     }
                     Err(()) => {
                         // Not-present (P=0): the kernel's #PF handler maps the page.
@@ -1054,11 +1060,14 @@ impl Cpu {
             // hardware TLB is always coherent; ours must be made so on the fault edge).
             if from_tlb {
                 if let Ok((pa, w, u, lf)) = self.walk(vaddr) {
+                    let leaf_dirty = self.rd_phys(lf, 8) & (1 << 6) != 0;
                     self.tlb[set] = TlbEntry {
                         tag: page,
                         frame: pa & !0xfff,
+                        leaf: lf,
                         writable: w,
                         user_ok: u,
+                        dirty: leaf_dirty,
                         valid: true,
                         pcid: pcid as u16,
                         gen: self.tlb_gen,
@@ -1067,6 +1076,7 @@ impl Cpu {
                     if !denied(w, u) {
                         self.mmu_stats.tlb_revalidations += 1;
                         self.set_accessed_dirty(lf, write);
+                        self.tlb[set].dirty |= write;
                         return (pa & !0xfff) | (vaddr & 0xfff);
                     }
                 }
@@ -1078,12 +1088,12 @@ impl Cpu {
             self.fault = Some(PageFault { addr: vaddr, error });
             return self.fault_scratch_pa();
         }
-        // The access is permitted. On a TLB fill (a fresh walk), set the Accessed
-        // (and Dirty, for a write) bit in the leaf entry — like real hardware — so
-        // Linux's dirty/aging machinery works and it does not fall back to the
-        // write-protect dirty-tracking fault storm. TLB hits skip this (no cost).
-        if let Some(lf) = walk_leaf {
-            self.set_accessed_dirty(lf, write);
+        // A fresh walk sets Accessed and, for a write, Dirty. A first write through
+        // a read-filled TLB entry must still set Dirty; otherwise Linux can reclaim
+        // a modified userspace/COW page as clean and silently lose its contents.
+        if let Some((lf, dirty)) = touch_leaf {
+            self.set_accessed_dirty(lf, dirty);
+            self.tlb[set].dirty |= dirty;
         }
         frame | (vaddr & 0xfff)
     }
@@ -1246,6 +1256,315 @@ impl Cpu {
     #[must_use]
     pub fn rip(&self) -> u64 {
         self.rip
+    }
+
+    /// Canonical suspend image for the x86-64 core.  It contains architectural
+    /// CPU state, RAM, interrupt/timer/console state, workspace, and the sparse
+    /// κ-disk.  TLB/fetch caches are reconstructed and live network transports
+    /// reconnect after resume.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.ram.len() + 4096);
+        out.extend_from_slice(b"HGX64SN\0");
+        out.extend_from_slice(&1u32.to_le_bytes());
+        for value in self.r {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [
+            self.rip,
+            self.rflags,
+            self.insns,
+            self.cr0,
+            self.cr2,
+            self.cr3,
+            self.cr4,
+            self.efer,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.int_counts.iter().chain(self.dr.iter()) {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [
+            self.mmu_stats.protection_faults,
+            self.mmu_stats.not_present_faults,
+            self.mmu_stats.tlb_revalidations,
+            self.mmu_stats.tlb_fills,
+        ] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.xmm {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for seg in self.seg {
+            out.extend_from_slice(&seg.selector.to_le_bytes());
+            out.extend_from_slice(&seg.base.to_le_bytes());
+            out.push(u8::from(seg.long));
+        }
+        out.push(self.cpl);
+        out.push(self.cur_seg.map_or(u8::MAX, |seg| seg as u8));
+        out.push(u8::from(self.rex_present));
+        match self.fault {
+            None => out.push(0),
+            Some(fault) => {
+                out.push(1);
+                out.extend_from_slice(&fault.addr.to_le_bytes());
+                out.extend_from_slice(&fault.error.to_le_bytes());
+            }
+        }
+        match self.sys.as_deref() {
+            None => out.push(0),
+            Some(sys) => {
+                out.push(1);
+                out.extend_from_slice(&(sys.uart.output.len() as u64).to_le_bytes());
+                out.extend_from_slice(&sys.uart.output);
+                out.extend_from_slice(&(sys.uart.input.len() as u64).to_le_bytes());
+                out.extend_from_slice(&sys.uart.input);
+                out.extend_from_slice(&(sys.uart.in_cursor as u64).to_le_bytes());
+                for value in [
+                    sys.uart.lcr,
+                    sys.uart.ier,
+                    sys.uart.mcr,
+                    sys.uart.scratch,
+                    sys.uart.fcr,
+                ] {
+                    out.push(value);
+                }
+                out.extend_from_slice(&sys.uart.divisor.to_le_bytes());
+                out.push(u8::from(sys.uart.thre_pending));
+                for value in sys.uart.dbg {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.idtr.0.to_le_bytes());
+                out.extend_from_slice(&sys.idtr.1.to_le_bytes());
+                out.extend_from_slice(&sys.gdtr.0.to_le_bytes());
+                out.extend_from_slice(&sys.gdtr.1.to_le_bytes());
+                out.extend_from_slice(&sys.tr_base.to_le_bytes());
+                out.extend_from_slice(&(sys.msr.len() as u64).to_le_bytes());
+                for (register, value) in &sys.msr {
+                    out.extend_from_slice(&register.to_le_bytes());
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.pic.mask.to_le_bytes());
+                out.extend_from_slice(&sys.pic.request.to_le_bytes());
+                for value in [
+                    sys.pic.base_master,
+                    sys.pic.base_slave,
+                    sys.pic.init_master,
+                    sys.pic.init_slave,
+                ] {
+                    out.push(value);
+                }
+                out.extend_from_slice(&sys.pit.reload.to_le_bytes());
+                out.extend_from_slice(&sys.pit.counter.to_le_bytes());
+                out.push(u8::from(sys.pit.write_hi));
+                out.push(u8::from(sys.pit.enabled));
+                out.push(u8::from(sys.pit.ch0_periodic));
+                out.extend_from_slice(&sys.pit.ch2_reload.to_le_bytes());
+                out.extend_from_slice(&sys.pit.ch2_counter.to_le_bytes());
+                out.push(u8::from(sys.pit.ch2_write_hi));
+                out.push(u8::from(sys.pit.ch2_gate));
+                out.push(u8::from(sys.pit.ch2_out));
+                for value in [
+                    sys.lapic.svr,
+                    sys.lapic.lvt_timer,
+                    sys.lapic.initial_count,
+                    sys.lapic.current_count,
+                    sys.lapic.divide,
+                    sys.lapic.tpr,
+                ] {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                for value in sys.lapic.irr.into_iter().chain(sys.lapic.isr) {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.ioapic.id.to_le_bytes());
+                out.extend_from_slice(&sys.ioapic.ioregsel.to_le_bytes());
+                for value in sys.ioapic.redir {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&sys.tsc.to_le_bytes());
+                out.push(u8::from(sys.halted));
+                out.extend_from_slice(&sys.rng.to_le_bytes());
+                out.extend_from_slice(&sys.tdiv.to_le_bytes());
+                out.extend_from_slice(&sys.pci_addr.to_le_bytes());
+                super::snapshot_virtio_blk(sys.virtio.as_ref(), &mut out);
+                super::snapshot_virtio_9p(sys.virtio9p.as_ref(), &mut out);
+            }
+        }
+        out.extend_from_slice(&(self.ram.len() as u64).to_le_bytes());
+        out.extend_from_slice(&self.ram);
+        out
+    }
+
+    /// Restore an exact image produced by [`Cpu::snapshot`].  The decoder rejects
+    /// malformed booleans/enums, duplicate registers, non-canonical κ-disks, and
+    /// trailing bytes.
+    pub fn restore(bytes: &[u8]) -> Result<Self, super::SnapshotError> {
+        use super::SnapshotError;
+        let mut rd = super::SnapshotReader::new(bytes);
+        if rd.bytes(8)? != b"HGX64SN\0" || rd.u32()? != 1 {
+            return Err(SnapshotError::Malformed);
+        }
+        let mut cpu = Self::new(0);
+        for value in &mut cpu.r {
+            *value = rd.u64()?;
+        }
+        for field in [
+            &mut cpu.rip,
+            &mut cpu.rflags,
+            &mut cpu.insns,
+            &mut cpu.cr0,
+            &mut cpu.cr2,
+            &mut cpu.cr3,
+            &mut cpu.cr4,
+            &mut cpu.efer,
+        ] {
+            *field = rd.u64()?;
+        }
+        for value in cpu.int_counts.iter_mut().chain(cpu.dr.iter_mut()) {
+            *value = rd.u64()?;
+        }
+        cpu.mmu_stats = MmuStats {
+            protection_faults: rd.u64()?,
+            not_present_faults: rd.u64()?,
+            tlb_revalidations: rd.u64()?,
+            tlb_fills: rd.u64()?,
+        };
+        for value in &mut cpu.xmm {
+            *value = rd.u128()?;
+        }
+        for seg in &mut cpu.seg {
+            seg.selector = rd.u16()?;
+            seg.base = rd.u64()?;
+            seg.long = read_bool(&mut rd)?;
+        }
+        cpu.cpl = rd.u8()?;
+        if cpu.cpl > 3 {
+            return Err(SnapshotError::Malformed);
+        }
+        cpu.cur_seg = match rd.u8()? {
+            0 => Some(SegId::Es),
+            1 => Some(SegId::Cs),
+            2 => Some(SegId::Ss),
+            3 => Some(SegId::Ds),
+            4 => Some(SegId::Fs),
+            5 => Some(SegId::Gs),
+            u8::MAX => None,
+            _ => return Err(SnapshotError::Malformed),
+        };
+        cpu.rex_present = read_bool(&mut rd)?;
+        cpu.fault = match rd.u8()? {
+            0 => None,
+            1 => Some(PageFault {
+                addr: rd.u64()?,
+                error: rd.u64()?,
+            }),
+            _ => return Err(SnapshotError::Malformed),
+        };
+        cpu.sys = match rd.u8()? {
+            0 => None,
+            1 => {
+                let mut sys = Sys::new();
+                let output_len =
+                    usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                sys.uart.output = rd.bytes(output_len)?.to_vec();
+                let input_len = usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                sys.uart.input = rd.bytes(input_len)?.to_vec();
+                sys.uart.in_cursor =
+                    usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                if sys.uart.in_cursor > sys.uart.input.len() {
+                    return Err(SnapshotError::Malformed);
+                }
+                sys.uart.lcr = rd.u8()?;
+                sys.uart.ier = rd.u8()?;
+                sys.uart.mcr = rd.u8()?;
+                sys.uart.scratch = rd.u8()?;
+                sys.uart.fcr = rd.u8()?;
+                sys.uart.divisor = rd.u16()?;
+                sys.uart.thre_pending = read_bool(&mut rd)?;
+                for value in &mut sys.uart.dbg {
+                    *value = rd.u64()?;
+                }
+                sys.idtr = (rd.u64()?, rd.u16()?);
+                sys.gdtr = (rd.u64()?, rd.u16()?);
+                sys.tr_base = rd.u64()?;
+                let msr_count = rd.u64()?;
+                for _ in 0..msr_count {
+                    if sys.msr.insert(rd.u32()?, rd.u64()?).is_some() {
+                        return Err(SnapshotError::Malformed);
+                    }
+                }
+                sys.pic.mask = rd.u16()?;
+                sys.pic.request = rd.u16()?;
+                sys.pic.base_master = rd.u8()?;
+                sys.pic.base_slave = rd.u8()?;
+                sys.pic.init_master = rd.u8()?;
+                sys.pic.init_slave = rd.u8()?;
+                sys.pit.reload = rd.u16()?;
+                sys.pit.counter = rd.u32()?;
+                sys.pit.write_hi = read_bool(&mut rd)?;
+                sys.pit.enabled = read_bool(&mut rd)?;
+                sys.pit.ch0_periodic = read_bool(&mut rd)?;
+                sys.pit.ch2_reload = rd.u16()?;
+                sys.pit.ch2_counter = rd.u32()?;
+                sys.pit.ch2_write_hi = read_bool(&mut rd)?;
+                sys.pit.ch2_gate = read_bool(&mut rd)?;
+                sys.pit.ch2_out = read_bool(&mut rd)?;
+                for field in [
+                    &mut sys.lapic.svr,
+                    &mut sys.lapic.lvt_timer,
+                    &mut sys.lapic.initial_count,
+                    &mut sys.lapic.current_count,
+                    &mut sys.lapic.divide,
+                    &mut sys.lapic.tpr,
+                ] {
+                    *field = rd.u32()?;
+                }
+                for value in sys.lapic.irr.iter_mut().chain(sys.lapic.isr.iter_mut()) {
+                    *value = rd.u64()?;
+                }
+                sys.ioapic.id = rd.u32()?;
+                sys.ioapic.ioregsel = rd.u32()?;
+                for value in &mut sys.ioapic.redir {
+                    *value = rd.u64()?;
+                }
+                sys.tsc = rd.u64()?;
+                sys.halted = read_bool(&mut rd)?;
+                sys.rng = rd.u64()?;
+                sys.tdiv = rd.u64()?;
+                sys.pci_addr = rd.u32()?;
+                sys.virtio = super::restore_virtio_blk(&mut rd)?;
+                sys.virtio9p = super::restore_virtio_9p(&mut rd)?;
+                Some(Box::new(sys))
+            }
+            _ => return Err(SnapshotError::Malformed),
+        };
+        let ram_len = usize::try_from(rd.u64()?).map_err(|_| SnapshotError::Malformed)?;
+        cpu.ram = rd.bytes(ram_len)?.to_vec();
+        if !rd.rest().is_empty() || cpu.rip > ram_len as u64 {
+            return Err(SnapshotError::Malformed);
+        }
+        cpu.tlb.clear();
+        cpu.tlb.resize(
+            TLB_SETS,
+            TlbEntry {
+                tag: 0,
+                frame: 0,
+                leaf: 0,
+                writable: false,
+                user_ok: false,
+                dirty: false,
+                valid: false,
+                pcid: 0,
+                gen: 0,
+                pgen: 0,
+            },
+        );
+        cpu.tlb_gen = 1;
+        cpu.ifetch_gen = 0;
+        cpu.pcid_gen.fill(1);
+        Ok(cpu)
     }
 
     /// Read `n` bytes of guest virtual memory — a debug peek (e.g. to dump the bytes
@@ -2722,9 +3041,8 @@ impl Cpu {
         let start = self.rip;
         // Snapshot the architectural register state so a `#PF` latched mid-access
         // can discard this instruction's partial effects and restart it after the
-        // handler maps the page (RAM is not snapshotted — early boot's faulting
-        // accesses touch a fresh page, so any bytes written before the fault are
-        // re-written identically on restart).
+        // handler maps the page. REP string operations are the exception: they
+        // preserve completed iterations and deliver their fault inside string_op.
         let snap = self.reg_snapshot();
         let mut rex = 0u8;
         let mut opsz = false; // 0x66 operand-size override
@@ -3405,13 +3723,14 @@ impl Cpu {
                         self.r[RAX] = tsc & 0xffff_ffff;
                         self.r[RDX] = tsc >> 32;
                     }
-                    0x09 | 0x0d | 0x0e | 0x18..=0x1f | 0x77 | 0xae => {
-                        // WBINVD/PREFETCHW/FEMMS/NOP(prefetch/hint)/EMMS/fences+fxsave
+                    0x09 | 0x0d | 0x0e | 0x18..=0x1f | 0x77 => {
+                        // WBINVD/PREFETCHW/FEMMS/NOP(prefetch/hint)/EMMS
                         // — no architectural effect the integer boot path observes.
                         // 0x0d (PREFETCHW — the kernel patches SLUB's prefetcht0 to it
-                        // for the write-prefetch of the freelist) and 0x18..0x1f take a
-                        // ModRM; 0xae usually does too.
-                        if matches!(op2, 0x0d | 0x18..=0x1f | 0xae) {
+                        // for the write-prefetch of the freelist) and 0x18..0x1f take
+                        // a ModRM. Group 15 (0F AE) must reach sse_0f: its
+                        // FXSAVE/FXRSTOR forms preserve XMM state across processes.
+                        if matches!(op2, 0x0d | 0x18..=0x1f) {
                             let _ = self.modrm(rex);
                         }
                     }
@@ -3613,7 +3932,7 @@ impl Cpu {
             }
             _ => return Err(Halt::Undefined(start)),
         }
-        // A page fault latched while executing this instruction: discard its
+        // A page fault latched while executing an ordinary instruction: discard its
         // partial effects (restore the pre-instruction registers, `rip = start`),
         // set `CR2`, and vector `#PF` so the kernel's early page-fault handler maps
         // the page; the instruction re-runs on return (the real long-mode boot's
@@ -4414,6 +4733,20 @@ impl Cpu {
             } else {
                 break;
             }
+        }
+
+        // Unlike ordinary instructions, REP string operations are architecturally
+        // restartable at an iteration boundary. The iterations completed before a
+        // page fault (and their updated RCX/RSI/RDI) must remain visible while RIP
+        // points back at the string instruction. Leaving this fault for step()'s
+        // generic tail would restore the pre-instruction register snapshot while
+        // retaining the already-written RAM bytes. Repeating those writes from the
+        // old pointers corrupts overlapping kernel/userspace copies during COW-heavy
+        // fork/exec workloads.
+        if let Some(pf) = self.fault.take() {
+            self.rip = start;
+            self.cr2 = pf.addr;
+            self.raise_exception(VEC_PAGE_FAULT, pf.error, true);
         }
     }
 
@@ -6024,6 +6357,14 @@ enum StringOp {
     Cmps,
 }
 
+fn read_bool(r: &mut super::SnapshotReader<'_>) -> Result<bool, super::SnapshotError> {
+    match r.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(super::SnapshotError::Malformed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6106,6 +6447,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_write_through_read_filled_tlb_sets_leaf_dirty() {
+        let mut cpu = Cpu::new(64 * 1024);
+        let put = |cpu: &mut Cpu, at: usize, e: u64| {
+            cpu.ram[at..at + 8].copy_from_slice(&e.to_le_bytes());
+        };
+        put(&mut cpu, 0x1000, 0x2000 | 0b11);
+        put(&mut cpu, 0x2000, 0x3000 | 0b11);
+        put(&mut cpu, 0x3000, 0x4000 | 0b11);
+        put(&mut cpu, 0x4000, 0x6000 | 0b11);
+        cpu.cr3 = 0x1000;
+        cpu.cr4 = 1 << 5;
+        cpu.efer = 1 << 8;
+        cpu.cr0 = (1 << 31) | CR0_WP;
+
+        let _ = cpu.rd(0x80, 1);
+        let after_read = cpu.rd_phys(0x4000, 8);
+        assert_ne!(after_read & (1 << 5), 0, "a TLB-filling read sets Accessed");
+        assert_eq!(after_read & (1 << 6), 0, "a read does not set Dirty");
+
+        cpu.wr(0x80, 1, 0x5a);
+        assert_eq!(cpu.rd_phys(0x6080, 1), 0x5a);
+        assert_ne!(
+            cpu.rd_phys(0x4000, 8) & (1 << 6),
+            0,
+            "the first write through the cached translation sets Dirty"
+        );
+
+        // A denied write must not make the cached entry claim the PTE is dirty:
+        // the same translation may subsequently be used by a permitted access.
+        cpu.ram[0x4000..0x4008].copy_from_slice(&(0x6000u64 | 0b11).to_le_bytes());
+        cpu.flush_tlb();
+        let _ = cpu.translate_acc(0x80, true, true);
+        assert!(
+            cpu.fault.take().is_some(),
+            "userspace cannot write a supervisor page"
+        );
+        assert_eq!(cpu.rd_phys(0x4000, 8) & (1 << 6), 0);
+        let _ = cpu.translate_acc(0x80, true, false);
+        assert!(
+            cpu.fault.is_none(),
+            "the kernel can reuse the cached translation"
+        );
+        assert_ne!(
+            cpu.rd_phys(0x4000, 8) & (1 << 6),
+            0,
+            "the first permitted cached write still sets Dirty"
+        );
+    }
+
+    #[test]
+    fn decoded_fxsave_fxrstor_preserve_xmm_across_context_switch() {
+        let mut cpu = Cpu::new(64 * 1024);
+        // Absolute-address SIB forms:
+        //   fxsave  [0x2000]
+        //   fxrstor [0x2000]
+        let code = [
+            0x0f, 0xae, 0x04, 0x25, 0x00, 0x20, 0x00, 0x00, 0x0f, 0xae, 0x0c, 0x25, 0x00, 0x20,
+            0x00, 0x00,
+        ];
+        cpu.ram[..code.len()].copy_from_slice(&code);
+        let expected = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
+        cpu.xmm[0] = expected;
+        cpu.rip = 0;
+
+        cpu.step().expect("decode and execute FXSAVE");
+        assert_eq!(
+            u128::from(cpu.rd_phys(0x20a0, 8)) | (u128::from(cpu.rd_phys(0x20a8, 8)) << 64),
+            expected,
+            "FXSAVE writes XMM0 into the architectural save area"
+        );
+
+        cpu.xmm[0] = 0;
+        cpu.step().expect("decode and execute FXRSTOR");
+        assert_eq!(
+            cpu.xmm[0], expected,
+            "FXRSTOR restores XMM0 after a simulated task switch"
+        );
+    }
+
     /// The software TLB caches a page's R/W permission, but the kernel can upgrade
     /// a page RO→RW (COW / dirty / access-flag set) and — seeing the live PTE
     /// already permits the access — never re-flush. A naive cache would then fault
@@ -6159,6 +6580,48 @@ mod tests {
             cpu.rd_phys(0x6010, 4),
             0x1111_2222,
             "the write landed at the frame, not the phys-0 fault scratch"
+        );
+    }
+
+    #[test]
+    fn rep_movsb_preserves_completed_progress_across_page_fault() {
+        let mut cpu = Cpu::new(64 * 1024);
+        let put = |cpu: &mut Cpu, at: usize, e: u64| {
+            cpu.ram[at..at + 8].copy_from_slice(&e.to_le_bytes());
+        };
+        // Map only virtual page zero to frame 0x6000. The destination starts eight
+        // bytes before its end, so REP MOVSB completes eight iterations and faults
+        // on the first byte of the deliberately-unmapped next page.
+        put(&mut cpu, 0x1000, 0x2000 | 0b11);
+        put(&mut cpu, 0x2000, 0x3000 | 0b11);
+        put(&mut cpu, 0x3000, 0x4000 | 0b11);
+        put(&mut cpu, 0x4000, 0x6000 | 0b11);
+        cpu.cr3 = 0x1000;
+        cpu.cr4 = 1 << 5; // PAE
+        cpu.efer = 1 << 8; // LME
+        cpu.cr0 = 1 << 31; // PG
+        cpu.cpl = 0;
+
+        let source: [u8; 16] = *b"partial-rep-copy";
+        cpu.ram[0x6100..0x6110].copy_from_slice(&source);
+        cpu.r[RSI] = 0x100;
+        cpu.r[RDI] = 0x0ff8;
+        cpu.r[RCX] = 16;
+        cpu.ram[0x6200..0x6202].copy_from_slice(&[0xf3, 0xa4]); // REP MOVSB
+        cpu.rip = 0x200;
+
+        cpu.step()
+            .expect("execute REP MOVSB through the normal decoder");
+
+        assert_eq!(&cpu.ram[0x6ff8..0x7000], &source[..8]);
+        assert_eq!(cpu.r[RSI], 0x108, "source resumes after completed bytes");
+        assert_eq!(cpu.r[RDI], 0x1000, "destination remains on faulting byte");
+        assert_eq!(cpu.r[RCX], 8, "only incomplete iterations remain");
+        assert_eq!(cpu.rip, 0x200, "REP restarts at the instruction prefix");
+        assert_eq!(cpu.cr2, 0x1000, "CR2 records the faulting destination");
+        assert!(
+            cpu.fault.is_none(),
+            "the page fault was delivered exactly once"
         );
     }
 

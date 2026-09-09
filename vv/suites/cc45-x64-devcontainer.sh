@@ -35,7 +35,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC45="$ROOT/vv/artifacts/cc45"
 
-command -v cargo >/dev/null 2>&1 || { echo "cc45-x64-devcontainer: SKIP — cargo absent"; exit 127; }
+command -v cargo >/dev/null 2>&1 || { echo "cc45-x64-devcontainer: FAIL — cargo absent"; exit 127; }
+
+# The merged repository's own digest-pinned devcontainer declaration is a live
+# input to this suite, not an optional fixture. Parse its image, features,
+# lifecycle, and editor customization through the production ingestor.
+cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
+    --test cc44_x64_boot holospaces_parses_its_own_unmodified_devcontainer_config \
+    -- --nocapture || exit 1
 
 # ── Section B: the build-capable disk (occupancy-index boot, O(content)) ──────
 # LIVE: an ≥ 8 GiB disk is declarable and boots promptly because only occupied
@@ -111,6 +118,9 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
             || { echo "cc45-x64-devcontainer: e2fsck rejected the 8 GiB ext4 geometry" >&2; rm -f "$_img"; exit 1; }
         rm -f "$_img"
         echo "cc45-x64-devcontainer: 8 GiB build-capable disk — occupancy boot O(content) + e2fsck-clean geometry PASS"
+    else
+        echo "cc45-x64-devcontainer: e2fsck differential oracle unavailable" >&2
+        exit 127
     fi
 
     # An ARBITRARY MULTI-LAYER image (the DoD's "multi-layer real images"): three
@@ -154,11 +164,13 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
                 rm -rf "$tmp"; exit 1
             fi
         else
-            echo "cc45-x64-devcontainer: (rootfs export helper unavailable — qemu differential skipped)"
+            echo "cc45-x64-devcontainer: rootfs export helper failed; differential cannot run" >&2
+            rm -rf "$tmp"; exit 1
         fi
         rm -rf "$tmp"
     else
-        echo "cc45-x64-devcontainer: qemu-system-x86_64 absent — differential pinned by the in-emulator witness (per cc45/SOURCE.txt)"
+        echo "cc45-x64-devcontainer: qemu-system-x86_64 differential oracle unavailable" >&2
+        exit 127
     fi
 
     # ── The DEPLOYED amd64 path, in a real browser ────────────────────────────
@@ -174,13 +186,20 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
         fi
         ( cd "$WEB" && node cc45-x64-boot-test.mjs ) || exit 1
     else
-        echo "cc45-x64-devcontainer: node/wasm-pack absent — deployed browser witness skipped (SKIP)"
+        echo "cc45-x64-devcontainer: node/wasm-pack required by deployed browser witness" >&2
+        exit 127
     fi
+
+    # The decisive self-hosting witness: build this repository's exact
+    # devcontainer, boot it on the production x86-64 core, survive sustained
+    # dynamic fork/exec, and compile + run a program with its real gcc toolchain.
+    CC45_DOGFOOD_ROOTFS="${CC45_DOGFOOD_ROOTFS:-$ROOT/target/cc45-dogfood/devcontainer-rootfs.tar}" \
+        "$ROOT/vv/heavy/cc45-dogfood-devcontainer.sh" || exit 1
     exit 0
 fi
 
-echo "cc45-x64-devcontainer: RED — build-capable disk (occupancy index) is LIVE; full bar pending."
-echo "  done:   occupancy-index boot path — an ≥ 8 GiB disk boots O(content) (witnesses above, green)."
-echo "  needed: the stock linux-amd64 busybox fixture (vv/artifacts/cc45/, run its build.sh) so the"
-echo "          differential witnesses + qemu-system-x86_64 oracle run. See issue #13 / CC-45."
+echo "cc45-x64-devcontainer: FAIL — required CC-45 artifact closure is absent." >&2
+echo "  passed: occupancy-index boot path — an ≥ 8 GiB disk boots O(content)." >&2
+echo "  missing: stock linux-amd64 busybox fixture (vv/artifacts/cc45/; run its build.sh)," >&2
+echo "           required for differential witnesses and the qemu-system-x86_64 oracle." >&2
 exit 1

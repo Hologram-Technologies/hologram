@@ -18,8 +18,8 @@ use std::path::Path;
 /// Directory holding the committed A64 batteries (`vv/artifacts/cc35/*.bin`,
 /// built from the `.s` sources by `vv/artifacts/cc35/build.sh`). Read at
 /// runtime (not `include_bytes!`) so the crate's test binary still compiles in a
-/// checkout that has not built the `vv/` fixture tree; the individual battery
-/// tests then skip with a note rather than failing to build.
+/// checkout that has not built the `vv/` fixture tree; an absent battery is a
+/// failed V&V prerequisite rather than a passing test.
 fn cc35_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vv/artifacts/cc35")
 }
@@ -47,8 +47,7 @@ fn run_battery(image: &[u8]) -> (Vec<u8>, u64) {
 #[test]
 fn the_a64_data_processing_battery_passes() {
     let Some(image) = battery("arith.bin") else {
-        eprintln!("cc35: arith.bin fixture absent (vv/artifacts/cc35 not built) — skipping");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: vv/artifacts/cc35/arith.bin");
     };
     let (console, status) = run_battery(&image);
     assert_eq!(console, b"PASS\n", "arith battery verdict");
@@ -61,8 +60,7 @@ fn the_a64_data_processing_battery_passes() {
 #[test]
 fn the_a64_load_store_battery_passes() {
     let Some(image) = battery("memory.bin") else {
-        eprintln!("cc35: memory.bin fixture absent (vv/artifacts/cc35 not built) — skipping");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: vv/artifacts/cc35/memory.bin");
     };
     let (console, status) = run_battery(&image);
     assert_eq!(console, b"PASS\n", "memory battery verdict");
@@ -75,8 +73,7 @@ fn the_a64_load_store_battery_passes() {
 #[test]
 fn the_a64_control_flow_battery_passes() {
     let Some(image) = battery("control.bin") else {
-        eprintln!("cc35: control.bin fixture absent (vv/artifacts/cc35 not built) — skipping");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: vv/artifacts/cc35/control.bin");
     };
     let (console, status) = run_battery(&image);
     assert_eq!(console, b"PASS\n", "control battery verdict");
@@ -89,8 +86,7 @@ fn the_a64_control_flow_battery_passes() {
 #[test]
 fn the_a64_simd_fp_battery_passes() {
     let Some(image) = battery("simd.bin") else {
-        eprintln!("cc35: simd.bin fixture absent (vv/artifacts/cc35 not built) — skipping");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: vv/artifacts/cc35/simd.bin");
     };
     let (console, status) = run_battery(&image);
     assert_eq!(console, b"PASS\n", "simd/fp battery verdict");

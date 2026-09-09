@@ -35,6 +35,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -98,10 +99,23 @@ jobs:
     needs: native-addon
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       id-token: write # OIDC trusted publishing + provenance attestation
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Require the exact-source release gate
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh
+
+      - name: Require complete crates.io publication first
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh publish-crates.yml
 
       # No `registry-url:` — that would seed .npmrc with an empty `_authToken` line that can shadow
       # OIDC. Auth is set explicitly in the publish step (OIDC by default; NPM_TOKEN when bootstrapping).

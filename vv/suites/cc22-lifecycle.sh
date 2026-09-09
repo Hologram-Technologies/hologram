@@ -14,7 +14,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc22-lifecycle: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc22-lifecycle: FAIL — cargo unavailable" >&2; exit 127; fi
 
 # (1) build-from-config + (2) ext4 injection (e2fsprogs oracle) — deterministic.
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release \
@@ -33,5 +33,6 @@ if command -v qemu-system-riscv64 >/dev/null 2>&1; then
         --test cc22_lifecycle -- --ignored --nocapture \
         the_os_runs_the_devcontainer_lifecycle_commands || exit 1
 else
-    echo "cc22-lifecycle: SKIP differential oracle — qemu-system-riscv64 unavailable" >&2
+    echo "cc22-lifecycle: FAIL — qemu-system-riscv64 differential oracle unavailable" >&2
+    exit 127
 fi

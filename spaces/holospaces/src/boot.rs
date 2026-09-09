@@ -182,7 +182,7 @@ pub mod devcontainer {
         /// `containerEnv` (`CC-23`).
         pub remote_env: BTreeMap<String, String>,
         /// The Dev Container *features* the config declares (`features`), in
-        /// declaration order. Each is an OCI artifact (publisher's `install.sh` +
+        /// canonical feature-id order. Each is an OCI artifact (publisher's `install.sh` +
         /// `devcontainer-feature.json`) imported by κ and *applied into the rootfs*
         /// — its `install.sh` runs in the devcontainer OS *before* the lifecycle
         /// commands, with the declared options passed as environment, exactly as a

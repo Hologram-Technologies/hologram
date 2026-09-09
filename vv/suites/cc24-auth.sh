@@ -14,7 +14,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc24-auth: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc24-auth: FAIL — cargo unavailable" >&2; exit 127; fi
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces --release \
     --test cc24_auth -- --ignored --nocapture \
     the_devcontainer_authenticates_with_github_over_the_network || exit 1
