@@ -8,15 +8,17 @@
 //!
 //! The rootfs is multi-GiB, so it is NOT a committed fixture: the `cc45-dogfood`
 //! vv suite builds this repo's devcontainer image, exports its rootfs, and points
-//! this `#[ignore]`d witness at it via `CC45_DOGFOOD_ROOTFS`. Run it through the
-//! suite, never bare. The static busybox (the CC-45 fixture) is overlaid only as the
-//! PID-1 bootstrap (it has no libc dependency); the WORKLOAD is the dynamic toolchain.
+//! this witness at it via `CC45_DOGFOOD_ROOTFS`. A bare test invocation delegates
+//! to that same suite and its digest-bound cache. The static busybox (the CC-45
+//! fixture) is overlaid only as the PID-1 bootstrap (it has no libc dependency);
+//! the WORKLOAD is the dynamic toolchain.
 
 use hologram_space::MemKappaStore;
-use holospaces::assembly::{stream_ext4_image_bootable, Layer};
+use holospaces::assembly::stream_ext4_image_bootable_streamed_layers;
 use holospaces::emulator::x64::{Cpu, Halt};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn cc45_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vv/artifacts/cc45")
@@ -73,6 +75,15 @@ const DOGFOOD_INIT: &[u8] = b"#!/usr/bin/busybox-static sh\n\
     export HOME=/root\n\
     echo DOGFOOD-PID1-UP\n\
     echo \"uname=$(/usr/bin/uname -m)\"\n\
+    echo DOGFOOD-PIPELINE-PREFLIGHT\n\
+    /usr/bin/gcc --version 2>&1 | $BB head -1\n\
+    echo \"DOGFOOD-PIPELINE-PREFLIGHT-RC:$?\"\n\
+    i=0\n\
+    while [ \"$i\" -lt 4096 ]; do\n\
+        /usr/bin/true || { echo \"DOGFOOD-FORK-EXEC-FAIL:$i\"; $BB poweroff -f; }\n\
+        i=$((i+1))\n\
+    done\n\
+    echo DOGFOOD-FORK-EXEC:4096\n\
     /usr/bin/gcc --version 2>&1 | $BB head -1\n\
     $BB cat > /tmp/h.c <<'CEOF'\n\
 #include <stdio.h>\n\
@@ -86,13 +97,31 @@ CEOF\n\
     $BB poweroff -f\n";
 
 #[test]
-#[ignore = "builds + boots THIS repo's real devcontainer; needs docker — run by the cc45-dogfood suite"]
 fn holospaces_builds_in_its_own_real_devcontainer() {
     // The suite builds the devcontainer image, exports its rootfs (uncompressed tar),
-    // and hands us the path. Bare `cargo test` does not set this — run via the suite.
-    let rootfs_path = std::env::var("CC45_DOGFOOD_ROOTFS").expect(
-        "CC45_DOGFOOD_ROOTFS — the exported real-devcontainer rootfs; run via the cc45-dogfood suite",
-    );
+    // and hands us the path. An unqualified workspace test is still required to
+    // execute this witness: delegate to that same production harness with an
+    // input-digest-bound cache, whose nested invocation receives the rootfs path.
+    // This is execution, not an ignore/skip/false pass; a missing Docker/Node
+    // prerequisite or any nested witness failure fails this outer test.
+    let rootfs_path = match std::env::var("CC45_DOGFOOD_ROOTFS") {
+        Ok(path) => path,
+        Err(_) => {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let cached = root.join("target/cc45-dogfood/devcontainer-rootfs.tar");
+            std::fs::create_dir_all(cached.parent().expect("dogfood cache parent"))
+                .expect("create dogfood cache directory");
+            let status = Command::new(root.join("vv/heavy/cc45-dogfood-devcontainer.sh"))
+                .env("CC45_DOGFOOD_ROOTFS", &cached)
+                .status()
+                .expect("start the required CC-45 production harness");
+            assert!(
+                status.success(),
+                "the required CC-45 production harness failed with {status}"
+            );
+            return;
+        }
+    };
     let rootfs = std::fs::read(&rootfs_path).expect("read the exported devcontainer rootfs");
 
     // The static-busybox PID-1 bootstrap, overlaid at /usr/bin/busybox-static (the
@@ -101,16 +130,18 @@ fn holospaces_builds_in_its_own_real_devcontainer() {
     let busybox = std::fs::read(cc45_dir().join("rootfs/busybox")).expect("cc45 static busybox");
     let bb_layer = ustar(&[("usr/bin/busybox-static", &busybox, 0o755)]);
 
-    let layers = [
-        Layer {
-            media_type: "application/vnd.oci.image.layer.v1.tar",
-            blob: &rootfs,
-        },
-        Layer {
-            media_type: "application/vnd.oci.image.layer.v1.tar",
-            blob: &bb_layer,
-        },
-    ];
+    // Move one layer at a time into the streaming overlay. Keeping the original
+    // multi-GiB tar alive after its files have entered the tree caused the V&V
+    // process to retain two complete copies of the devcontainer until shutdown,
+    // which made the required dogfood witness exceed a standard release runner.
+    let mut layers = [
+        ("application/vnd.oci.image.layer.v1.tar".to_owned(), rootfs),
+        (
+            "application/vnd.oci.image.layer.v1.tar".to_owned(),
+            bb_layer,
+        ),
+    ]
+    .into_iter();
 
     // Assemble the (multi-GiB) rootfs onto a build-capable disk, streaming the image
     // to a SPARSE temp FILE (not an in-RAM map) — recording only the occupied block
@@ -124,11 +155,16 @@ fn holospaces_builds_in_its_own_real_devcontainer() {
     let mut occ: Vec<u64> = Vec::new();
     let image_len = {
         let mut f = std::fs::File::create(&img_path).expect("create the temp ext4 image");
-        let geom = stream_ext4_image_bootable(&layers, DOGFOOD_INIT, DISK, |bi, b| {
-            occ.push(bi);
-            f.seek(SeekFrom::Start(bi * 4096)).unwrap();
-            f.write_all(b).unwrap();
-        })
+        let geom = stream_ext4_image_bootable_streamed_layers(
+            || Ok(layers.next()),
+            DOGFOOD_INIT,
+            DISK,
+            |bi, b| {
+                occ.push(bi);
+                f.seek(SeekFrom::Start(bi * 4096)).unwrap();
+                f.write_all(b).unwrap();
+            },
+        )
         .expect("assemble the real devcontainer rootfs into a bootable ext4");
         let il = geom.image_len();
         f.set_len(il).unwrap(); // the trailing sparse region reads back as zeros
@@ -176,11 +212,41 @@ fn holospaces_builds_in_its_own_real_devcontainer() {
         "the real devcontainer's dynamic glibc binaries run on the x86-64 core"
     );
     assert!(
+        console.contains("DOGFOOD-PIPELINE-PREFLIGHT-RC:0"),
+        "the gcc-to-busybox pipeline is clean before the fork/exec stress"
+    );
+    assert!(
+        console.contains("DOGFOOD-FORK-EXEC:4096") && !console.contains("DOGFOOD-FORK-EXEC-FAIL"),
+        "4096 consecutive dynamic fork/exec cycles complete without heap corruption"
+    );
+    for fatal in [
+        "segfault",
+        "Segmentation fault",
+        "panic",
+        "Panic",
+        "Oops",
+        "BUG:",
+        "general protection fault",
+        "invalid opcode:",
+        "malloc():",
+        "double free",
+        "corrupted size",
+    ] {
+        assert!(
+            !console.contains(fatal),
+            "guest console contains fatal kernel/userspace evidence `{fatal}`"
+        );
+    }
+    assert!(
         console.contains("gcc-compile-rc:0"),
         "the real gcc (cc1 → as → ld) compiled the program in-guest"
     );
     assert!(
         console.contains("DOGFOOD-GCC-BUILT:42"),
         "the guest RAN the binary the real toolchain just built — build-capable for real"
+    );
+    assert!(
+        console.contains("DOGFOOD-DONE"),
+        "the complete stress + build workload reached its terminal marker"
     );
 }

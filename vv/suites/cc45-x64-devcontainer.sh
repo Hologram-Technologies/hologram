@@ -189,6 +189,12 @@ if [ -f "$CC45/cc45.sha256" ] && [ -f "$CC45/linux/vmlinux.gz" ] && [ -f "$CC45/
         echo "cc45-x64-devcontainer: node/wasm-pack required by deployed browser witness" >&2
         exit 127
     fi
+
+    # The decisive self-hosting witness: build this repository's exact
+    # devcontainer, boot it on the production x86-64 core, survive sustained
+    # dynamic fork/exec, and compile + run a program with its real gcc toolchain.
+    CC45_DOGFOOD_ROOTFS="${CC45_DOGFOOD_ROOTFS:-$ROOT/target/cc45-dogfood/devcontainer-rootfs.tar}" \
+        "$ROOT/vv/heavy/cc45-dogfood-devcontainer.sh" || exit 1
     exit 0
 fi
 

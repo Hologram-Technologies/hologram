@@ -54,10 +54,9 @@ perf:
 
 # Run every test, including the release/heavy witnesses. Cucumber has its own harness, so its
 # package is routed through explicit complete target sets; nothing is ignored or skipped.
-# CC45 intentionally fails unless the caller supplies the exported rootfs of this repository's
-# devcontainer (produce it with `vv/heavy/cc45-dogfood-devcontainer.sh`).
+# CC45 self-hosts through `vv/heavy/cc45-dogfood-devcontainer.sh` when no exported rootfs is
+# supplied. The nested witness reuses only a source-digest + rootfs-SHA-256-bound cache.
 test:
-    test -f "${CC45_DOGFOOD_ROOTFS:?set CC45_DOGFOOD_ROOTFS to the exported repository devcontainer rootfs}"
     cargo nextest run --release --workspace --exclude hologram-conformance --run-ignored all --no-fail-fast
     cargo nextest run --release -p hologram-conformance --lib --test cc_gate --test cs_gate --test fat_thin --test meta_gate --run-ignored all --no-fail-fast
     cargo test -p hologram-conformance --test bdd

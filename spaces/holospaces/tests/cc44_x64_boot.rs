@@ -631,6 +631,7 @@ fn holospaces_parses_its_own_unmodified_devcontainer_config() {
             .map(|feature| feature.id.as_str())
             .collect::<Vec<_>>(),
         [
+            "ghcr.io/devcontainers/features/docker-outside-of-docker:1",
             "ghcr.io/devcontainers/features/node:1",
             "ghcr.io/devcontainers/features/rust:1",
             "ghcr.io/guiyomh/features/just:0",
