@@ -12,14 +12,19 @@ workflow="${1:-release.yml}"
 for attempt in $(seq 1 360); do
   runs="$(gh api \
     "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?head_sha=${GITHUB_SHA}&per_page=20")"
-  conclusion="$(printf '%s' "$runs" | jq -r '
-    [.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")]
+  conclusion="$(printf '%s' "$runs" | jq -r --arg sha "$GITHUB_SHA" '
+    [.workflow_runs[] | select(.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch"))]
     | sort_by(.created_at) | last | .conclusion // empty')"
-  status="$(printf '%s' "$runs" | jq -r '
-    [.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")]
+  status="$(printf '%s' "$runs" | jq -r --arg sha "$GITHUB_SHA" '
+    [.workflow_runs[] | select(.head_sha == $sha and (.event == "push" or .event == "workflow_dispatch"))]
     | sort_by(.created_at) | last | .status // empty')"
   if [ "$status" = "completed" ]; then
     if [ "$conclusion" = "success" ]; then
+      if [ "$workflow" = publish-crates.yml ]; then
+        # A green workflow_dispatch may have been dry_run=true. Only the exact
+        # public package bytes, independently rebuilt here, establish publication.
+        bash "$(dirname "${BASH_SOURCE[0]}")/publish-crates.sh" --verify-published
+      fi
       echo "${workflow} accepted exact source ${GITHUB_SHA}."
       exit 0
     fi

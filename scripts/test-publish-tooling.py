@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
 import unittest
+from unittest import mock
 
 
 spec = importlib.util.spec_from_file_location(
@@ -35,6 +39,33 @@ class PyPiPreflightTests(unittest.TestCase):
 
 
 class PublicReleaseTests(unittest.TestCase):
+    def test_requested_release_version_must_match_source(self):
+        with mock.patch.object(sys, "argv", ["verify-public-release.py", "--version", "0.0.0"]), \
+                mock.patch.object(verify_public_release, "workspace_version", return_value="0.13.1"):
+            with self.assertRaisesRegex(RuntimeError, "differs from checked-out workspace"):
+                verify_public_release.main()
+
+    def test_final_release_requires_independent_crate_bytes_and_propagates_failure(self):
+        for failure in (False, True):
+            with self.subTest(failure=failure), \
+                    mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "fixture/hologram", "GITHUB_SHA": "a" * 40, "GITHUB_TOKEN": "synthetic"}), \
+                    mock.patch.object(sys, "argv", ["verify-public-release.py", "--attempts", "1"]), \
+                    mock.patch.object(verify_public_release, "workspace_version", return_value="0.13.1"), \
+                    mock.patch.object(verify_public_release, "publishable_crates", return_value=[f"fixture-{index}" for index in range(19)]), \
+                    mock.patch.object(verify_public_release, "missing_workflow_runs", return_value=[]), \
+                    mock.patch.object(verify_public_release, "missing_public", return_value=[]), \
+                    mock.patch.object(verify_public_release.subprocess, "run") as run, \
+                    mock.patch("builtins.print") as emit:
+                if failure:
+                    run.side_effect = subprocess.CalledProcessError(1, "synthetic checker")
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        verify_public_release.main()
+                    emit.assert_not_called()
+                else:
+                    verify_public_release.main()
+                    emit.assert_called_once()
+                run.assert_called_once_with(["bash", "scripts/publish-crates.sh", "--verify-published"], check=True)
+
     def test_only_successful_push_for_exact_tag_and_commit_is_accepted(self):
         expected = {
             "event": "push",

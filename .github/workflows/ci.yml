@@ -274,7 +274,8 @@ jobs:
         run: |
           node scripts/test-publish-tooling.mjs
           python3 scripts/test-publish-tooling.py
-          bash -n scripts/publish-crates.sh scripts/create-source-release.sh
+          python3 scripts/test-published-crates.py
+          bash -n scripts/publish-crates.sh scripts/wait-release-gate.sh scripts/create-source-release.sh
 
   # Job 11: Deployment-substrate V&V — the container substrate's own conformance
   # catalog (CR/ST/SP/NW/HAL/CM/DI/RB/TR/SPINE classes; see

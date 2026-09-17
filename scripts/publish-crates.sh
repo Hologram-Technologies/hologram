@@ -10,29 +10,77 @@
 #
 #   CARGO_REGISTRY_TOKEN=… scripts/publish-crates.sh     # publish
 #   DRY_RUN=1               scripts/publish-crates.sh     # package + verify without publishing
+#   GITHUB_SHA=<commit>     scripts/publish-crates.sh --verify-published  # read-only exact closure
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
+verify_published=0
+if [ "$#" -eq 1 ] && [ "$1" = --verify-published ]; then
+  verify_published=1
+  # This mode never authenticates to the registry or enters the upload path.
+  unset CARGO_REGISTRY_TOKEN CARGO_REGISTRIES_CRATES_IO_TOKEN
+elif [ "$#" -ne 0 ]; then
+  echo "usage: publish-crates.sh [--verify-published]" >&2
+  exit 2
+fi
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
 
-order="$(cargo metadata --format-version 1 --no-deps | python3 -c '
-import sys, json
+require_exact_source() {
+  if [[ ! ${GITHUB_SHA:-} =~ ^[0-9a-f]{40}$ ]] \
+    || [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] \
+    || [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+    echo "published-crate verification requires the clean exact GITHUB_SHA checkout" >&2
+    exit 1
+  fi
+}
+if [ "$verify_published" = 1 ]; then
+  require_exact_source
+  # Cargo reads ancestor configuration before its own home; fail closed without
+  # opening those files. Never import ambient credential files or providers.
+  directory="$ROOT"
+  while :; do
+    for config in "$directory/.cargo/config" "$directory/.cargo/config.toml"; do
+      if [ -e "$config" ] || [ -L "$config" ]; then
+        echo "published-crate verification refuses inherited Cargo configuration: $config" >&2
+        exit 1
+      fi
+    done
+    [ "$directory" = / ] && break
+    directory="$(dirname "$directory")"
+  done
+  while IFS= read -r cargo_variable; do unset "$cargo_variable"; done < <(compgen -e | sed -n '/^CARGO_/p')
+  export CARGO_HOME="$stage/cargo-home"
+  mkdir -p "$CARGO_HOME"
+fi
+version="$(scripts/workspace-version.sh)"
+
+order="$(cargo metadata --locked --format-version 1 --no-deps | python3 -c '
+import sys, json, re
 m = json.load(sys.stdin)
 # Publishable workspace members: `publish` is null (any registry) or a non-empty list; [] = publish=false.
-members = {p["name"]: p for p in m["packages"] if p.get("publish") != []}
+packages = [p for p in m["packages"] if p.get("publish") != []]
+members = {p["name"]: p for p in packages}
+if len(packages) != 19 or len(members) != 19:
+    raise RuntimeError("expected exactly 19 distinct publishable workspace crates")
+if any(not re.fullmatch(r"[a-z][a-z0-9_-]*", p["name"]) or p["version"] != sys.argv[1] for p in packages):
+    raise RuntimeError("publishable crate identity/version differs from workspace")
 names = set(members)
 deps = {n: {d["name"] for d in members[n].get("dependencies", []) if d["name"] in names} for n in names}
-out, seen = [], set()
+out, seen, active = [], set(), set()
 def visit(n):
     if n in seen: return
-    seen.add(n)
+    if n in active: raise RuntimeError("cyclic publishable crate dependencies")
+    active.add(n)
     for d in sorted(deps[n]): visit(d)
+    active.remove(n)
+    seen.add(n)
     out.append(n)
 for n in sorted(names): visit(n)
 print(" ".join(out))
-')"
-version="$(scripts/workspace-version.sh)"
+' "$version")"
 echo "Publish order (${#order} chars): $order"
 
-if [ "${DRY_RUN:-0}" != "1" ] && [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+if [ "$verify_published" != 1 ] && [ "${DRY_RUN:-0}" != "1" ] && [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
   echo "CARGO_REGISTRY_TOKEN not set — refusing to publish." >&2
   exit 1
 fi
@@ -41,11 +89,9 @@ fi
 # upload. A retry therefore skips byte-identical packages, but refuses a same-version/different-byte
 # collision. This cannot make independent registry writes transactional; it does make interruption
 # recoverable and ensures no package is uploaded before the whole local graph is packageable.
-stage="$(mktemp -d)"
-trap 'rm -rf "$stage"' EXIT
 declare -A local_checksum remote_checksum
 package_args=(--locked --no-verify)
-[ "${ALLOW_DIRTY:-0}" = "1" ] && package_args+=(--allow-dirty)
+[ "$verify_published" != 1 ] && [ "${ALLOW_DIRTY:-0}" = "1" ] && package_args+=(--allow-dirty)
 package_selectors=()
 for crate in $order; do
   package_selectors+=(-p "$crate")
@@ -53,12 +99,21 @@ done
 
 registry_checksum() {
   local crate="$1" out="$2" code
-  code="$(curl --silent --show-error --output "$out" --write-out '%{http_code}' \
+  code="$(curl --disable --silent --show-error --output "$out" --write-out '%{http_code}' \
     --connect-timeout 10 --max-time 30 --retry 2 \
     --user-agent 'hologram-release/0.13 (+https://github.com/Hologram-Technologies/hologram)' \
     "https://crates.io/api/v1/crates/${crate}/${version}")"
   case "$code" in
-    200) python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"]["checksum"])' "$out" ;;
+    200) python3 -c '
+import json,re,sys
+with open(sys.argv[1]) as source: row=json.load(source)["version"]
+if row.get("crate") != sys.argv[2] or row.get("num") != sys.argv[3] or row.get("yanked") is not False:
+    raise RuntimeError("registry crate identity/version/status differs from requested release")
+checksum=row.get("checksum")
+if not isinstance(checksum,str) or not re.fullmatch(r"[0-9a-f]{64}",checksum):
+    raise RuntimeError("registry checksum is not lowercase SHA-256")
+print(checksum)
+' "$out" "$crate" "$version" ;;
     404) printf '%s\n' MISSING ;;
     *) echo "crates.io preflight failed for ${crate}@${version}: HTTP ${code}" >&2; return 1 ;;
   esac
@@ -69,12 +124,16 @@ registry_checksum() {
 # which would defeat the all-before-first-write preflight.
 echo "── package complete workspace release graph ──"
 CARGO_TARGET_DIR="$stage/target" cargo package "${package_selectors[@]}" "${package_args[@]}"
+if [ "$verify_published" = 1 ]; then require_exact_source; fi
 
 for crate in $order; do
-  echo "── checksum preflight ${crate}@${version} ──"
   artifact="$stage/target/package/${crate}-${version}.crate"
   [ -f "$artifact" ] || { echo "missing packaged artifact: $artifact" >&2; exit 1; }
   local_checksum["$crate"]="$(sha256sum "$artifact" | cut -d' ' -f1)"
+  echo "source package ${crate}@${version} sha256:${local_checksum[$crate]}"
+done
+for crate in $order; do
+  echo "── checksum preflight ${crate}@${version} ──"
   remote_checksum["$crate"]="$(registry_checksum "$crate" "$stage/${crate}.json")"
   if [ "${remote_checksum[$crate]}" != MISSING ] \
     && [ "${remote_checksum[$crate]}" != "${local_checksum[$crate]}" ]; then
@@ -82,6 +141,29 @@ for crate in $order; do
     exit 1
   fi
 done
+
+if [ "$verify_published" = 1 ]; then
+  for crate in $order; do
+    if [ "${remote_checksum[$crate]}" = MISSING ]; then
+      echo "published closure is missing ${crate}@${version}; workflow success is not publication" >&2
+      exit 1
+    fi
+    artifact="$stage/target/package/${crate}-${version}.crate"
+    downloaded="$stage/${crate}-public.crate"
+    curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+      --connect-timeout 10 --max-time 60 --retry 2 --max-filesize "$(stat -c %s "$artifact")" \
+      --user-agent 'hologram-release/0.13 (+https://github.com/Hologram-Technologies/hologram)' \
+      --output "$downloaded" "https://static.crates.io/crates/${crate}/${crate}-${version}.crate"
+    observed="$(sha256sum "$downloaded" | cut -d' ' -f1)"
+    if [ "$observed" != "${local_checksum[$crate]}" ]; then
+      echo "public bytes differ from exact source package for ${crate}@${version}" >&2
+      exit 1
+    fi
+  done
+  require_exact_source
+  echo "Complete exact published crate closure verified for ${GITHUB_SHA} (${version}; 19 crates)."
+  exit 0
+fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "DRY_RUN — complete package/checksum preflight passed; not publishing."
