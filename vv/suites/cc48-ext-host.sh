@@ -56,8 +56,8 @@ if [ -f "$WITNESS" ] \
    && grep -q 'NODE-EXTHOST-LIVE' "$WITNESS" 2>/dev/null \
    && grep -qE "no .browser. entrypoint|isNodeOnly" "$WITNESS" 2>/dev/null \
    && ! grep -qE 'additionalBuiltinExtensions.*EXT|extensions: \[EXT\]' "$WITNESS" 2>/dev/null; then
-    command -v node >/dev/null 2>&1 || { echo "cc48-ext-host: SKIP — node absent"; exit 127; }
-    command -v wasm-pack >/dev/null 2>&1 || { echo "cc48-ext-host: SKIP — wasm-pack absent"; exit 127; }
+    command -v node >/dev/null 2>&1 || { echo "cc48-ext-host: FAIL — node absent"; exit 127; }
+    command -v wasm-pack >/dev/null 2>&1 || { echo "cc48-ext-host: FAIL — wasm-pack absent"; exit 127; }
     # Artifact-drift gate: the committed Open VSX .vsix the witness installs must
     # re-derive to its pinned sha256 (Law L5) — a tampered/updated fixture is refused.
     ( cd "$ROOT/vv/artifacts/cc48" && sha256sum -c cc48.sha256 ) >/dev/null 2>&1 \

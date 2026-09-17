@@ -29,7 +29,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC44="$ROOT/vv/artifacts/cc44/linux"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc44-x64-linux: SKIP — cargo not available in this environment" >&2
+    echo "cc44-x64-linux: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 

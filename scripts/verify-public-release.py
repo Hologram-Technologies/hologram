@@ -101,6 +101,8 @@ def main() -> None:
     parser.add_argument("--attempts", type=int, default=360)
     parser.add_argument("--interval", type=int, default=30)
     args = parser.parse_args()
+    if args.version != workspace_version():
+        raise RuntimeError("requested release version differs from checked-out workspace")
     repository = os.environ.get("GITHUB_REPOSITORY")
     commit = os.environ.get("GITHUB_SHA")
     token = os.environ.get("GITHUB_TOKEN")
@@ -113,6 +115,10 @@ def main() -> None:
         missing = missing_workflow_runs(repository, commit, args.version, token)
         missing.extend(missing_public(args.version, crates))
         if not missing:
+            # HTTP presence and a green workflow do not bind published crate
+            # bytes to this source commit. Reuse the publisher's strict read-only
+            # complete-graph rebuild and public-byte comparison before accepting.
+            subprocess.run(["bash", "scripts/publish-crates.sh", "--verify-published"], check=True)
             print(f"complete public package closure verified for Hologram {args.version}")
             return
         print(f"public closure incomplete ({attempt}/{args.attempts}): {', '.join(missing)}")

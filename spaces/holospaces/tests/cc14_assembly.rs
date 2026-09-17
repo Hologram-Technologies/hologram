@@ -78,16 +78,12 @@ fn have_tool(name: &str) -> bool {
 #[test]
 fn the_oci_layers_assemble_into_a_clean_mountable_ext4_rootfs() {
     if !have_tool("e2fsck") || !have_tool("debugfs") {
-        eprintln!("SKIP: e2fsprogs (e2fsck/debugfs) not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs (e2fsck/debugfs) not available");
     }
-    // Skip when the CC-10 OCI image fixture is absent (vv/artifacts not materialized) — the same
-    // skip-when-absent discipline the other CC witnesses use. Without this, a runner that HAS
-    // e2fsprogs but lacks the fixture (e.g. the generic `cargo test --workspace` job) would panic
-    // in ingest() rather than skip. The gated witness is holospaces-vv-heavy (artifacts present).
+    // The gated witness is holospaces-vv-heavy, where the artifact closure must
+    // be materialized. A missing OCI fixture is a failed prerequisite.
     if !image_dir().join("oci-layout").exists() {
-        eprintln!("SKIP: cc10 OCI image fixture absent (vv/artifacts not materialized)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc10 OCI image fixture absent (vv/artifacts not materialized)");
     }
 
     let store = MemKappaStore::new();

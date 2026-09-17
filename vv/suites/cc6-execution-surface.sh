@@ -11,7 +11,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc6-execution-surface: SKIP — cargo not available in this environment" >&2
+    echo "cc6-execution-surface: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 

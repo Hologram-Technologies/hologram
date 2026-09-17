@@ -216,8 +216,7 @@ fn container_env_and_remote_env_are_both_honoured() {
 #[ignore]
 fn the_os_runs_the_devcontainer_lifecycle_commands() {
     if !have("qemu-system-riscv64") {
-        eprintln!("SKIP: qemu-system-riscv64 not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: qemu-system-riscv64 not available");
     }
     let dc = devcontainer::parse(CONFIG).expect("parse");
     let init = dc.lifecycle_init();
@@ -419,8 +418,7 @@ fn the_deployed_devcontainer_boots_a_persistent_interactive_shell() {
 #[test]
 fn the_lifecycle_init_is_injected_into_the_assembled_rootfs() {
     if !have("e2fsck") || !have("debugfs") {
-        eprintln!("SKIP: e2fsprogs (e2fsck/debugfs) not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs (e2fsck/debugfs) not available");
     }
     let dc = devcontainer::parse(CONFIG).expect("parse");
     let init = dc.lifecycle_init();

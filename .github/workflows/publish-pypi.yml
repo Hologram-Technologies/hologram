@@ -22,6 +22,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -101,10 +102,19 @@ jobs:
     needs: [wheel-linux, wheel-native]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       id-token: write # OIDC trusted publishing (mints the short-lived PyPI token)
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Require the exact-source release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh
+      - name: Require complete npm publication first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/wait-release-gate.sh publish-npm.yml
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: wheel-*

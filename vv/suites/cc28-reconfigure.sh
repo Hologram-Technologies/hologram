@@ -25,6 +25,6 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc28-reconfigure: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc28-reconfigure: FAIL — cargo unavailable" >&2; exit 127; fi
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --test cc28_reconfigure -- --nocapture || exit 1

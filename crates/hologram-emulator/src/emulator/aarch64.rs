@@ -258,6 +258,242 @@ impl Cpu {
         self.pc
     }
 
+    /// Attach the shared content-addressed block device to this core.  This is
+    /// also useful before privileged boot (for lifecycle orchestration and V&V):
+    /// attaching a disk creates the platform state without changing CPU/RAM.
+    pub fn attach_disk(&mut self, image: Vec<u8>) {
+        if self.sys.is_none() {
+            self.sys = Some(Box::new(Sys::new()));
+        }
+        self.sys_mut().virtio = Some(super::VirtioBlk::new(image));
+    }
+
+    /// Canonical suspend image for the AArch64 core.  It contains architectural
+    /// CPU state, RAM, privileged/timer/interrupt state, console state, workspace,
+    /// and the sparse κ-disk.  Reconstructable caches and live network transports
+    /// are deliberately excluded; the latter reconnect after resume, as on the
+    /// RISC-V lifecycle path.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.ram.len() + 1024);
+        out.extend_from_slice(b"HGA64SN\0");
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&self.base.to_le_bytes());
+        out.extend_from_slice(&self.sp.to_le_bytes());
+        out.extend_from_slice(&self.pc.to_le_bytes());
+        for value in self.x {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in self.v {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.extend_from_slice(&self.flags.pack().to_le_bytes());
+        out.extend_from_slice(&self.excl.unwrap_or(u64::MAX).to_le_bytes());
+        out.extend_from_slice(&(self.console.len() as u64).to_le_bytes());
+        out.extend_from_slice(&self.console);
+        match self.sys.as_deref() {
+            None => out.push(0),
+            Some(sys) => {
+                out.push(1);
+                out.push(sys.el);
+                out.push(u8::from(sys.spsel));
+                for value in [
+                    sys.daif,
+                    sys.sp_el0,
+                    sys.sp_el1,
+                    sys.elr_el1,
+                    sys.spsr_el1,
+                    sys.esr_el1,
+                    sys.far_el1,
+                    sys.vbar_el1,
+                    sys.sctlr_el1,
+                    sys.ttbr0_el1,
+                    sys.ttbr1_el1,
+                    sys.tcr_el1,
+                    sys.par_el1,
+                    sys.cntfrq,
+                    sys.counter,
+                    sys.last_net_pump,
+                    sys.cntp_ctl,
+                    sys.cntp_cval,
+                    sys.cntv_ctl,
+                    sys.cntv_cval,
+                    sys.cntvoff,
+                ] {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&(sys.regs.len() as u64).to_le_bytes());
+                for (register, value) in &sys.regs {
+                    out.extend_from_slice(&register.to_le_bytes());
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                match sys.fault {
+                    None => out.push(0),
+                    Some((address, write, instruction)) => {
+                        out.push(1);
+                        out.extend_from_slice(&address.to_le_bytes());
+                        out.push(u8::from(write));
+                        out.push(u8::from(instruction));
+                    }
+                }
+                out.push(u8::from(sys.gic.dist_enable));
+                out.push(u8::from(sys.gic.cpu_enable));
+                out.extend_from_slice(&sys.gic.pmr.to_le_bytes());
+                for bank in [&sys.gic.enabled, &sys.gic.pending, &sys.gic.active] {
+                    for value in bank {
+                        out.extend_from_slice(&value.to_le_bytes());
+                    }
+                }
+                for value in sys.gic.cfg {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+                out.extend_from_slice(&(sys.uart.input.len() as u64).to_le_bytes());
+                out.extend_from_slice(&sys.uart.input);
+                out.extend_from_slice(&(sys.uart.in_cursor as u64).to_le_bytes());
+                out.push(u8::from(sys.halted));
+                out.extend_from_slice(&sys.halt_status.to_le_bytes());
+                super::snapshot_virtio_blk(sys.virtio.as_ref(), &mut out);
+                super::snapshot_virtio_9p(sys.virtio9p.as_ref(), &mut out);
+            }
+        }
+        out.extend_from_slice(&(self.ram.len() as u64).to_le_bytes());
+        out.extend_from_slice(&self.ram);
+        out
+    }
+
+    /// Restore a core produced by [`Cpu::snapshot`].  The decoder is strict:
+    /// wrong architecture/version, invalid booleans/enums, duplicate map keys,
+    /// non-canonical sparse disks, and trailing bytes are rejected.
+    pub fn restore(bytes: &[u8]) -> Result<Self, super::SnapshotError> {
+        use super::SnapshotError;
+        let mut r = super::SnapshotReader::new(bytes);
+        if r.bytes(8)? != b"HGA64SN\0" || r.u32()? != 1 {
+            return Err(SnapshotError::Malformed);
+        }
+        let base = r.u64()?;
+        let sp = r.u64()?;
+        let pc = r.u64()?;
+        let mut x = [0; 31];
+        for value in &mut x {
+            *value = r.u64()?;
+        }
+        let mut v = [0; 32];
+        for value in &mut v {
+            *value = r.u128()?;
+        }
+        let packed_flags = r.u32()?;
+        if packed_flags & !0xf000_0000 != 0 {
+            return Err(SnapshotError::Malformed);
+        }
+        let flags = Nzcv {
+            n: packed_flags & (1 << 31) != 0,
+            z: packed_flags & (1 << 30) != 0,
+            c: packed_flags & (1 << 29) != 0,
+            v: packed_flags & (1 << 28) != 0,
+        };
+        let raw_excl = r.u64()?;
+        let excl = (raw_excl != u64::MAX).then_some(raw_excl);
+        let console_len = usize::try_from(r.u64()?).map_err(|_| SnapshotError::Malformed)?;
+        let console = r.bytes(console_len)?.to_vec();
+        let sys = match r.u8()? {
+            0 => None,
+            1 => {
+                let mut sys = Sys::new();
+                sys.el = r.u8()?;
+                if sys.el > 1 {
+                    return Err(SnapshotError::Malformed);
+                }
+                sys.spsel = read_bool(&mut r)?;
+                let fields = [
+                    &mut sys.daif,
+                    &mut sys.sp_el0,
+                    &mut sys.sp_el1,
+                    &mut sys.elr_el1,
+                    &mut sys.spsr_el1,
+                    &mut sys.esr_el1,
+                    &mut sys.far_el1,
+                    &mut sys.vbar_el1,
+                    &mut sys.sctlr_el1,
+                    &mut sys.ttbr0_el1,
+                    &mut sys.ttbr1_el1,
+                    &mut sys.tcr_el1,
+                    &mut sys.par_el1,
+                    &mut sys.cntfrq,
+                    &mut sys.counter,
+                    &mut sys.last_net_pump,
+                    &mut sys.cntp_ctl,
+                    &mut sys.cntp_cval,
+                    &mut sys.cntv_ctl,
+                    &mut sys.cntv_cval,
+                    &mut sys.cntvoff,
+                ];
+                for field in fields {
+                    *field = r.u64()?;
+                }
+                let register_count = r.u64()?;
+                for _ in 0..register_count {
+                    if sys.regs.insert(r.u32()?, r.u64()?).is_some() {
+                        return Err(SnapshotError::Malformed);
+                    }
+                }
+                sys.fault = match r.u8()? {
+                    0 => None,
+                    1 => Some((r.u64()?, read_bool(&mut r)?, read_bool(&mut r)?)),
+                    _ => return Err(SnapshotError::Malformed),
+                };
+                sys.gic.dist_enable = read_bool(&mut r)?;
+                sys.gic.cpu_enable = read_bool(&mut r)?;
+                sys.gic.pmr = r.u32()?;
+                for bank in [
+                    &mut sys.gic.enabled,
+                    &mut sys.gic.pending,
+                    &mut sys.gic.active,
+                ] {
+                    for value in bank {
+                        *value = r.u64()?;
+                    }
+                }
+                for value in &mut sys.gic.cfg {
+                    *value = r.u32()?;
+                }
+                let input_len = usize::try_from(r.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                sys.uart.input = r.bytes(input_len)?.to_vec();
+                sys.uart.in_cursor =
+                    usize::try_from(r.u64()?).map_err(|_| SnapshotError::Malformed)?;
+                if sys.uart.in_cursor > sys.uart.input.len() {
+                    return Err(SnapshotError::Malformed);
+                }
+                sys.halted = read_bool(&mut r)?;
+                sys.halt_status = r.u64()?;
+                sys.virtio = super::restore_virtio_blk(&mut r)?;
+                sys.virtio9p = super::restore_virtio_9p(&mut r)?;
+                Some(Box::new(sys))
+            }
+            _ => return Err(SnapshotError::Malformed),
+        };
+        let ram_len = usize::try_from(r.u64()?).map_err(|_| SnapshotError::Malformed)?;
+        let ram = r.bytes(ram_len)?.to_vec();
+        if !r.rest().is_empty()
+            || pc < base
+            || sp < base
+            || pc > base.saturating_add(ram_len as u64)
+        {
+            return Err(SnapshotError::Malformed);
+        }
+        Ok(Self {
+            x,
+            sp,
+            pc,
+            flags,
+            ram,
+            base,
+            console,
+            sys,
+            excl,
+            v,
+        })
+    }
+
     /// Run up to `max_steps` instructions, stopping at the first `Halt` (an
     /// `exit`, a trap, or the budget). The liveness bound mirrors the RISC-V
     /// core's [`run`](super::Emulator::run).
@@ -2536,6 +2772,14 @@ impl Cpu {
         } else {
             base
         }
+    }
+}
+
+fn read_bool(r: &mut super::SnapshotReader<'_>) -> Result<bool, super::SnapshotError> {
+    match r.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(super::SnapshotError::Malformed),
     }
 }
 

@@ -28,6 +28,6 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc29-read-verify-boundary: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc29-read-verify-boundary: FAIL — cargo unavailable" >&2; exit 127; fi
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --test cc29_read_verify_boundary -- --nocapture || exit 1

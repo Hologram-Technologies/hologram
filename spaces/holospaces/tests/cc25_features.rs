@@ -33,7 +33,7 @@ fn art() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vv/artifacts")
 }
 /// True when the OCI-image fixtures this witness ingests are present. When the
-/// 170 MiB `vv/` tree is not imported the fixture-dependent tests skip with a note.
+/// 170 MiB `vv/` tree is not imported, fixture-dependent V&V fails.
 fn cc25_fixtures_present() -> bool {
     art().join("cc25/feature/oci-layout").exists() && art().join("cc22/image/oci-layout").exists()
 }
@@ -138,8 +138,7 @@ fn assemble(store: &MemKappaStore) -> (Vec<u8>, Vec<u8>) {
 #[test]
 fn the_feature_is_staged_and_scheduled_in_the_rootfs() {
     if !cc25_fixtures_present() {
-        eprintln!("SKIP cc25 the_feature_is_staged_and_scheduled_in_the_rootfs: fixture vv/artifacts/cc25 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc25 the_feature_is_staged_and_scheduled_in_the_rootfs: fixture vv/artifacts/cc25 absent (holospaces vv/ tree not imported)");
     }
     let store = MemKappaStore::new();
     let (init, rootfs) = assemble(&store);
@@ -169,8 +168,7 @@ fn the_feature_is_staged_and_scheduled_in_the_rootfs() {
     );
 
     if !have("e2fsck") || !have("debugfs") {
-        eprintln!("SKIP: e2fsprogs not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs not available");
     }
     let img = std::env::temp_dir().join(format!("cc25-{}.img", std::process::id()));
     std::fs::write(&img, &rootfs).unwrap();
@@ -250,8 +248,7 @@ fn the_emulator_installs_the_feature() {
 #[ignore]
 fn qemu_installs_the_feature() {
     if !have("qemu-system-riscv64") {
-        eprintln!("SKIP: qemu-system-riscv64 not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: qemu-system-riscv64 not available");
     }
     let store = MemKappaStore::new();
     let (_init, rootfs) = assemble(&store);

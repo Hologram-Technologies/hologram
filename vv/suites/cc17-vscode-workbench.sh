@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then
-    echo "cc17-vscode-workbench: SKIP — node not available in this environment" >&2
+    echo "cc17-vscode-workbench: FAIL — node not available in this environment" >&2
     exit 127
 fi
 cd "$WEB"

@@ -33,7 +33,7 @@ fn image_dir() -> PathBuf {
 
 /// True when the `vv/artifacts/cc10` fixture tree (a real BuildKit OCI image) is
 /// present in this checkout. When absent (the 170 MiB `vv/` tree is not imported),
-/// the fixture-dependent tests below skip with a note rather than failing.
+/// an absent fixture fails the fixture-dependent V&V tests.
 fn cc10_fixtures_present() -> bool {
     image_dir().join("oci-layout").exists()
 }
@@ -62,8 +62,7 @@ fn ingest(store: &MemKappaStore) -> Result<IngestedImage, OciError> {
 #[test]
 fn a_real_oci_image_ingests_as_verified_kappa_content() {
     if !cc10_fixtures_present() {
-        eprintln!("SKIP cc10 a_real_oci_image_ingests_as_verified_kappa_content: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc10 a_real_oci_image_ingests_as_verified_kappa_content: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
     }
     let store = MemKappaStore::new();
     let img = ingest(&store).expect("ingest the real BuildKit OCI image");
@@ -100,8 +99,7 @@ fn a_real_oci_image_ingests_as_verified_kappa_content() {
 #[test]
 fn a_forged_image_blob_is_refused() {
     if !cc10_fixtures_present() {
-        eprintln!("SKIP cc10 a_forged_image_blob_is_refused: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc10 a_forged_image_blob_is_refused: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
     }
     let store = MemKappaStore::new();
     let layout = std::fs::read(image_dir().join("oci-layout")).unwrap();
@@ -127,8 +125,7 @@ fn a_forged_image_blob_is_refused() {
 #[test]
 fn the_devcontainer_source_identity_is_reproducible() {
     if !cc10_fixtures_present() {
-        eprintln!("SKIP cc10 the_devcontainer_source_identity_is_reproducible: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc10 the_devcontainer_source_identity_is_reproducible: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
     }
     let store_a = MemKappaStore::new();
     let store_b = MemKappaStore::new();
@@ -155,8 +152,7 @@ fn the_devcontainer_source_identity_is_reproducible() {
 #[test]
 fn the_ingested_layer_is_kappa_disk_content() {
     if !cc10_fixtures_present() {
-        eprintln!("SKIP cc10 the_ingested_layer_is_kappa_disk_content: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc10 the_ingested_layer_is_kappa_disk_content: fixture vv/artifacts/cc10 absent (holospaces vv/ tree not imported)");
     }
     pollster::block_on(async {
         let store = MemKappaStore::new();

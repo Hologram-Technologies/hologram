@@ -37,13 +37,13 @@ SEARCH="$WEB/builtin-extensions/holospace-search"
 ( cd "$SEARCH/vendor/ignore" && sha256sum -c SHA256SUMS ) >/dev/null 2>&1 \
     || { echo "cc52-search: artifact drift in $SEARCH/vendor/ignore/SHA256SUMS" >&2; exit 1; }
 
-command -v node >/dev/null 2>&1 || { echo "cc52-search: SKIP — node absent"; exit 127; }
+command -v node >/dev/null 2>&1 || { echo "cc52-search: FAIL — node absent"; exit 127; }
 
 # (1) Core witness — the search engine, fast + deterministic (no browser).
 ( cd "$SEARCH" && node search-core.test.cjs ) || exit 1
 
 # (2) Deployed witness — find-in-files + replace in the real workbench (Chromium).
-command -v wasm-pack >/dev/null 2>&1 || { echo "cc52-search: SKIP deployed witness — wasm-pack absent"; exit 127; }
+command -v wasm-pack >/dev/null 2>&1 || { echo "cc52-search: FAIL deployed witness — wasm-pack absent"; exit 127; }
 # Build the wasm peer (holospace-fs boots it to provide the 9p workspace the
 # search providers read) so the witness runs against the product.
 if [ ! -f "$WEB/pkg/holospaces_web_bg.wasm" ]; then

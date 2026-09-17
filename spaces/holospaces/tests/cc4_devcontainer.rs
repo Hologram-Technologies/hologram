@@ -49,7 +49,7 @@ fn artifact(name: &str) -> std::path::PathBuf {
 
 /// True when the `vv/artifacts/cc4` fixtures (the authoritative Dev Container base
 /// schema + the imported template configs) are present. When the 170 MiB `vv/`
-/// tree is not imported the schema-dependent tests skip with a note.
+/// tree is not imported, the schema-dependent tests fail as incomplete V&V.
 fn cc4_fixtures_present() -> bool {
     artifact("devContainer.base.schema.json").exists()
 }
@@ -88,8 +88,7 @@ fn repo_config() -> Vec<u8> {
 #[test]
 fn real_configs_conform_to_the_dev_container_schema() {
     if !cc4_fixtures_present() {
-        eprintln!("SKIP cc4 real_configs_conform_to_the_dev_container_schema: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc4 real_configs_conform_to_the_dev_container_schema: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
     }
     let schema = schema();
     for (name, raw) in template_configs() {
@@ -164,8 +163,7 @@ fn a_features_only_config_ingests_as_default_image() {
 #[test]
 fn schema_rejects_a_nonconformant_config() {
     if !cc4_fixtures_present() {
-        eprintln!("SKIP cc4 schema_rejects_a_nonconformant_config: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc4 schema_rejects_a_nonconformant_config: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
     }
     let schema = schema();
     // `forwardPorts` must be an array per the schema; a string violates it.
@@ -181,8 +179,7 @@ fn schema_rejects_a_nonconformant_config() {
 #[test]
 fn devcontainer_holospace_is_reproducible_from_its_source() {
     if !cc4_fixtures_present() {
-        eprintln!("SKIP cc4 devcontainer_holospace_is_reproducible_from_its_source: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc4 devcontainer_holospace_is_reproducible_from_its_source: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
     }
     let configs = template_configs();
     let cfg = &configs.iter().find(|(n, _)| n == "rust").unwrap().1;
@@ -214,8 +211,7 @@ fn devcontainer_holospace_is_reproducible_from_its_source() {
 #[test]
 fn devcontainer_extensions_are_parsed_from_the_spec_customizations() {
     if !cc4_fixtures_present() {
-        eprintln!("SKIP cc4 devcontainer_extensions_are_parsed_from_the_spec_customizations: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc4 devcontainer_extensions_are_parsed_from_the_spec_customizations: fixture vv/artifacts/cc4 absent (holospaces vv/ tree not imported)");
     }
     let schema = schema();
     let config = serde_json::json!({

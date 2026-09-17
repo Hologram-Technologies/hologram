@@ -18,7 +18,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
 
 if ! command -v node >/dev/null 2>&1; then
-    echo "cc17-workbench-fs: SKIP — node not available" >&2; exit 127
+    echo "cc17-workbench-fs: FAIL — node not available" >&2; exit 127
 fi
 cd "$WEB"
 [ -d node_modules/playwright ] || npm install playwright >/dev/null 2>&1

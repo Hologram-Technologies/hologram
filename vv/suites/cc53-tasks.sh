@@ -32,7 +32,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB="$ROOT/spaces/holospaces-browser/web"
 TASKS="$WEB/builtin-extensions/holospace-tasks"
 
-command -v node >/dev/null 2>&1 || { echo "cc53-tasks: SKIP — node absent"; exit 127; }
+command -v node >/dev/null 2>&1 || { echo "cc53-tasks: FAIL — node absent"; exit 127; }
 
 # (1) Core witness — the tasks engine, fast + deterministic (no browser).
 ( cd "$TASKS" && node tasks-core.test.cjs ) || exit 1
@@ -40,7 +40,7 @@ command -v node >/dev/null 2>&1 || { echo "cc53-tasks: SKIP — node absent"; ex
 # (2) Deployed witness — tasks.json tasks run in the devcontainer (Chromium). The
 # guest task-runner agent the witness drives is compiled into the wasm peer's
 # devcontainer /init (machine.rs), so the peer must be built from current source.
-command -v wasm-pack >/dev/null 2>&1 || { echo "cc53-tasks: SKIP deployed witness — wasm-pack absent"; exit 127; }
+command -v wasm-pack >/dev/null 2>&1 || { echo "cc53-tasks: FAIL deployed witness — wasm-pack absent"; exit 127; }
 if [ ! -f "$WEB/pkg/holospaces_web_bg.wasm" ]; then
     "$ROOT/vv/lib/build-wasm-peer.sh" "$ROOT" || exit 1
 fi

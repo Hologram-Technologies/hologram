@@ -15,7 +15,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc15-virtio-9p: SKIP — cargo not available in this environment" >&2
+    echo "cc15-virtio-9p: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 

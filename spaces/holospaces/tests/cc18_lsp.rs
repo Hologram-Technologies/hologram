@@ -180,8 +180,7 @@ fn the_language_server_and_session_are_in_the_assembled_rootfs() {
     );
 
     if !have("e2fsck") || !have("debugfs") {
-        eprintln!("SKIP: e2fsprogs (e2fsck/debugfs) not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs (e2fsck/debugfs) not available");
     }
     let store = MemKappaStore::new();
     let rootfs = assemble(&store);

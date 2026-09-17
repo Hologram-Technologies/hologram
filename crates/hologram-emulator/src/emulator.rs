@@ -33,6 +33,7 @@
 //! installs no trap vector.
 
 use alloc::collections::BTreeMap;
+use alloc::string::String;
 #[cfg(not(feature = "std"))]
 #[allow(unused_imports)]
 use alloc::{boxed::Box, vec, vec::Vec};
@@ -589,11 +590,197 @@ impl<'a> SnapshotReader<'a> {
     fn u64(&mut self) -> Result<u64, SnapshotError> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
+    fn u128(&mut self) -> Result<u128, SnapshotError> {
+        Ok(u128::from_le_bytes(self.take(16)?.try_into().unwrap()))
+    }
     fn bytes(&mut self, n: usize) -> Result<&'a [u8], SnapshotError> {
         self.take(n)
     }
     fn rest(&self) -> &'a [u8] {
         &self.bytes[self.pos..]
+    }
+}
+
+/// Encode the shared VirtIO block transport and its sparse, content-addressed
+/// disk.  The ISA cores call this one codec so a κ-disk has exactly one snapshot
+/// representation regardless of the processor driving the device (Law L4).
+fn snapshot_virtio_blk(dev: Option<&VirtioBlk>, out: &mut Vec<u8>) {
+    let Some(dev) = dev else {
+        out.push(0);
+        return;
+    };
+    out.push(1);
+    out.extend_from_slice(&dev.status.to_le_bytes());
+    out.extend_from_slice(&dev.device_features_sel.to_le_bytes());
+    out.extend_from_slice(&dev.driver_features_sel.to_le_bytes());
+    for value in dev.driver_features {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&dev.queue_sel.to_le_bytes());
+    out.extend_from_slice(&dev.queue_num.to_le_bytes());
+    out.extend_from_slice(&dev.queue_ready.to_le_bytes());
+    out.extend_from_slice(&dev.desc_addr.to_le_bytes());
+    out.extend_from_slice(&dev.avail_addr.to_le_bytes());
+    out.extend_from_slice(&dev.used_addr.to_le_bytes());
+    out.extend_from_slice(&dev.last_avail.to_le_bytes());
+    out.extend_from_slice(&dev.interrupt_status.to_le_bytes());
+    out.push(u8::from(dev.irq_pending));
+    let (sectors, occupied) = dev.disk.occupied();
+    out.extend_from_slice(&sectors.to_le_bytes());
+    out.extend_from_slice(&(occupied.len() as u64).to_le_bytes());
+    for (index, sector) in occupied {
+        out.extend_from_slice(&index.to_le_bytes());
+        out.extend_from_slice(&sector);
+    }
+}
+
+/// Decode [`snapshot_virtio_blk`], rejecting duplicate/out-of-range sectors and
+/// non-canonical zero sectors rather than accepting ambiguous snapshot bytes.
+fn restore_virtio_blk(r: &mut SnapshotReader<'_>) -> Result<Option<VirtioBlk>, SnapshotError> {
+    match r.u8()? {
+        0 => Ok(None),
+        1 => {
+            let status = r.u32()?;
+            let device_features_sel = r.u32()?;
+            let driver_features_sel = r.u32()?;
+            let driver_features = [r.u32()?, r.u32()?];
+            let queue_sel = r.u32()?;
+            let queue_num = r.u32()?;
+            let queue_ready = r.u32()?;
+            let desc_addr = r.u64()?;
+            let avail_addr = r.u64()?;
+            let used_addr = r.u64()?;
+            let last_avail = r.u16()?;
+            let interrupt_status = r.u32()?;
+            let irq_pending = match r.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(SnapshotError::Malformed),
+            };
+            let sectors = r.u64()?;
+            let count = r.u64()?;
+            if count > sectors {
+                return Err(SnapshotError::Malformed);
+            }
+            let mut occupied = Vec::new();
+            let mut previous = None;
+            for _ in 0..count {
+                let index = r.u64()?;
+                if index >= sectors || previous.is_some_and(|p| index <= p) {
+                    return Err(SnapshotError::Malformed);
+                }
+                let mut sector = [0; DISK_SECTOR];
+                sector.copy_from_slice(r.bytes(DISK_SECTOR)?);
+                if sector.iter().all(|byte| *byte == 0) {
+                    return Err(SnapshotError::Malformed);
+                }
+                occupied.push((index, sector));
+                previous = Some(index);
+            }
+            let disk =
+                KappaBacking::from_occupancy(Box::new(MemKappaStore::new()), sectors, occupied);
+            Ok(Some(VirtioBlk {
+                disk,
+                status,
+                device_features_sel,
+                driver_features_sel,
+                driver_features,
+                queue_sel,
+                queue_num,
+                queue_ready,
+                desc_addr,
+                avail_addr,
+                used_addr,
+                last_avail,
+                interrupt_status,
+                irq_pending,
+            }))
+        }
+        _ => Err(SnapshotError::Malformed),
+    }
+}
+
+fn snapshot_virtio_9p(dev: Option<&Virtio9p>, out: &mut Vec<u8>) {
+    let Some(dev) = dev else {
+        out.push(0);
+        return;
+    };
+    out.push(1);
+    out.extend_from_slice(&dev.status.to_le_bytes());
+    out.extend_from_slice(&dev.device_features_sel.to_le_bytes());
+    out.extend_from_slice(&dev.driver_features_sel.to_le_bytes());
+    for value in dev.driver_features {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out.extend_from_slice(&dev.queue_num.to_le_bytes());
+    out.extend_from_slice(&dev.queue_ready.to_le_bytes());
+    out.extend_from_slice(&dev.desc_addr.to_le_bytes());
+    out.extend_from_slice(&dev.avail_addr.to_le_bytes());
+    out.extend_from_slice(&dev.used_addr.to_le_bytes());
+    out.extend_from_slice(&dev.last_avail.to_le_bytes());
+    out.extend_from_slice(&dev.interrupt_status.to_le_bytes());
+    out.push(u8::from(dev.irq_pending));
+    out.extend_from_slice(&(dev.tag.len() as u64).to_le_bytes());
+    out.extend_from_slice(dev.tag.as_bytes());
+    out.extend_from_slice(&(dev.fids.len() as u64).to_le_bytes());
+    for (fid, inode) in &dev.fids {
+        out.extend_from_slice(&fid.to_le_bytes());
+        out.extend_from_slice(&inode.to_le_bytes());
+    }
+    dev.fs.snapshot_into(out);
+}
+
+fn restore_virtio_9p(r: &mut SnapshotReader<'_>) -> Result<Option<Virtio9p>, SnapshotError> {
+    match r.u8()? {
+        0 => Ok(None),
+        1 => {
+            let status = r.u32()?;
+            let device_features_sel = r.u32()?;
+            let driver_features_sel = r.u32()?;
+            let driver_features = [r.u32()?, r.u32()?];
+            let queue_num = r.u32()?;
+            let queue_ready = r.u32()?;
+            let desc_addr = r.u64()?;
+            let avail_addr = r.u64()?;
+            let used_addr = r.u64()?;
+            let last_avail = r.u16()?;
+            let interrupt_status = r.u32()?;
+            let irq_pending = match r.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(SnapshotError::Malformed),
+            };
+            let tag_len = usize::try_from(r.u64()?).map_err(|_| SnapshotError::Malformed)?;
+            let tag = String::from_utf8(r.bytes(tag_len)?.to_vec())
+                .map_err(|_| SnapshotError::Malformed)?;
+            let fid_count = r.u64()?;
+            let mut fids = BTreeMap::new();
+            for _ in 0..fid_count {
+                let fid = r.u32()?;
+                if fids.insert(fid, r.u64()?).is_some() {
+                    return Err(SnapshotError::Malformed);
+                }
+            }
+            let fs = ninep::Fs9p::restore(r)?;
+            Ok(Some(Virtio9p {
+                fs,
+                fids,
+                tag,
+                status,
+                device_features_sel,
+                driver_features_sel,
+                driver_features,
+                queue_num,
+                queue_ready,
+                desc_addr,
+                avail_addr,
+                used_addr,
+                last_avail,
+                interrupt_status,
+                irq_pending,
+            }))
+        }
+        _ => Err(SnapshotError::Malformed),
     }
 }
 

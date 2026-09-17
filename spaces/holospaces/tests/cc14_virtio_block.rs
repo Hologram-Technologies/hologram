@@ -92,8 +92,7 @@ fn assemble_rootfs(store: &MemKappaStore, img: &IngestedImage) -> Vec<u8> {
 fn the_generated_device_tree_is_valid() {
     use std::process::Command;
     if Command::new("dtc").arg("-v").output().is_err() {
-        eprintln!("SKIP: dtc not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: dtc not available");
     }
     let dtb = MachineSpec::devcontainer().device_tree();
     assert_eq!(&dtb[0..4], &[0xd0, 0x0d, 0xfe, 0xed], "DTB magic");

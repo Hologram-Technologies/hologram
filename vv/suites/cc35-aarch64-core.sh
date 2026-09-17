@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CC35="$ROOT/vv/artifacts/cc35"
 
 if ! command -v cargo >/dev/null 2>&1; then
-    echo "cc35-aarch64-core: SKIP — cargo not available in this environment" >&2
+    echo "cc35-aarch64-core: FAIL — cargo not available in this environment" >&2
     exit 127
 fi
 
@@ -50,8 +50,10 @@ if command -v qemu-aarch64 >/dev/null 2>&1; then
         echo "cc35-aarch64-core: qemu-aarch64 differential PASS (oracle current)"
         rm -f "$CC35"/*.elf
     else
-        echo "cc35-aarch64-core: qemu-aarch64 present but no aarch64 linker — differential skipped"
+        echo "cc35-aarch64-core: FAIL — an AArch64 linker is required to build the differential oracle" >&2
+        exit 127
     fi
 else
-    echo "cc35-aarch64-core: qemu-aarch64 absent — differential pinned by the core witness (Arm-ARM results, per cc35/SOURCE.txt)"
+    echo "cc35-aarch64-core: FAIL — qemu-aarch64 is required for the differential oracle" >&2
+    exit 127
 fi

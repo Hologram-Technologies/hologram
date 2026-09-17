@@ -604,55 +604,52 @@ fn an_amd64_devcontainer_features_and_lifecycle_run_on_x64() {
 #[test]
 fn holospaces_parses_its_own_unmodified_devcontainer_config() {
     use holospaces::boot::devcontainer;
-    // The repo's real config, relative to this crate (worktree root / .devcontainer).
-    // This witness asserts against *holospaces'* own devcontainer (a Dockerfile build
-    // declaring seven ghcr.io features + a post-create lifecycle). In a checkout whose
-    // top-level `.devcontainer/devcontainer.json` is absent or has a different shape
-    // (e.g. the hologram repo's own config), that config is not the subject of this
-    // witness — skip cleanly rather than assert against the wrong file.
+    // The merged repository's real config, relative to this crate (worktree root /
+    // .devcontainer). This is the configuration contributors and release engineers
+    // actually use, so the self-hosting witness must track it exactly.
     let cfg_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.devcontainer/devcontainer.json");
     let Ok(cfg) = std::fs::read(&cfg_path) else {
-        eprintln!("SKIP cc44 holospaces_parses_its_own_unmodified_devcontainer_config: .devcontainer/devcontainer.json absent (holospaces vv/ tree / workspace config not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc44 holospaces_parses_its_own_unmodified_devcontainer_config: .devcontainer/devcontainer.json absent (holospaces vv/ tree / workspace config not imported)");
     };
 
-    let Ok(dc) = devcontainer::parse(&cfg) else {
-        eprintln!("SKIP cc44 holospaces_parses_its_own_unmodified_devcontainer_config: workspace .devcontainer/devcontainer.json is not the holospaces config (does not parse to its shape)");
-        return;
-    };
+    let dc = devcontainer::parse(&cfg).expect("parse the repository's devcontainer.json");
 
-    // This is the holospaces config only if it declares a Dockerfile build with the
-    // seven pinned features; otherwise it is some other repo's devcontainer — skip so
-    // the witness never asserts against a config it does not own.
-    if !matches!(dc.image_source, devcontainer::ImageSource::Build(_)) || dc.features.len() < 7 {
-        eprintln!("SKIP cc44 holospaces_parses_its_own_unmodified_devcontainer_config: workspace .devcontainer/devcontainer.json is not the holospaces config (expected a Dockerfile Build source with >=7 features)");
-        return;
-    }
-
-    // The build directive is parsed as a Dockerfile build source (CC-26) — parsed,
-    // not executed.
+    // The immutable base image is retained as the OCI source rather than silently
+    // replaced with an implementation default.
     assert!(
-        matches!(dc.image_source, devcontainer::ImageSource::Build(_)),
-        "the Dockerfile build directive is parsed as a Build source"
+        matches!(
+            &dc.image_source,
+            devcontainer::ImageSource::Image(image)
+                if image == "mcr.microsoft.com/devcontainers/base@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
+        ),
+        "the repository's digest-pinned base image is parsed exactly"
     );
-    // All seven declared features are parsed (CC-25) — arbitrary ghcr.io refs, parsed
-    // (not installed).
-    assert!(
-        dc.features.len() >= 7,
-        "every declared feature is parsed ({} parsed)",
-        dc.features.len()
+    assert_eq!(
+        dc.features
+            .iter()
+            .map(|feature| feature.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "ghcr.io/devcontainers/features/docker-outside-of-docker:1",
+            "ghcr.io/devcontainers/features/node:1",
+            "ghcr.io/devcontainers/features/rust:1",
+            "ghcr.io/guiyomh/features/just:0",
+            "ghcr.io/lumenpink/devcontainer-features/wasm-pack:0",
+        ],
+        "every declared feature is parsed in canonical key order"
     );
-    assert!(
-        dc.features.iter().any(|f| f.id.contains("claude-code")),
-        "the claude-code feature is among the parsed features"
-    );
-    // The lifecycle postCreateCommand is parsed (CC-22) — parsed, not run.
     assert!(
         dc.lifecycle
             .iter()
-            .any(|(_, cmd)| cmd.contains("post-create.sh")),
-        "the postCreateCommand (bash .devcontainer/post-create.sh) is parsed"
+            .any(|(_, cmd)| cmd.contains("cargo-nextest --version 0.9.143")),
+        "the repository's postCreateCommand is parsed"
+    );
+    assert!(
+        dc.extensions
+            .iter()
+            .any(|id| id == "rust-lang.rust-analyzer"),
+        "the repository's editor customization is parsed"
     );
 }
 

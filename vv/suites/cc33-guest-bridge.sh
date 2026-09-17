@@ -19,7 +19,7 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if ! command -v cargo >/dev/null 2>&1; then echo "cc33-guest-bridge: SKIP — cargo unavailable" >&2; exit 127; fi
+if ! command -v cargo >/dev/null 2>&1; then echo "cc33-guest-bridge: FAIL — cargo unavailable" >&2; exit 127; fi
 # The transport plumbing (fast).
 cargo test --manifest-path "$ROOT/Cargo.toml" -p holospaces \
     --lib emulator::net::tests::the_loopback_bridge -- --nocapture || exit 1

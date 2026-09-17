@@ -9,6 +9,11 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "22"
     },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "29.1.3",
+      "mobyBuildxVersion": "0.36.1",
+      "dockerDashComposeVersion": "none"
+    },
     "ghcr.io/guiyomh/features/just:0": {},
     "ghcr.io/lumenpink/devcontainer-features/wasm-pack:0": {}
   },
@@ -39,5 +44,5 @@
     "PATH": "/home/vscode/.elan/bin:/home/vscode/.cargo/bin:${containerEnv:PATH}"
   },
   "remoteUser": "vscode",
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev && rustup toolchain install nightly-2026-09-05 --profile minimal && rustup target add wasm32-unknown-unknown wasm32-wasip1-threads thumbv7em-none-eabi && cargo install cargo-deny --version 0.20.2 --locked && cargo install cargo-nextest --version 0.9.143 --locked && cargo install cargo-public-api --version 0.52.0 --locked"
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev device-tree-compiler qemu-system-misc && rustup toolchain install nightly-2026-09-05 --profile minimal && rustup target add wasm32-unknown-unknown wasm32-wasip1-threads thumbv7em-none-eabi && cargo install cargo-deny --version 0.20.2 --locked && cargo install cargo-nextest --version 0.9.143 --locked && cargo install cargo-public-api --version 0.52.0 --locked"
 }

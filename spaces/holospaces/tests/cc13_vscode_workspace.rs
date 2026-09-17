@@ -22,8 +22,7 @@ fn cc13_dir() -> PathBuf {
 fn the_vscode_components_re_derive_to_their_pinned_kappa() {
     let dir = cc13_dir();
     if !dir.join("vendor.kappa").exists() {
-        eprintln!("SKIP cc13 the_vscode_components_re_derive_to_their_pinned_kappa: fixture vv/artifacts/cc13 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc13 the_vscode_components_re_derive_to_their_pinned_kappa: fixture vv/artifacts/cc13 absent (holospaces vv/ tree not imported)");
     }
     let manifest = std::fs::read_to_string(dir.join("vendor.kappa")).expect("cc13 vendor.kappa");
 

@@ -32,7 +32,7 @@ fn artifact_dir() -> PathBuf {
 
 /// True when the `vv/artifacts/cc9` fixture tree (the RISC-V batteries, riscv-tests
 /// suite, SBI/emulator binaries) is present. When the 170 MiB `vv/` tree is not
-/// imported the fixture-dependent tests skip with a note.
+/// imported, the fixture-dependent V&V tests fail.
 fn cc9_fixtures_present() -> bool {
     artifact_dir().join("expected.txt").exists()
 }
@@ -63,8 +63,7 @@ fn run_flat(image: &[u8]) -> Halt {
 #[test]
 fn the_emulator_core_conforms_to_the_risc_v_isa() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_core_conforms_to_the_risc_v_isa: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_core_conforms_to_the_risc_v_isa: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     let battery = expected();
     assert!(battery.len() >= 4, "the ISA battery is present");
@@ -142,8 +141,7 @@ fn the_emulator_writes_console_output_and_snapshots_reproducibly() {
 #[test]
 fn the_emulator_passes_the_official_riscv_tests() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_passes_the_official_riscv_tests: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_passes_the_official_riscv_tests: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     let dir = artifact_dir().join("riscv-tests");
     // The manifest pins each test's HTIF `tohost` address (it depends on the
@@ -193,8 +191,7 @@ fn the_emulator_passes_the_official_riscv_tests() {
 #[test]
 fn the_emulator_takes_a_clint_timer_interrupt() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_takes_a_clint_timer_interrupt: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_takes_a_clint_timer_interrupt: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     let manifest = std::fs::read_to_string(artifact_dir().join("tint.manifest")).expect("manifest");
     let tohost = u64::from_str_radix(
@@ -226,8 +223,7 @@ fn the_emulator_takes_a_clint_timer_interrupt() {
 #[test]
 fn the_emulator_services_sbi_console_and_shutdown() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_services_sbi_console_and_shutdown: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_services_sbi_console_and_shutdown: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     let image = std::fs::read(artifact_dir().join("sbi.bin")).expect("sbi.bin");
     let mut emu = Emulator::new(0x8000_0000, 16 * 1024 * 1024);
@@ -255,8 +251,7 @@ fn the_emulator_services_sbi_console_and_shutdown() {
 #[test]
 fn the_emulator_codemodule_runs_on_the_real_hologram_runtime() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_codemodule_runs_on_the_real_hologram_runtime: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_codemodule_runs_on_the_real_hologram_runtime: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     pollster::block_on(async {
         let wasm = std::fs::read(artifact_dir().join("emulator.wasm"))
@@ -458,8 +453,7 @@ fn the_codemodule_boots_real_linux_on_the_substrate() {
 #[test]
 fn the_emulator_runs_a_guest_off_a_kappa_disk_and_snapshots_to_the_store() {
     if !cc9_fixtures_present() {
-        eprintln!("SKIP cc9 the_emulator_runs_a_guest_off_a_kappa_disk_and_snapshots_to_the_store: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: cc9 the_emulator_runs_a_guest_off_a_kappa_disk_and_snapshots_to_the_store: fixture vv/artifacts/cc9 absent (holospaces vv/ tree not imported)");
     }
     pollster::block_on(async {
         let image = std::fs::read(artifact_dir().join("sum1to10.bin")).unwrap();

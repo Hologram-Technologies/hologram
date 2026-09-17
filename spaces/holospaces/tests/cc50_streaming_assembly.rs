@@ -235,8 +235,7 @@ fn the_streamed_kappa_set_is_identical_to_the_dense_path() {
 #[test]
 fn the_streamed_image_is_a_clean_bootable_ext4() {
     if !have_tool("e2fsck") {
-        eprintln!("SKIP: e2fsprogs (e2fsck) not available");
-        return;
+        panic!("MISSING REQUIRED V&V PREREQUISITE: e2fsprogs (e2fsck) not available");
     }
     let layer_bytes = fixture_layer();
     let layers = [Layer {
