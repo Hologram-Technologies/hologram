@@ -88,7 +88,9 @@ jobs:
           key: substrate-opfs
 
       - name: Install wasm-bindgen-cli (pinned to the crate's wasm-bindgen)
-        run: cargo install wasm-bindgen-cli --version 0.2.122 --locked
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.122 --locked --force
+          test "$(wasm-bindgen --version)" = "wasm-bindgen 0.2.122"
 
       - name: Install Playwright Chromium
         run: |
@@ -180,8 +182,10 @@ jobs:
 
       - name: Install wasm-pack + wasm-bindgen-cli (browser CC suites)
         run: |
-          cargo install wasm-pack --version 0.13.1 --locked
-          cargo install wasm-bindgen-cli --version 0.2.122 --locked
+          cargo install wasm-pack --version 0.13.1 --locked --force
+          test "$(wasm-pack --version)" = "wasm-pack 0.13.1"
+          cargo install wasm-bindgen-cli --version 0.2.122 --locked --force
+          test "$(wasm-bindgen --version)" = "wasm-bindgen 0.2.122"
 
       - name: Cache V&V artifacts (170M, keyed on the pin)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830

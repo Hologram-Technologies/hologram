@@ -38,6 +38,26 @@ class PyPiPreflightTests(unittest.TestCase):
             compare({"a": "1"}, {"a": "1", "extra": "2"})
 
 
+class BrowserToolInstallationTests(unittest.TestCase):
+    def test_release_browser_tools_replace_cached_binaries_and_verify_exact_pins(self):
+        workflow = (Path(__file__).parent.parent / ".github/workflows/release.yml").read_text()
+        expected_bindgen = [
+            "cargo install wasm-bindgen-cli --version 0.2.122 --locked --force",
+            'test "$(wasm-bindgen --version)" = "wasm-bindgen 0.2.122"',
+        ]
+        for name, expected in (
+            ("Install wasm-bindgen-cli (pinned to the crate's wasm-bindgen)", expected_bindgen),
+            ("Install wasm-pack + wasm-bindgen-cli (browser CC suites)", [
+                "cargo install wasm-pack --version 0.13.1 --locked --force",
+                'test "$(wasm-pack --version)" = "wasm-pack 0.13.1"',
+                *expected_bindgen,
+            ]),
+        ):
+            with self.subTest(step=name):
+                step = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - ", 1)[0]
+                self.assertEqual([line.strip() for line in step.splitlines() if line.strip()], ["run: |", *expected])
+
+
 class PublicReleaseTests(unittest.TestCase):
     def test_requested_release_version_must_match_source(self):
         with mock.patch.object(sys, "argv", ["verify-public-release.py", "--version", "0.0.0"]), \
