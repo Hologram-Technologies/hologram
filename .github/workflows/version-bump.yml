@@ -106,6 +106,7 @@ jobs:
           scripts/sync-sdk-versions.sh
           cargo generate-lockfile --manifest-path sdk/typescript/native/native/Cargo.toml
           cargo generate-lockfile --manifest-path sdk/typescript/wasm/driver/Cargo.toml
+          cargo generate-lockfile --manifest-path crates/hologram-compute/conformance-wasm/Cargo.toml
 
       - name: Install pinned nightly (for reproducible rustdoc JSON)
         uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
@@ -166,7 +167,7 @@ jobs:
                   sdk/typescript/package.json sdk/typescript/native/package.json \
                   sdk/typescript/wasm/package.json sdk/typescript/native/native/Cargo.toml \
                   sdk/typescript/wasm/driver/Cargo.toml sdk/python/pyproject.toml \
-                  sdk/typescript/native/native/Cargo.lock sdk/typescript/wasm/driver/Cargo.lock
+                  sdk/typescript/native/native/Cargo.lock sdk/typescript/wasm/driver/Cargo.lock                   crates/hologram-compute/conformance-wasm/Cargo.toml                   crates/hologram-compute/conformance-wasm/Cargo.lock
 
           # Commit changes
           git commit -m "chore: bump version to v${VERSION}"

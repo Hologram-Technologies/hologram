@@ -252,6 +252,34 @@ jobs:
           cargo test --release -p hologram-compute --test performance --features cpu -- --nocapture
           cargo test --release -p hologram-exec --test performance -- --nocapture
 
+  # Cross-substrate f32 conformance (KC-7): the kernel conformance digest body runs natively
+  # and on wasm32 (baseline, SIMD128, relaxed-SIMD) under Node; the job fails unless the
+  # dot/sum digests are equal. The matmul digest is printed for each substrate but does not
+  # gate — matmul_f32_blocked is not cross-substrate identical (docs/numerics/invariance.md).
+  wasm-conformance:
+    name: Cross-substrate f32 conformance (native ≡ wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: wasm-conformance
+
+      - name: Native ≡ wasm32 digest comparison
+        run: bash scripts/wasm-conformance.sh
+
   # Job 10: Quality-gate tooling tests — the gates' own Python/shell logic
   # (regression compare, benchmark lifecycle, best-of-N, API changelog, and the
   # release API-history flow). No Rust toolchain needed, so it's fast.
@@ -385,6 +413,7 @@ jobs:
       - security
       - cross-targets
       - vv
+      - wasm-conformance
       - tooling-tests
       - substrate
       - exit-criteria-demos
