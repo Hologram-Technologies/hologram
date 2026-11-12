@@ -33,7 +33,7 @@
 //! [`StoreError::UnknownAxis`].
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -70,6 +70,7 @@ pub struct FileKappaStore {
     root: PathBuf,
     seq: AtomicU64,
     cache: std::sync::Mutex<SmallCache>,
+    handles: std::sync::Mutex<HandleCache>,
 }
 
 /// Blobs up to this size are kept in the read cache, so repeated `get`s of small content (manifests,
@@ -132,6 +133,7 @@ impl FileKappaStore {
             root,
             seq: AtomicU64::new(0),
             cache: std::sync::Mutex::new(SmallCache::default()),
+            handles: std::sync::Mutex::new(HandleCache::default()),
         })
     }
 
@@ -164,6 +166,25 @@ impl FileKappaStore {
         self.root
             .join("tmp")
             .join(format!("{}-{n}.tmp", std::process::id()))
+    }
+
+    /// A shared read handle on `kappa`'s file and its length, opened once and reused (content
+    /// under a κ never changes, so neither does the length). `None` if absent.
+    fn handle(&self, kappa: &KappaLabel71) -> Result<Option<(Arc<File>, u64)>, StoreError> {
+        if let Some(h) = self.handles.lock().unwrap().get(kappa.as_array()) {
+            return Ok(Some(h));
+        }
+        let f = match File::open(self.blob_path(kappa)) {
+            Ok(f) => Arc::new(f),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io_err(e)),
+        };
+        let len = f.metadata().map_err(io_err)?.len();
+        self.handles
+            .lock()
+            .unwrap()
+            .insert(*kappa.as_array(), (f.clone(), len));
+        Ok(Some((f, len)))
     }
 
     /// Open `kappa`'s content for reading (e.g. to stream it to a socket). `None` if absent.
@@ -264,23 +285,30 @@ impl FileKappaStore {
                 kappa: *kappa,
                 tree,
                 part,
+                file: None,
                 done,
                 installed: true,
             });
         }
-        let existing = fs::metadata(&part).ok().map(|m| m.len());
-        if existing == Some(tree.len()) {
-            verify_pieces_on_disk(&part, &tree, &done)?;
-        } else {
-            let f = File::create(&part).map_err(io_err)?;
-            f.set_len(tree.len()).map_err(io_err)?;
+        // The file is not preallocated: pieces arrive nearly in order, so each write extends it a
+        // little. (On NTFS a write past the valid-data length first zero-fills the gap, so a
+        // preallocated file made every out-of-order write pay for the bytes before it.)
+        match fs::metadata(&part).map(|m| m.len()) {
+            Ok(have) if have <= tree.len() => verify_pieces_on_disk(&part, &tree, have, &done)?,
+            _ => drop(File::create(&part).map_err(io_err)?),
         }
         self.write_atomic(&self.partial_path(kappa, "tree"), &tree.encode())?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&part)
+            .map_err(io_err)?;
         Ok(PartialBlob {
             store: self,
             kappa: *kappa,
             tree,
             part,
+            file: Some(file),
             done,
             installed: false,
         })
@@ -356,6 +384,7 @@ impl FileKappaStore {
         for k in self.iterate() {
             if !live.contains(k.as_array()) {
                 self.cache.lock().unwrap().remove(k.as_array());
+                self.handles.lock().unwrap().remove(k.as_array());
                 match fs::remove_file(self.blob_path(&k)) {
                     Ok(()) => evicted += 1,
                     Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -380,19 +409,82 @@ fn list_kappas(dir: &Path, suffix: &str) -> Vec<KappaLabel71> {
         .collect()
 }
 
-/// Read `len` bytes at `offset` from a fresh handle on `path`.
-fn read_at(path: &Path, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
-    let mut f = File::open(path)?;
-    f.seek(SeekFrom::Start(offset))?;
-    let mut buf = vec![0u8; len];
-    f.read_exact(&mut buf)?;
-    Ok(buf)
+// Positional I/O on a shared handle: no seek, so threads can share one `File`. Opening a file is
+// far from free (on Windows it can cost milliseconds when an on-access scanner inspects a large
+// file), so the store opens each blob once and reads it at offsets.
+
+#[cfg(unix)]
+fn read_exact_at(f: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(f, buf, offset)
 }
 
-/// Run `work(piece)` for every piece index on all cores; first error wins.
+#[cfg(unix)]
+fn write_all_at(f: &File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::write_all_at(f, buf, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(f: &File, mut buf: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        match f.seek_read(buf, offset) {
+            Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                buf = &mut buf[n..];
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_all_at(f: &File, mut buf: &[u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        match f.seek_write(buf, offset) {
+            Ok(0) => return Err(ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                buf = &buf[n..];
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Other targets (e.g. WASI): seek and read under one lock, so offsets never interleave.
+#[cfg(not(any(unix, windows)))]
+static POSITIONAL_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(not(any(unix, windows)))]
+fn read_exact_at(f: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+    let _g = POSITIONAL_IO.lock().unwrap();
+    let mut f = f;
+    f.seek(SeekFrom::Start(offset))?;
+    f.read_exact(buf)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn write_all_at(f: &File, buf: &[u8], offset: u64) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+    let _g = POSITIONAL_IO.lock().unwrap();
+    let mut f = f;
+    f.seek(SeekFrom::Start(offset))?;
+    f.write_all(buf)
+}
+
+/// Run `work(file, piece)` for every piece index on all cores, each thread with its own handle on
+/// `path` (one open per thread, not per piece); first error wins.
 fn for_each_piece_parallel(
+    path: &Path,
     pieces: u64,
-    work: impl Fn(u64) -> Result<(), StoreError> + Sync,
+    work: impl Fn(&File, u64) -> Result<(), StoreError> + Sync,
 ) -> Result<(), StoreError> {
     let threads = std::thread::available_parallelism()
         .map_or(1, |p| p.get())
@@ -401,14 +493,23 @@ fn for_each_piece_parallel(
     let failed = std::sync::Mutex::new(None);
     std::thread::scope(|s| {
         for _ in 0..threads {
-            s.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                if i >= pieces || failed.lock().unwrap().is_some() {
-                    break;
-                }
-                if let Err(e) = work(i) {
-                    *failed.lock().unwrap() = Some(e);
-                    break;
+            s.spawn(|| {
+                let file = match File::open(path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        *failed.lock().unwrap() = Some(io_err(e));
+                        return;
+                    }
+                };
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= pieces || failed.lock().unwrap().is_some() {
+                        break;
+                    }
+                    if let Err(e) = work(&file, i) {
+                        *failed.lock().unwrap() = Some(e);
+                        break;
+                    }
                 }
             });
         }
@@ -419,19 +520,20 @@ fn for_each_piece_parallel(
     }
 }
 
+fn read_piece(file: &File, tree_len: u64, i: u64) -> Result<Vec<u8>, StoreError> {
+    let start = i * PIECE_LEN;
+    let mut buf = vec![0u8; (tree_len - start).min(PIECE_LEN) as usize];
+    read_exact_at(file, &mut buf, start).map_err(io_err)?;
+    Ok(buf)
+}
+
 /// Compute the piece table of the `len`-byte file at `path`, one piece per task on all cores.
 fn tree_of_file(path: &Path, len: u64) -> Result<PieceTree, StoreError> {
     let n = piece_count(len);
-    if n == 1 {
-        let bytes = read_at(path, 0, len as usize).map_err(io_err)?;
-        return Ok(PieceTree::from_bytes(&bytes));
-    }
     let cvs: Vec<std::sync::Mutex<[u8; 32]>> =
         (0..n).map(|_| std::sync::Mutex::new([0u8; 32])).collect();
-    for_each_piece_parallel(n, |i| {
-        let start = i * PIECE_LEN;
-        let plen = (len - start).min(PIECE_LEN) as usize;
-        let bytes = read_at(path, start, plen).map_err(io_err)?;
+    for_each_piece_parallel(path, n, |file, i| {
+        let bytes = read_piece(file, len, i)?;
         *cvs[i as usize].lock().unwrap() = piece_chaining_value(i, &bytes, n);
         Ok(())
     })?;
@@ -439,20 +541,57 @@ fn tree_of_file(path: &Path, len: u64) -> Result<PieceTree, StoreError> {
     Ok(PieceTree::from_parts(len, cvs)?)
 }
 
-/// Mark `done[i]` for every piece of `part` that already verifies against `tree`.
+/// Mark `done[i]` for every piece of `part` (whose first `have` bytes exist) that already verifies
+/// against `tree`. A piece not wholly on disk is missing.
 fn verify_pieces_on_disk(
     part: &Path,
     tree: &PieceTree,
+    have: u64,
     done: &[AtomicBool],
 ) -> Result<(), StoreError> {
-    for_each_piece_parallel(tree.piece_count(), |i| {
-        let r = tree.piece_range(i)?;
-        let bytes = read_at(part, r.start, (r.end - r.start) as usize).map_err(io_err)?;
+    for_each_piece_parallel(part, tree.piece_count(), |file, i| {
+        if tree.piece_range(i)?.end > have || (have == 0 && !tree.is_empty()) {
+            return Ok(());
+        }
+        let bytes = read_piece(file, tree.len(), i)?;
         if tree.verify_piece(i, &bytes).is_ok() {
             done[i as usize].store(true, Ordering::Relaxed);
         }
         Ok(())
     })
+}
+
+/// Open read handles by κ, bounded; the oldest is closed when the cap is reached.
+#[derive(Default)]
+struct HandleCache {
+    map: std::collections::HashMap<[u8; 71], (Arc<File>, u64)>,
+    order: std::collections::VecDeque<[u8; 71]>,
+}
+
+/// Read handles kept open at once.
+const OPEN_HANDLES_MAX: usize = 64;
+
+impl HandleCache {
+    fn get(&self, k: &[u8; 71]) -> Option<(Arc<File>, u64)> {
+        self.map.get(k).cloned()
+    }
+
+    fn insert(&mut self, k: [u8; 71], f: (Arc<File>, u64)) {
+        if self.map.insert(k, f).is_none() {
+            self.order.push_back(k);
+        }
+        while self.order.len() > OPEN_HANDLES_MAX {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+
+    fn remove(&mut self, k: &[u8; 71]) {
+        if self.map.remove(k).is_some() {
+            self.order.retain(|x| x != k);
+        }
+    }
 }
 
 impl KappaStore for FileKappaStore {
@@ -520,6 +659,9 @@ impl KappaStore for FileKappaStore {
     }
 
     fn content_len(&self, kappa: &KappaLabel71) -> Result<Option<u64>, StoreError> {
+        if let Some((_, len)) = self.handles.lock().unwrap().get(kappa.as_array()) {
+            return Ok(Some(len));
+        }
         match fs::metadata(self.blob_path(kappa)) {
             Ok(m) => Ok(Some(m.len())),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
@@ -533,18 +675,18 @@ impl KappaStore for FileKappaStore {
         offset: u64,
         len: u64,
     ) -> Result<Option<Bytes>, StoreError> {
-        let Some(mut f) = self.open_blob(kappa)? else {
+        let Some((f, total)) = self.handle(kappa)? else {
             return Ok(None);
         };
-        let total = f.metadata().map_err(io_err)?.len();
         let end = offset.checked_add(len).ok_or(StoreError::OutOfRange)?;
         if end > total {
             return Err(StoreError::OutOfRange);
         }
-        f.seek(SeekFrom::Start(offset)).map_err(io_err)?;
-        let mut buf = vec![0u8; len as usize];
-        f.read_exact(&mut buf).map_err(io_err)?;
-        Ok(Some(Arc::from(buf)))
+        // Read straight into the shared buffer the caller gets: one allocation, no copy.
+        let mut out: Bytes = std::iter::repeat_n(0u8, len as usize).collect();
+        let buf = Arc::get_mut(&mut out).expect("freshly allocated, so unique");
+        read_exact_at(&f, buf, offset).map_err(io_err)?;
+        Ok(Some(out))
     }
 
     fn put_writer<'a>(
@@ -634,6 +776,8 @@ pub struct PartialBlob<'a> {
     kappa: KappaLabel71,
     tree: PieceTree,
     part: PathBuf,
+    /// Read-write handle on `part`, opened once (`None` once the blob is installed).
+    file: Option<File>,
     done: Vec<AtomicBool>,
     installed: bool,
 }
@@ -671,17 +815,17 @@ impl PartialBlob<'_> {
 
     /// Flush the file and install it under its κ. Fails with `BackendFailure` if pieces are
     /// missing (the download stays resumable).
-    pub fn commit(self) -> Result<KappaLabel71, StoreError> {
+    pub fn commit(mut self) -> Result<KappaLabel71, StoreError> {
         if self.installed {
             return Ok(self.kappa);
         }
         if !self.is_complete() {
             return Err(StoreError::BackendFailure("partial blob incomplete"));
         }
-        let f = OpenOptions::new()
-            .write(true)
-            .open(&self.part)
-            .map_err(io_err)?;
+        let f = self
+            .file
+            .take()
+            .expect("an uninstalled partial holds its file");
         f.sync_all().map_err(io_err)?;
         drop(f);
         FileKappaStore::install(&self.part, &self.store.blob_path(&self.kappa))?;
@@ -695,7 +839,8 @@ impl PartialBlob<'_> {
     }
 
     /// Give up the download and delete what was written.
-    pub fn abort(self) {
+    pub fn abort(mut self) {
+        self.file.take();
         if !self.installed {
             let _ = fs::remove_file(&self.part);
             let _ = fs::remove_file(self.store.partial_path(&self.kappa, "tree"));
@@ -710,12 +855,11 @@ impl PieceSink for PartialBlob<'_> {
         if self.installed || self.done[index as usize].load(Ordering::Acquire) {
             return Ok(());
         }
-        let mut f = OpenOptions::new()
-            .write(true)
-            .open(&self.part)
-            .map_err(io_err)?;
-        f.seek(SeekFrom::Start(index * PIECE_LEN)).map_err(io_err)?;
-        f.write_all(bytes).map_err(io_err)?;
+        let f = self
+            .file
+            .as_ref()
+            .expect("an uninstalled partial holds its file");
+        write_all_at(f, bytes, index * PIECE_LEN).map_err(io_err)?;
         self.done[index as usize].store(true, Ordering::Release);
         Ok(())
     }

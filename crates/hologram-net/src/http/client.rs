@@ -189,7 +189,10 @@ impl HttpConn {
                 return Err(ClientError::Protocol("body exceeds the expected size"));
             }
             resp.body = alloc::vec![0u8; len as usize];
-            conn.read_exact(&mut resp.body)?;
+            // In bounded slices: one huge socket read can fail outright (WSAENOBUFS on Windows).
+            for part in resp.body.chunks_mut(1 << 20) {
+                conn.read_exact(part)?;
+            }
         }
         Ok(resp)
     }
