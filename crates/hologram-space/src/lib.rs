@@ -29,6 +29,11 @@ pub use hal::{
 mod substrate;
 pub use substrate::*;
 
+// Verified streams and verified byte ranges over BLAKE3's own tree: the 1 MiB piece table that is
+// self-certifying against a blob's `blake3:` κ-label (multi-gigabyte blobs, parallel fetch).
+pub mod piece;
+pub use piece::{PieceSink, PieceTree, PieceTreeBuilder, StreamVerifier, VerifyError, PIECE_LEN};
+
 // The canonical realization forms (ContainerManifest, CapabilitySet, Snapshot, …),
 // absorbed from the former `hologram-realizations` crate (P1). Re-exported at the root.
 mod realizations;

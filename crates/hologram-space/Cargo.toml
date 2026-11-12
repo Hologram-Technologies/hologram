@@ -17,6 +17,11 @@ uor-addr = { workspace = true, features = ["alloc"] }
 async-trait = { workspace = true }
 spin = { workspace = true }
 hashbrown = { workspace = true }
+# The tree primitives (`blake3::guts`: chunk and parent chaining values) behind the 1 MiB piece
+# table in `piece`. Same crate instance as the σ-axis hasher: `uor-prism-crypto` 0.4 holds the
+# workspace at blake3 `>=1.5, <1.6`, so this range adds no second copy. `std` turns on blake3's
+# runtime CPU detection (AVX2/AVX-512/SSE4.1); without it only compile-time features are used.
+blake3 = { version = ">=1.5, <1.6", default-features = false }
 
 [dev-dependencies]
 pollster = { workspace = true }
@@ -38,4 +43,4 @@ x25519-dalek = { version = "2", default-features = false, features = ["alloc", "
 
 [features]
 default = ["std"]
-std = ["uor-addr/std", "hologram-types/std"]
+std = ["uor-addr/std", "hologram-types/std", "blake3/std"]
