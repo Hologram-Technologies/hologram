@@ -32,10 +32,41 @@ never be cited for a lower one.
    fixture), `decode_attention.rs` (three bitwise witnesses),
    `kv_cache_write.rs` (move == copy), `flow_law.rs` (chunk == steps).
 
-3. **f32 across lanes**: **a non-claim.** wasm SIMD128 has no FMA; x86/NEON
-   contractions differ. An f32 result does not carry a machine-independent κ,
-   and no test or document may assert cross-lane f32 bit-identity. The
-   cross-lane golden is the integer rung above.
+3. **f32 across lanes**: **bit-identical for the dot and sum reductions only;
+   a non-claim for everything else.**
+
+   - *Identical on every lane:* `simd_f32_dot` and `simd_f32_sum`. Both fix
+     one association on every target — four accumulators over the whole
+     blocks of four (lane `j` folds the terms at `i ≡ j (mod 4)` left to
+     right), the combine `(l0 + l1) + (l2 + l3)`, then the `n mod 4` tail left
+     to right, with multiply and add rounded separately. Rust neither
+     reassociates nor contracts float arithmetic, so the written order is the
+     executed order on x86-64 (AVX2, AVX-512), aarch64 (NEON), wasm32 with
+     and without SIMD128, and the scalar fallback. Witnesses:
+     `kc12_f32_dot_and_sum_bits_are_the_cross_target_golden` (one pinned
+     digest, run on every CI lane), `kc12b_…_equal_the_canonical_reference_bit_for_bit`
+     (an independent restatement of the order, every length 0…300), and
+     `scripts/wasm-conformance.sh` (the same digest body run natively and on
+     the three wasm32 tiers, compared; CI job `wasm-conformance`). Measured
+     digest on all of them: `0a00e59f8f58e4e3`.
+   - *Where that reaches:* the reduction step of every kernel built on them —
+     attention scores (including the wasm worker pool's tiles, which call the
+     same row kernel), the LayerNorm / GroupNorm means and variances, the
+     RMSNorm and L2-norm sums of squares, ReduceSum, and the portable matmul
+     fallback. The kernels as a whole are **not** claimed identical: their
+     other steps (for example `simd_f32_exp_inplace` in attention) are not
+     witnessed across lanes.
+   - *Not identical:* `matmul_f32_blocked`. Its register-tiled leaves fuse
+     multiply-add on x86 and NEON and multiply-then-add on wasm SIMD128, and
+     wasm32 without SIMD128 takes the portable fallback, so three substrates
+     give three results. Measured digests (`matmul_digest`): native x86-64
+     `23de98716143b4e2`, wasm32 baseline `44bbd198a9e1af2d`, wasm32 SIMD128
+     and relaxed-SIMD `8bf9265d83fd372e`. Likewise `simd_f32_fmadd` (fused on
+     x86 and NEON only). This is the remaining gap: an f32 graph whose path
+     includes an f32 matmul does not carry a machine-independent κ.
+   - *No claim:* every other f32 kernel. No test or document may assert
+     cross-lane f32 bit-identity beyond the identical list above. For full
+     inference, the cross-lane golden is still the integer rung.
 
 ## Structure vs. content — where a value lives in κ
 
