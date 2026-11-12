@@ -13,6 +13,9 @@ use crate::workspace::Workspace;
 use core::marker::PhantomData;
 use hologram_types::ActiveCpuBounds;
 
+/// Cross-substrate f32 reduction digest; the native tests and the wasm32
+/// driver run this one body and compare its output.
+pub mod conformance;
 pub mod dtype;
 mod float_kernels;
 

@@ -1395,3 +1395,109 @@ fn kc8b_bf16_attention_routes_through_engine() {
         "bf16 attention all zeros"
     );
 }
+
+// ─── KC-7: f32 dot and sum carry one association on every target ──────────
+
+/// The canonical association of `simd_f32_dot`, restated independently of
+/// the kernel: lane `j` folds the products at `i ≡ j (mod 4)` over the whole
+/// blocks of four, left to right; the lanes combine as `(l0 + l1) + (l2 + l3)`;
+/// the remaining `n mod 4` products then fold onto that, left to right.
+/// Multiply and add round separately (Rust never contracts `x + y * z`).
+fn canonical_dot_reference(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    let whole = n - n % 4;
+    let mut lanes = [0.0f32; 4];
+    for (j, lane) in lanes.iter_mut().enumerate() {
+        let mut i = j;
+        while i < whole {
+            *lane += a[i] * b[i];
+            i += 4;
+        }
+    }
+    let mut total = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
+    for i in whole..n {
+        total += a[i] * b[i];
+    }
+    total
+}
+
+/// The canonical association of `simd_f32_sum` — the same shape as
+/// [`canonical_dot_reference`] over the elements themselves.
+fn canonical_sum_reference(a: &[f32]) -> f32 {
+    let n = a.len();
+    let whole = n - n % 4;
+    let mut lanes = [0.0f32; 4];
+    for (j, lane) in lanes.iter_mut().enumerate() {
+        let mut i = j;
+        while i < whole {
+            *lane += a[i];
+            i += 4;
+        }
+    }
+    let mut total = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
+    for &v in &a[whole..n] {
+        total += v;
+    }
+    total
+}
+
+/// Operands whose magnitudes span ~2⁻⁸…2⁸ with both signs, so that any
+/// change of association changes the rounded result.
+fn mixed_magnitude_f32(seed: u64, n: usize) -> Vec<f32> {
+    let mut s = seed;
+    (0..n)
+        .map(|_| {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let mant = ((s >> 40) as u32 & 0xFFFF) as f32 / 65536.0 + 0.5;
+            let exp = ((s >> 33) & 0xF) as i32 - 8;
+            let sign = if (s >> 32) & 1 == 0 { 1.0 } else { -1.0 };
+            sign * mant * 2f32.powi(exp)
+        })
+        .collect()
+}
+
+/// **KC-7 (golden).** The dot and sum digest — the bit patterns of
+/// `simd_f32_dot` and `simd_f32_sum` over lengths 1…1000 that straddle every
+/// former SIMD block width — equals one pinned value. The same body runs in
+/// the wasm32 driver (`conformance-wasm`), and `scripts/wasm-conformance.sh` compares the two outputs,
+/// so whichever lane executes this test must reproduce these bytes: x86-64
+/// AVX2 / AVX-512 (Linux, Windows), aarch64 NEON (macOS), wasm32 with and
+/// without SIMD128.
+///
+/// The value equals the digest recorded for the fixed-order kernels before
+/// this port, on native and wasm alike.
+#[test]
+fn kc12_f32_dot_and_sum_bits_are_the_cross_target_golden() {
+    assert_eq!(
+        hologram_compute::cpu::conformance::dot_sum_digest(),
+        0x0a00_e59f_8f58_e4e3,
+        "f32 dot/sum cross-target golden: the reduction order changed on this lane"
+    );
+}
+
+/// **KC-7 (reference).** `simd_f32_dot` and `simd_f32_sum`, as compiled for
+/// the running target (vectorised or not), equal the independent restatement
+/// of the canonical association bit for bit, at every length 0…300 and two
+/// long rows. A per-lane-width grouping (the former AVX2 / AVX-512 / NEON /
+/// SIMD128 kernels) or a plain left fold fails this.
+#[test]
+fn kc12b_f32_dot_and_sum_equal_the_canonical_reference_bit_for_bit() {
+    use hologram_compute::cpu::simd::{simd_f32_dot, simd_f32_sum};
+    let lens = (0usize..=300).chain([1000, 4099]);
+    for n in lens {
+        let a = mixed_magnitude_f32(0x5EED_0000 ^ n as u64, n);
+        let b = mixed_magnitude_f32(0xB0B0_0000 ^ n as u64, n);
+        assert_eq!(
+            simd_f32_dot(&a, &b).to_bits(),
+            canonical_dot_reference(&a, &b).to_bits(),
+            "simd_f32_dot differs from the canonical association at n={n}"
+        );
+        assert_eq!(
+            simd_f32_sum(&a).to_bits(),
+            canonical_sum_reference(&a).to_bits(),
+            "simd_f32_sum differs from the canonical association at n={n}"
+        );
+    }
+}
