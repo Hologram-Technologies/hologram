@@ -17,13 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `simd_f32_dot` and `simd_f32_sum` now use one canonical association on every target
-  (four accumulators over blocks of four, a fixed pairwise combine, a scalar tail),
-  replacing the per-instruction-set kernels that grouped partial sums by lane width. Their
-  results are now bit-identical across x86-64, aarch64 and wasm32, and change in the last
-  bits relative to 0.13.1 on every target. Attention scores, norm statistics and ReduceSum
-  inherit the order. Cost: these two reductions are latency-bound on one 4-wide chain,
-  about 3.5–4x slower for dot and 7–8x slower for sum on an AVX-512 host; f32 matmul is
-  unchanged and still differs across substrates (`docs/numerics/invariance.md`).
+  (sixteen lanes over blocks of sixteen, a halving tree, a scalar tail; no FMA), with
+  AVX2, SSE2, NEON and SIMD128 twins that keep the same lanes in registers, replacing the
+  per-instruction-set kernels that grouped partial sums by lane width. Their results are
+  now bit-identical across x86-64, aarch64 and wasm32, and change in the last bits
+  relative to 0.13.1 on every target. Attention scores, norm statistics and ReduceSum
+  inherit the order. Cost against 0.13.1 on an AVX-512 host: dot about 1.2x slower
+  (n = 4096: 106 → 130 ns), sum about 1.8x slower at n = 4096 (53 → 95 ns), because
+  the previous kernels used four AVX-512 accumulators. f32 matmul is unchanged and still
+  differs across substrates (`docs/numerics/invariance.md`).
 - Hardened all public release paths with immutable-byte preflights and idempotent,
   dependency-ordered retries, and made the GitHub source release wait for the
   complete crates.io, npm, and PyPI closure and the exact-tag release V&V run.
