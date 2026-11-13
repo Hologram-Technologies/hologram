@@ -82,7 +82,7 @@ fn main() {
     let mut left = n;
     while left > 0 {
         let take = left.min(chunk.len() as u64) as usize;
-        for word in chunk[..take].chunks_exact_mut(8) {
+        for word in chunk[..take].as_chunks_mut::<8>().0 {
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;

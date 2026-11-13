@@ -6,7 +6,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -463,16 +463,12 @@ fn fetch_fails_closed_when_no_source_is_honest() {
 /// A sink that accepts `budget` pieces, then fails: an interrupted download.
 struct Interrupting<'a> {
     inner: &'a dyn PieceSink,
-    budget: AtomicU64,
+    budget: AtomicI64,
 }
 
 impl PieceSink for Interrupting<'_> {
     fn put_piece(&self, index: u64, bytes: &[u8]) -> Result<(), StoreError> {
-        if self
-            .budget
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| b.checked_sub(1))
-            .is_err()
-        {
+        if self.budget.fetch_sub(1, Ordering::SeqCst) <= 0 {
             return Err(StoreError::QuotaExceeded);
         }
         self.inner.put_piece(index, bytes)
@@ -494,7 +490,7 @@ fn an_interrupted_download_resumes_into_the_file_store() {
         let part = store.begin_partial(&k, tree.clone()).unwrap();
         let sink = Interrupting {
             inner: &part,
-            budget: AtomicU64::new(4),
+            budget: AtomicI64::new(4),
         };
         let err = fetch_pieces(&k, &tree, &sources, &part.done(), &sink, &opts()).unwrap_err();
         assert_eq!(err, FetchError::Sink(StoreError::QuotaExceeded));

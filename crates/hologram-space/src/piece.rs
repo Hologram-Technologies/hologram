@@ -155,10 +155,7 @@ fn subtree_cv(bytes: &[u8], chunk_offset: u64, is_root: bool) -> [u8; 32] {
     let tail = &bytes[full * CHUNK_LEN..];
     let n = full + usize::from(!tail.is_empty());
     let mut cvs = vec![0u8; n * 32];
-    let chunks: Vec<&[u8; CHUNK_LEN]> = bytes[..full * CHUNK_LEN]
-        .chunks_exact(CHUNK_LEN)
-        .map(|c| c.try_into().expect("exact chunk"))
-        .collect();
+    let chunks: Vec<&[u8; CHUNK_LEN]> = bytes.as_chunks::<CHUNK_LEN>().0.iter().collect();
     platform.hash_many(
         &chunks,
         &IV,
@@ -180,10 +177,7 @@ fn subtree_cv(bytes: &[u8], chunk_offset: u64, is_root: bool) -> [u8; 32] {
     let mut next = vec![0u8; (n / 2 + 1) * 32];
     while count > 2 {
         let pairs = count / 2;
-        let blocks: Vec<&[u8; 64]> = cvs[..pairs * 64]
-            .chunks_exact(64)
-            .map(|c| c.try_into().expect("exact block"))
-            .collect();
+        let blocks: Vec<&[u8; 64]> = cvs[..pairs * 64].as_chunks::<64>().0.iter().collect();
         platform.hash_many(
             &blocks,
             &IV,
@@ -379,10 +373,7 @@ impl PieceTree {
         if !body.len().is_multiple_of(32) || (body.len() / 32) as u64 != piece_count(len) {
             return Err(VerifyError::Malformed);
         }
-        let cvs = body
-            .chunks_exact(32)
-            .map(|c| c.try_into().expect("32 bytes"))
-            .collect();
+        let cvs = body.as_chunks::<32>().0.to_vec();
         Ok(Self { len, cvs })
     }
 }
