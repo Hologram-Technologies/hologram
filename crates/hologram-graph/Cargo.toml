@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram graph IR (arena-based DAG, schedule, registries)."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-graph"
+keywords = ["hologram", "graph", "ir", "dag", "inference"]
+categories = ["data-structures", "no-std", "science"]
 
 [dependencies]
 hologram-ops   = { workspace = true }

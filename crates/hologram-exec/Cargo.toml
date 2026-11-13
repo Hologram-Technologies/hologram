@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram runtime executor: InferenceSession over a content-addressed buffer pool."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-exec"
+keywords = ["hologram", "inference", "runtime", "executor", "tensor"]
+categories = ["science", "no-std"]
 
 [dependencies]
 hologram-types   = { workspace = true }
