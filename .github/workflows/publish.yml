@@ -163,9 +163,10 @@ jobs:
           if-no-files-found: error
 
   # Create GitHub Release with binaries
-  # Note: GitHub Packages does not currently support native Cargo registries
-  # Users should consume these crates via git dependencies:
-  #   hologram-exec = { git = "https://github.com/Hologram-Technologies/hologram", tag = "v0.1.0" }
+  # Library crates are published by publish-crates.yml (all of them on a tag, or a
+  # dependency-closed subset by dispatch). Until a crate is on crates.io, consume it via git as
+  # the release notes below describe; once it is, depend on it by version, e.g.
+  #   hologram-store = { version = "0.13", features = ["file"] }
   release:
     name: Create GitHub Release
     needs: [verify, build-binaries]

@@ -30,6 +30,31 @@ for n in sorted(names): visit(n)
 print(" ".join(out))
 ')"
 version="$(scripts/workspace-version.sh)"
+
+# Optional subset: CRATES="a b c" publishes only those crates (still in dependency order). The set
+# must be closed under workspace dependencies of every kind (crates.io resolves dev-dependencies
+# too), so a subset can never publish a crate whose workspace dependency is missing from crates.io.
+# Example, the large-blob runner closure:
+#   CRATES="hologram-types hologram-space hologram-tck hologram-store hologram-net"
+if [ -n "${CRATES:-}" ]; then
+  order="$(cargo metadata --format-version 1 --no-deps | ORDER="$order" CRATES="$CRATES" python3 -c '
+import json, os, sys
+m = json.load(sys.stdin)
+names = {p["name"] for p in m["packages"] if p.get("publish") != []}
+want = set(os.environ["CRATES"].split())
+unknown = sorted(want - names)
+if unknown:
+    sys.exit("CRATES names crates that are not publishable workspace members: " + " ".join(unknown))
+missing = sorted({
+    (p["name"], d["name"])
+    for p in m["packages"] if p["name"] in want
+    for d in p.get("dependencies", []) if d["name"] in names and d["name"] not in want
+})
+if missing:
+    sys.exit("CRATES is not dependency-closed; add: " + ", ".join(f"{d} (needed by {c})" for c, d in missing))
+print(" ".join(c for c in os.environ["ORDER"].split() if c in want))
+')"
+fi
 echo "Publish order (${#order} chars): $order"
 
 if [ "${DRY_RUN:-0}" != "1" ] && [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then

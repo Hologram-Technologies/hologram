@@ -17,6 +17,10 @@ on:
         description: "Package and checksum-preflight the complete graph (no publish)"
         type: boolean
         default: false
+      crates:
+        description: "Publish only these crates (space-separated, dependency-closed); empty = all"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -48,4 +52,5 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          CRATES: ${{ inputs.crates }}
         run: bash scripts/publish-crates.sh
