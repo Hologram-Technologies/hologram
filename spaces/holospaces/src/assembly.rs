@@ -563,7 +563,7 @@ fn decompress(layer: &Layer) -> Result<Vec<u8>, AssemblyError> {
 #[cfg(feature = "std")]
 fn unzstd(data: &[u8], _mt: &str) -> Result<Vec<u8>, AssemblyError> {
     use std::io::Read;
-    let mut dec = ruzstd::StreamingDecoder::new(data)
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(data)
         .map_err(|e| AssemblyError::BadZstd(alloc::format!("{e}")))?;
     let mut out = Vec::new();
     dec.read_to_end(&mut out)

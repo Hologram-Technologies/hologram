@@ -446,8 +446,8 @@ fn encode_shape_registry(reg: &ShapeRegistry) -> Vec<u8> {
     for i in 0..reg.len() {
         if let Some(d) = reg.get(hologram_graph::ShapeId(i as u32)) {
             out.push(d.rank);
-            for k in 0..8 {
-                out.extend_from_slice(&d.dims[k].to_le_bytes());
+            for dim in &d.dims[..8] {
+                out.extend_from_slice(&dim.to_le_bytes());
             }
             // overflow length
             let overflow = d

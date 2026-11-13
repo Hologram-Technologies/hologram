@@ -84,8 +84,8 @@ impl ShapeDescriptor {
     pub fn total_elements(&self) -> u64 {
         let mut p = 1u64;
         let r = self.rank as usize;
-        for i in 0..r.min(8) {
-            p = p.saturating_mul(self.dims[i]);
+        for &d in &self.dims[..r.min(8)] {
+            p = p.saturating_mul(d);
         }
         if let Some(overflow) = &self.dims_overflow {
             for &d in overflow.iter() {

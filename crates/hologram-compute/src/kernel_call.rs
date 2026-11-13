@@ -1058,8 +1058,8 @@ fn p_reduce(c: &ReduceCall) -> Pb {
         .u32(c.axes_mask)
         .u8(c.keepdims as u8)
         .u8(c.dtype);
-    for i in 0..c.rank as usize {
-        b = b.u32(c.dims[i]);
+    for &d in &c.dims[..c.rank as usize] {
+        b = b.u32(d);
     }
     b
 }
