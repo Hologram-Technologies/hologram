@@ -131,7 +131,7 @@ embedded:
 vv-substrate:
     cargo test -p hologram-space -p hologram-tck \
         -p hologram-net -p hologram-runtime
-    cargo test -p hologram-store --features bare,native   # the merged store's backend TCK tests
+    cargo test -p hologram-store --features bare,native,file   # the merged store's backend TCK tests
     cargo test -p hologram-net --features live,tcp        # live HTTP-CAS + κ-XOR DHT transports
     cargo test -p hologram-runtime --features engine-wasmtime   # the Wasmtime engine backend
     @echo "RZ gate — compute engine (exec/compute/ops/graph/compiler/archive) absent from store/route:"
@@ -140,6 +140,12 @@ vv-substrate:
         && (echo "RZ VIOLATION in $c" && exit 1) || echo "  $c: RZ ok"; \
     done
     just wasm embedded
+
+# Large-blob throughput on one blob (default 1 GiB): BLAKE3, the streaming verifier and piece
+# tables, then the file store, HTTP-CAS serving and verified parallel fetch over loopback.
+large-blob-bench mib="1024":
+    cargo run --release -p hologram-space --example piece_throughput -- {{mib}}
+    cargo run --release -p hologram-net --features live --example large_blob_throughput -- {{mib}}
 
 # End-to-end bare-metal boot: build hologram.efi and boot it in QEMU/OVMF (no OS), asserting the
 # engine's storage self-check prints PASS. Requires qemu-system-x86_64 + OVMF + x86_64-unknown-uefi.

@@ -396,6 +396,39 @@ the machine's memory subsystem; re-run `decode_profile` on the target rather tha
 quoting these.
 
 
+## Large blobs: verified streams, file store, HTTP-CAS (captured at v0.13.1 + large-blob branch)
+
+Machine: AMD Ryzen AI Max 390 (24 threads, AVX-512), NVMe SSD, Windows 11. Captured
+2026-11-13 while other processes held the CPU at 70 to 77% and left about 3 GB of 28 GB RAM
+free, so treat absolute numbers as a floor; the loopback ceiling measured on this machine
+the same day was 0.56 GB/s for one raw TCP stream. Method: `just large-blob-bench` (one
+1 GiB blob; reads hit the page cache after the write).
+
+| Path | Throughput |
+|---|---|
+| BLAKE3 one-shot (`address_bytes`) | 5.99 GB/s |
+| `StreamVerifier`, 256 KiB writes | 5.99 GB/s |
+| Piece table build, 1 thread | 4.96 GB/s |
+| Piece verify, 1 thread / 24 threads | 6.77 / 48.75 GB/s |
+| Piece table size | 32,792 B per GiB |
+| File store `put_writer` (hash + table + write + fsync + rename) | 0.30 GB/s (disk-bound) |
+| File store re-hash (`verify_blob`) | 2.79 GB/s |
+| File store `get_range`, 1 MiB sequential | 1.81 GB/s |
+| File store `get_range`, 4 KiB random | 10.3 µs/read |
+| Piece table from file, all cores | 2.60 GB/s |
+| HTTP GET whole blob, 1 connection | 0.48 GB/s |
+| HTTP `Range` 1 MiB in series, 1 keep-alive connection | 0.12 GB/s |
+| Verified fetch, 1 source, 8 workers (verify, discard) | 1.02 GB/s |
+| Verified fetch, 3 sources, 8 workers (verify, discard) | 1.38 GB/s (2.29 in a quieter run) |
+| Verified fetch, 3 sources, 8 workers, into `PartialBlob` + commit | 0.15 GB/s (disk-bound) |
+
+Findings that shaped the code: opening the blob per read cost 0.8 to 30 ms on this machine,
+so the file store caches handles and lengths; NTFS zero-fills every gap an out-of-order write
+skips (out-of-order 1 MiB writes ran 3 to 6 times slower), so `PartialBlob` writes in order
+through a 64 MiB reorder buffer, which took verified fetch to disk from 0.02 to 0.15 GB/s.
+Serial ranges on one connection cost a few ms per MiB under this CPU load (52 µs fixed per
+request); parallel workers recover it.
+
 ## Headline: UOR content-addressing is the win
 
 | Path | Cold / recompute | Reused (κ-label memo hit) | Speedup |

@@ -194,20 +194,20 @@ fn main() {
         println!("fetch+verify, {label}       {:6.2} GB/s", gbps(n, d));
     }
 
-    for (label, sources, workers) in [("3 sources, 8 workers", &all, 8usize)] {
+    {
         let dest = FileKappaStore::open(base.join("dest")).unwrap();
         let opts = FetchOptions {
-            concurrency: workers,
+            concurrency: 8,
             ..FetchOptions::default()
         };
         let t = Instant::now();
-        let tree = fetch_piece_tree(&k, sources, &opts).unwrap();
+        let tree = fetch_piece_tree(&k, &all, &opts).unwrap();
         let part = dest.begin_partial(&k, tree).unwrap();
-        fetch_pieces(&k, part.tree(), sources, &part.done(), &part, &opts).unwrap();
+        fetch_pieces(&k, part.tree(), &all, &part.done(), &part, &opts).unwrap();
         part.commit().unwrap();
         let d = t.elapsed();
         println!(
-            "fetch+verify → disk, {label} {:6.2} GB/s  ({:.2} s, incl. fsync)",
+            "fetch+verify → disk, 3 sources, 8 workers {:6.2} GB/s  ({:.2} s, incl. fsync)",
             gbps(n, d),
             d.as_secs_f64()
         );

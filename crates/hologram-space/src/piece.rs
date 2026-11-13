@@ -376,7 +376,7 @@ impl PieceTree {
             return Err(VerifyError::Malformed);
         }
         let body = &bytes[TREE_HEADER..];
-        if body.len() % 32 != 0 || (body.len() / 32) as u64 != piece_count(len) {
+        if !body.len().is_multiple_of(32) || (body.len() / 32) as u64 != piece_count(len) {
             return Err(VerifyError::Malformed);
         }
         let cvs = body

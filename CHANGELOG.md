@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multi-gigabyte content-addressed blobs, end to end:
+  - `hologram_space::piece`: a 1 MiB **piece table** cut from BLAKE3's own hash tree. Its root
+    is the blob's ordinary `blake3:` κ, so a table from any untrusted source is checked against
+    the κ alone, then every piece and every byte range verifies independently
+    (`PieceTree::{verify_root, verify_piece, verify_range}`), 32 bytes per MiB. Also
+    `StreamVerifier` (confirm a stream against a κ without holding it) and
+    `PieceTreeBuilder`. Piece hashing uses blake3's multi-lane SIMD path (no pin change).
+  - `KappaStore::{content_len, get_range, put_writer}` with default implementations, so every
+    backend keeps compiling; `put_writer` with an expected κ stores nothing unless the bytes
+    match. New `StoreError::{OutOfRange, KappaMismatch}`. The TCK gains `large_blob_surface`,
+    run by every backend.
+  - `hologram-store` feature `file`: `FileKappaStore`, one file per κ, with atomic writes
+    (temp file, fsync, rename), ranged reads on cached handles, cached piece tables, scrub,
+    pins and reachability GC, and `PartialBlob`: resumable out-of-order downloads that verify
+    every piece before accepting it, write in order, and re-verify what is on disk after a
+    restart.
+  - HTTP-CAS server (`hologram_net::http::live::serve_with`): `HEAD`, one `Range` (206/416),
+    the κ as `ETag` (`If-None-Match`/`If-Range`), `Content-Type`, `Accept-Ranges`, CORS
+    (including preflight), keep-alive, one thread per connection up to a cap, bodies streamed
+    from the store 1 MiB at a time, and `/cas/{κ}/pieces` serving the piece table.
+  - `hologram_net::http::fetch`: parallel multi-source fetch over keep-alive `Range` requests
+    that verifies each piece before the sink sees it, drops a source that sends one bad piece,
+    retries elsewhere, and resumes from a sink's record. `hologram_net::http::client::HttpConn`
+    is the keep-alive client it uses.
+- `scripts/publish-crates.sh` takes `CRATES="…"` (and `publish-crates.yml` a `crates` input) to
+  publish a dependency-closed subset, e.g. the runner closure `hologram-types hologram-space
+  hologram-tck hologram-store hologram-net`.
+- `just large-blob-bench` runs the 1 GiB throughput examples.
+
 ### Changed
+- The `std` feature of `hologram-space` now enables `blake3/std` (runtime AVX2/AVX-512
+  detection for every BLAKE3 call in the process, not only compile-time features).
+- The HTTP-CAS gateway serves connections concurrently with keep-alive instead of one
+  connection at a time with `Connection: close`.
 - Hardened all public release paths with immutable-byte preflights and idempotent,
   dependency-ordered retries, and made the GitHub source release wait for the
   complete crates.io, npm, and PyPI closure and the exact-tag release V&V run.

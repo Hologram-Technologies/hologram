@@ -26,6 +26,7 @@
 | **AD** | Autodiff by composition — gradients are pipelines of forward ops (chain rule = composition); verified against finite differences | graph + exec grad-check tests |
 | **PV** | Performance — every part within budget, no bottlenecks | benches with baselines/budgets |
 | **PA** | Parallel execution — the lattice recursion leverages the whole processor (disjoint output tiles, one sequential recursion per core), observationally invisible | exec/backend tests (parallel≡sequential≡f64, pool concurrency) |
+| **LB** | Large blobs — verified streams and ranges, file store, HTTP-CAS, parallel fetch | integration tests with planted defects |
 | **NS** | `no_std` portability (wasm + bare-metal) | cross-target builds |
 | **RP** | Replay — TC-05 witnesses verify (QS-05 equivalence) | witness round-trip tests |
 | **CC** | Component conformance (holospaces) — each component vs its external authority (hash KATs, native-executor oracle, substrate TCK, WebAssembly/VirtIO/OCI/Dev-Container specs, QEMU, Playwright) — spec 06 §V&V (MG-7) | conformance tests (`spaces/holospaces/tests/cc*.rs`) + CC bijection audit |
@@ -48,6 +49,9 @@
 | **AS-3** | Equal content ⇒ equal κ-label (determinism). | test | `…::as3_addressing_is_deterministic` | ✅ |
 | **AS-4** | A single-bit input change changes the κ-label (collision-sensitivity). | test | `…::as4_single_bit_change_changes_label` | ✅ |
 | **AS-5** | Incremental `fold_bytes` (ADR-060 streaming) equals a one-shot hash and the reference. | test | `…::as5_streaming_equals_one_shot` | ✅ |
+| **AS-6** | The 1 MiB piece table is the bottom of BLAKE3's own tree: its recomputed root equals `address_bytes` for lengths across chunk, piece and power-of-two subtree boundaries (0 B to 5 MiB), and a table with one altered chaining value, or for other content, is refused by the κ. | test vs one-shot hash | `hologram-space/src/piece.rs::tests::tree_root_is_the_blob_kappa`, `…::a_forged_table_is_refused_by_the_kappa` | ✅ |
+| **AS-7** | Every piece verifies alone; one flipped bit fails exactly its piece; a correct piece at the wrong index or truncated fails; a verified range returns exactly the requested bytes and fails if any covering piece is wrong. | test | `hologram-space/src/piece.rs::tests::every_piece_verifies_and_a_flipped_byte_fails_exactly_its_piece`, `…::verified_range_returns_exactly_the_requested_bytes` | ✅ |
+| **AS-8** | `StreamVerifier` accepts a stream iff it hashes to the κ, refuses a flipped byte, a short stream, and the first byte past a declared length. | test | `hologram-space/src/piece.rs::tests::stream_verifier_accepts_the_blob_and_rejects_a_flip_or_overrun` | ✅ |
 
 ## MA / RP — Model addressing + replay (external: GGUF/ONNX spec, TC-05)
 
@@ -328,6 +332,21 @@
 |---|---|---|---|---|
 | **OV-1** | Byte offsets/lengths (`BufferRef`, `SlotSpan`) and element counts (`PortDescriptor`, kernel calls, compiler `element_counts`/`byte_lengths`) are **u64** — no 4 GiB / 4.29 B-element cap, no saturating/truncating size arithmetic. Values beyond `u32::MAX` survive the archive codec round-trip without truncation. _Regression fix: these were u32 with `saturating_mul` + `offset: total as u32`, so a >4 GiB workspace silently truncated slot offsets (corruption) and a >4 GiB tensor's byte length capped._ | codec round-trip + type widening | `hologram-archive/tests/conformance.rs::ov_codec_roundtrips_beyond_u32_without_truncation` | ✅ |
 | **OV-2** | The host boundary never reports a truncated transfer as success: the C-ABI compile entry points return the **full** archive length (snprintf-style, so `ret > capacity` ⇒ caller retries larger), and `hologram_session_execute` **fails loud** (-1) on an undersized output buffer instead of silently writing a partial result. Callers size buffers from `input_byte_len`/`output_byte_len` (the archive's declared shape × dtype), not a fixed cap. _Regression fix: the FFI copied `min(len, capacity)` and returned success; the CLI fed a hard-coded 4096-byte input buffer; an unknown `--backend` silently downgraded to CPU._ | C-ABI integration tests | `hologram-ffi/tests/c_abi.rs::{compile_signals_truncation_via_required_length, execute_fails_loud_on_undersized_output_buffer}` | ✅ |
+
+## LB — Large blobs (verified storage and transfer; cargo-witnessed, non-BDD)
+
+> A multi-gigabyte blob is never held whole in memory and no unverified byte reaches a
+> store or a reader. Each row's witness plants the defect it guards against (a flipped bit, a
+> forged table, a lying or dead source, a crash), and each guard was mutation-checked: removing
+> it fails its witness.
+
+| ID | Statement | Enforcement | Witness | Status |
+|---|---|---|---|---|
+| **LB-1** | Every backend's `content_len`/`get_range`/`put_writer` agree with `get`/`put`; a range past the end is refused, not truncated; a streaming put told to expect a κ stores nothing on mismatch; an abandoned writer stores nothing. | TCK battery on mem, redb, bare, file | `hologram-tck/src/lib.rs::large_blob_surface` | ✅ |
+| **LB-2** | The file store writes atomically (a crash leaves the whole blob or nothing; stale temporaries are cleared on open), reads ranges without loading the blob, and never computes a piece table over bytes that no longer match their κ. | integration test | `hologram-store/tests/file_store.rs::{file_store_persists_and_clears_stale_temporaries_on_reopen, streaming_put_ranged_reads_and_piece_table_on_a_multi_piece_blob, a_refused_streaming_put_leaves_nothing_behind}` | ✅ |
+| **LB-3** | A partial download accepts verified pieces in any order from any thread, refuses forged or misplaced pieces, cannot install while incomplete, and after a restart keeps exactly the on-disk pieces that still verify. | integration test | `hologram-store/tests/file_store.rs::partial_download_accepts_out_of_order_pieces_refuses_forgeries_and_resumes` | ✅ |
+| **LB-4** | The HTTP-CAS gateway answers `HEAD`, one `Range` (206, 416 with `bytes */len`, multiple ranges served whole), the κ as `ETag` with `If-None-Match`/`If-Range`, CORS preflight, keep-alive and `Connection: close`; idle connections do not block others; the cap answers 503; it never serves a piece table for bytes that miss their κ. | integration test over TCP | `hologram-net/tests/http_cas_large.rs::{head_range_etag_cors_and_keep_alive_on_one_connection, preflight_errors_and_piece_table_resource, an_idle_connection_does_not_block_others_and_the_cap_is_enforced, a_store_that_lies_gets_no_piece_table}`, `hologram-net/src/http/mod.rs::tests::range_header_follows_rfc_9110` | ✅ |
+| **LB-5** | A parallel multi-source fetch delivers only verified pieces: a source that sends one bad piece is dropped and the piece re-fetched elsewhere, dead and empty sources are dropped, a fetch with no honest source fails closed without delivering the bad piece, and an interrupted download resumes into the file store fetching only what is missing. | integration test over TCP | `hologram-net/tests/http_cas_large.rs::{a_lying_source_is_dropped_and_its_pieces_refetched_elsewhere, fetch_fails_closed_when_no_source_is_honest, an_interrupted_download_resumes_into_the_file_store}` | ✅ |
 
 ## NS — Portability
 
