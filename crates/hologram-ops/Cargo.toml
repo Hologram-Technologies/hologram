@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram operation markers + Term-tree emitters + reference evaluators."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-ops"
+keywords = ["hologram", "tensor", "operators", "inference", "no-std"]
+categories = ["mathematics", "no-std", "science"]
 
 [dependencies]
 uor-foundation     = { workspace = true }

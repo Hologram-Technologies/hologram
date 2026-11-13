@@ -1,5 +1,7 @@
 [package]
 name = "holospaces-node"
+# Not part of the 0.14.0 crates.io release set (see CHANGELOG 0.14.0). Publishing it later is purely additive.
+publish = false
 description = "holospaces bare-metal/edge peer — an egress + storage-sync node for low-powered devices (browser-peer's mesh exit + persistence; OTA-updated from the holospaces GitHub Pages site)"
 version.workspace = true
 edition.workspace = true
