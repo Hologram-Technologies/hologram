@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram .holo archive format (kernel calls + certificates + weights + schedule)."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-archive"
+keywords = ["hologram", "holo", "archive", "model", "format"]
+categories = ["encoding", "data-structures", "no-std"]
 
 [dependencies]
 # Archive footer + weight fingerprints route through prism's
@@ -37,7 +41,12 @@ memmap2           = { workspace = true, optional = true }
 hologram-compute = { workspace = true }
 # The v4 app-manifest round-trip test frames a real `AppManifest` realization
 # (with an inference-model layer) through the writer/loader.
-hologram-space   = { workspace = true }
+# Path-only ON PURPOSE (not 'workspace = true'): 'hologram-space' is outside the crates.io
+# release set, and cargo strips a dev-dependency from the published manifest only when it
+# carries no version requirement. The workspace entry pins '=<version>', which would make
+# crates.io demand a 'hologram-space' that does not exist there. Mirrors the workspace
+# entry's 'default-features = false'.
+hologram-space   = { path = "../hologram-space", default-features = false }
 # V&V ONLY — the upstream BLAKE3 reference implementation (by the
 # algorithm's authors) used as an INDEPENDENT external oracle to verify
 # hologram's σ-axis against, mirroring prism-btc validating SHA against

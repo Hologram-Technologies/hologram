@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram domain type vocabulary as ConstrainedTypeShape declarations."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-types"
+keywords = ["hologram", "tensor", "types", "inference", "no-std"]
+categories = ["data-structures", "no-std", "science"]
 
 [dependencies]
 # Prism standard-library surface: re-exports `MatrixShape`,

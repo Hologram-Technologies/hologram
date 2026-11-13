@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram per-target dispatch (CPU / Metal / wgpu)."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-compute"
+keywords = ["hologram", "simd", "kernels", "gpu", "inference"]
+categories = ["hardware-support", "no-std", "science"]
 
 [dependencies]
 hologram-types     = { workspace = true }

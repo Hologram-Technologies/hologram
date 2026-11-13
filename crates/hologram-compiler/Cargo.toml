@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Hologram compiler: Graph -> Prism pipelines (per-node CompileUnit) -> .holo archive."
+readme = "README.md"
+documentation = "https://docs.rs/hologram-compiler"
+keywords = ["hologram", "compiler", "codegen", "inference", "prism"]
+categories = ["compilers", "science"]
 
 [dependencies]
 hologram-graph    = { workspace = true }
