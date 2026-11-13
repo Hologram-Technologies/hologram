@@ -76,6 +76,9 @@ exclude = [
     "spaces/holospaces-browser",
     "sdk/typescript/native/native",
     "sdk/typescript/wasm/driver",
+    # wasm32-only cdylib that runs hologram-compute's kernel conformance digest on the wasm
+    # substrate (scripts/wasm-conformance.sh); own lockfile, like the wasm driver above.
+    "crates/hologram-compute/conformance-wasm",
     # Out-of-tree cargo-fuzz targets (nightly + libfuzzer; run explicitly, spec 03 §Parser hardening).
     "crates/hologram-space/fuzz",
 ]
@@ -83,7 +86,7 @@ exclude = [
 [workspace.package]
 version = "0.13.1"
 edition = "2021"
-rust-version = "1.94"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 repository = "https://github.com/Hologram-Technologies/hologram"
@@ -115,7 +118,7 @@ redb               = "4"
 # second, non-κ naming surface (SPINE-1 violation) — we replaced it with a pure-κ TCP
 # transport: `hologram-net-tcp` (κ-XOR Kademlia, peers identified by `address_bytes(PeerEndpoint)`,
 # verify-on-receipt at every hop). See architecture §11.1.
-wasmtime           = { version = "=47.0.4", default-features = false, features = ["cranelift", "runtime"] }
+wasmtime           = { version = "=48.0.8", default-features = false, features = ["cranelift", "runtime"] }
 
 uor-foundation     = "0.5.2"
 uor-foundation-sdk = "0.5.2"
@@ -126,7 +129,7 @@ uor-addr           = { version = "0.2.0", default-features = false }
 # Layer-assembler codecs for the holospaces space impls (OCI tar+gzip / tar+zstd);
 # no_std + alloc so the portable peer core (wasm32 / bare-metal) links them.
 miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
-ruzstd      = "0.7"
+ruzstd      = "0.9.1"
 bytemuck    = { version = "1.14", features = ["derive"] }
 smallvec    = "1.13"
 thiserror   = { version = "2", default-features = false }

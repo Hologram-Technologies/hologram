@@ -20,13 +20,15 @@ MODE="${1:-write}"
 #   - the SDKs (wasm cdylib / N-API);
 #   - the target-specific crates `hologram-efi` (x86_64-unknown-uefi) and `holospaces-browser`
 #     (wasm32 browser peer) — `exclude`d from the workspace, so `cargo set-version --workspace`
-#     never touches them; without this sync they drift (efi was 0.5.0, browser 0.0.0).
+#     never touches them; without this sync they drift (efi was 0.5.0, browser 0.0.0);
+#   - the wasm32 conformance driver `hologram-compute-conformance-wasm` (detached cdylib).
 FILES=(
   "sdk/typescript/package.json"
   "sdk/typescript/native/package.json"
   "sdk/typescript/wasm/package.json"
   "sdk/typescript/native/native/Cargo.toml"
   "sdk/typescript/wasm/driver/Cargo.toml"
+  "crates/hologram-compute/conformance-wasm/Cargo.toml"
   "sdk/python/pyproject.toml"
   "crates/hologram-efi/Cargo.toml"
   "spaces/holospaces-browser/Cargo.toml"

@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Upgraded the native Wasm runtime from Wasmtime 47.0.4 to 48.0.8, the lowest release
+  patched for all 21 RustSec advisories against 47.0.4 (RUSTSEC-2026-0315, -0316, -0325,
+  -0326, -0327, -0353 to -0359, -0361 to -0364, -0378, -0379, -0422 to -0424), and the
+  Layer Assembler's Zstandard decoder from ruzstd 0.7.3 to 0.9.1 (RUSTSEC-2026-0344,
+  decompression bomb).
+
 ### Added
+- Cross-substrate kernel conformance digest (`hologram_compute::cpu::conformance`) and
+  its wasm32 driver (`crates/hologram-compute/conformance-wasm`, workspace-excluded):
+  `scripts/wasm-conformance.sh` (`just wasm-conformance`, CI job `wasm-conformance`) runs
+  one digest body natively and on wasm32 baseline, SIMD128 and relaxed-SIMD, and fails
+  unless the f32 dot/sum digests are equal. The `matmul_f32_blocked` digest is reported
+  per substrate and does not gate, because it differs (KC-7).
 - Multi-gigabyte content-addressed blobs, end to end:
   - `hologram_space::piece`: a 1 MiB **piece table** cut from BLAKE3's own hash tree. Its root
     is the blob's ordinary `blake3:` κ, so a table from any untrusted source is checked against
@@ -42,6 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection for every BLAKE3 call in the process, not only compile-time features).
 - The HTTP-CAS gateway serves connections concurrently with keep-alive instead of one
   connection at a time with `Connection: close`.
+- Raised the declared Rust MSRV from 1.94 to 1.95, Wasmtime 48's supported compiler floor.
+- `simd_f32_dot` and `simd_f32_sum` now use one canonical association on every target
+  (sixteen lanes over blocks of sixteen, a halving tree, a scalar tail; no FMA), with
+  AVX2, SSE2, NEON and SIMD128 twins that keep the same lanes in registers, replacing the
+  per-instruction-set kernels that grouped partial sums by lane width. Their results are
+  now bit-identical across x86-64, aarch64 and wasm32, and change in the last bits
+  relative to 0.13.1 on every target. Attention scores, norm statistics and ReduceSum
+  inherit the order. Cost against 0.13.1 on an AVX-512 host: dot about 1.2x slower
+  (n = 4096: 106 → 130 ns), sum about 1.8x slower at n = 4096 (53 → 95 ns), because
+  the previous kernels used four AVX-512 accumulators. f32 matmul is unchanged and still
+  differs across substrates (`docs/numerics/invariance.md`).
 - Hardened all public release paths with immutable-byte preflights and idempotent,
   dependency-ordered retries, and made the GitHub source release wait for the
   complete crates.io, npm, and PyPI closure and the exact-tag release V&V run.

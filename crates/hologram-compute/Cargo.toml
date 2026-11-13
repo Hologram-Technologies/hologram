@@ -65,3 +65,8 @@ required-features = ["std", "cpu"]
 [[example]]
 name = "fused_int_timing"
 required-features = ["std", "cpu"]
+
+# Native half of the cross-substrate digest comparison (scripts/wasm-conformance.sh).
+[[example]]
+name = "conformance_digest"
+required-features = ["std", "cpu"]

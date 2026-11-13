@@ -18,7 +18,7 @@ deny:
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded
+vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded wasm-conformance
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).
@@ -112,6 +112,12 @@ wasm:
         -p hologram-space -p hologram-tck -p hologram-net -p hologram-runtime
     cargo build --target wasm32-unknown-unknown --no-default-features --features engine-wasmi \
         -p hologram-runtime
+
+# Cross-substrate f32 conformance (KC-7): one digest body run natively and on wasm32
+# (baseline, SIMD128, relaxed-SIMD) under Node; fails unless the dot/sum digests agree.
+# The matmul digest is reported, not gated (it differs per substrate). Needs Node.js >= 22.
+wasm-conformance:
+    bash scripts/wasm-conformance.sh
 
 # Build the no_std library stack for bare-metal ARM (thumbv7em, no std sysroot).
 embedded:
