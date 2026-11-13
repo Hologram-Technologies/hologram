@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Upgraded the native Wasm runtime from Wasmtime 47.0.4 to 48.0.8, the lowest release
+  patched for all 21 RustSec advisories against 47.0.4 (RUSTSEC-2026-0315, -0316, -0325,
+  -0326, -0327, -0353 to -0359, -0361 to -0364, -0378, -0379, -0422 to -0424), and the
+  Layer Assembler's Zstandard decoder from ruzstd 0.7.3 to 0.9.1 (RUSTSEC-2026-0344,
+  decompression bomb).
+
 ### Changed
+- Raised the declared Rust MSRV from 1.94 to 1.95, Wasmtime 48's supported compiler floor.
 - Hardened all public release paths with immutable-byte preflights and idempotent,
   dependency-ordered retries, and made the GitHub source release wait for the
   complete crates.io, npm, and PyPI closure and the exact-tag release V&V run.
