@@ -1,0 +1,26 @@
+[package]
+name = "hologram-compute-conformance-wasm"
+version = "0.13.1"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["UOR Foundation"]
+description = "wasm32 driver for the hologram-compute kernel conformance digest; its output must equal the native build's."
+publish = false
+
+# Detached from the host workspace, like the TypeScript wasm driver: a wasm32-only cdylib with
+# its own lockfile, built explicitly by `scripts/wasm-conformance.sh` (`just wasm-conformance`,
+# the CI `wasm-conformance` job), never by `cargo test --workspace`. It sits inside a member's
+# directory, which Cargo would otherwise count as part of that member, so it needs its own
+# `[workspace]` table as well as the root `exclude` entry (the `hologram-space/fuzz` convention).
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The deployed browser configuration: no_std hologram-compute with the CPU kernels only.
+hologram-compute = { path = "..", default-features = false, features = ["cpu"] }
+
+[profile.release]
+opt-level = 3

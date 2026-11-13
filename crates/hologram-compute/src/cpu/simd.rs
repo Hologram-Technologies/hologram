@@ -31,6 +31,9 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, Ordering};
 use hologram_types::DTypeId;
 
+/// The canonical f32 dot / sum association and its per-ISA twins.
+pub(crate) mod canonical;
+
 // The runtime dispatcher and the portable scalar kernels below exist for the
 // targets that *choose* a path at run time (x86 feature detection) or have no
 // vector unit. On wasm+simd128 every `simd_f32_*` wrapper calls its SIMD128
@@ -161,8 +164,8 @@ pub fn simd_f32_mul(a: &[f32], b: &[f32], out: &mut [f32]) {
 /// NEON lanes fuse (FMA); the wasm SIMD128 lane multiplies-then-adds (SIMD128
 /// has no FMA, and the relaxed-SIMD fused op both changes the bits and regresses
 /// latency-bound chains on the wasmtime host — see the matmul note), so the
-/// wasm result may differ in the last ULP from the fused arches, as the f32 dot
-/// path already does.
+/// wasm result may differ in the last ULP from the fused arches, as the f32
+/// matmul leaves do.
 #[inline]
 pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -180,46 +183,66 @@ pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// SIMD-vectorized f32 dot product. wasm SIMD128 (the deployed target) has a
-/// dedicated lane; x86 (AVX2/AVX-512) and aarch64 (NEON) select at runtime;
-/// everything else is scalar.
+/// f32 dot product with one **canonical association on every target**, so
+/// the result is **bit-identical across targets**: sixteen accumulator lanes
+/// over the whole blocks of sixteen (lane `j` folds the products at
+/// `i ≡ j (mod 16)`, left to right), a halving tree (`lane[j] += lane[j + w]`
+/// for `w = 8, 4, 2, 1`), then the `n mod 16` tail left to right; multiply and
+/// add round separately. The definition and its vector twins (AVX2, SSE2,
+/// NEON, SIMD128) are in the `canonical` submodule; each twin holds the same
+/// sixteen lanes in registers and walks the same tree, so the dispatch below
+/// changes speed, never bits.
+///
+/// This replaced a per-instruction-set dispatch whose partial sums were
+/// grouped by lane width (4×8 on AVX2, 4×16 on AVX-512, 4×4 on NEON and
+/// SIMD128), so the same operands rounded differently per architecture. Every
+/// f32 reduction built on it inherits the order: attention scores (incl. the
+/// wasm worker pool's tiles), the norm variances and sums of squares, and the
+/// portable matmul fallback. Witnesses: `tests/conformance.rs::kc12_*`,
+/// compared across substrates by `scripts/wasm-conformance.sh`.
 #[inline]
 pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     // SAFETY: simd128 gate; slice bounds handled inside.
-    return unsafe { wasm_simd::dot_f32(a, b) };
+    return unsafe { canonical::wasm::dot(a, b) };
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
+        // SAFETY: paths 2 and 3 are only selected on CPUs with AVX2.
         #[cfg(target_arch = "x86_64")]
-        3 => unsafe { x86::dot_f32_avx512(a, b) },
+        2 | 3 => unsafe { canonical::x86::dot_avx2(a, b) },
+        // SAFETY: SSE2 is baseline on x86-64.
         #[cfg(target_arch = "x86_64")]
-        2 => unsafe { x86::dot_f32_avx2(a, b) },
+        _ => unsafe { canonical::x86::dot_sse2(a, b) },
+        // SAFETY: NEON is baseline on aarch64.
         #[cfg(target_arch = "aarch64")]
-        4 => unsafe { aarch::dot_f32_neon(a, b) },
-        _ => scalar::dot_f32(a, b),
+        _ => unsafe { canonical::neon::dot(a, b) },
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        _ => canonical::dot_scalar(a, b),
     }
 }
 
-/// SIMD-vectorized horizontal sum (`Σ a[i]`). Same dispatch shape as
-/// [`simd_f32_dot`]: wasm SIMD128 has a dedicated lane, x86/aarch select at
-/// runtime, else scalar. Feeds the LayerNorm mean. Floating-point reduction
-/// order is arch-dependent exactly as the dot/matmul reductions already are —
-/// content-addresses are derivation-based, not a re-hash of the f32 bytes, so
-/// this introduces no divergence the f32 path did not already carry.
+/// f32 horizontal sum (`Σ a[i]`) with the canonical association of
+/// [`simd_f32_dot`] (sixteen lanes, halving tree, scalar tail), so it is
+/// **bit-identical across targets**. Feeds the LayerNorm / GroupNorm means
+/// and ReduceSum.
 #[inline]
 pub fn simd_f32_sum(a: &[f32]) -> f32 {
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
     // SAFETY: simd128 gate; slice bounds handled inside.
-    return unsafe { wasm_simd::sum_f32(a) };
+    return unsafe { canonical::wasm::sum(a) };
     #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
     match resolve_path() {
+        // SAFETY: paths 2 and 3 are only selected on CPUs with AVX2.
         #[cfg(target_arch = "x86_64")]
-        3 => unsafe { x86::sum_f32_avx512(a) },
+        2 | 3 => unsafe { canonical::x86::sum_avx2(a) },
+        // SAFETY: SSE2 is baseline on x86-64.
         #[cfg(target_arch = "x86_64")]
-        2 => unsafe { x86::sum_f32_avx2(a) },
+        _ => unsafe { canonical::x86::sum_sse2(a) },
+        // SAFETY: NEON is baseline on aarch64.
         #[cfg(target_arch = "aarch64")]
-        4 => unsafe { aarch::sum_f32_neon(a) },
-        _ => scalar::sum_f32(a),
+        _ => unsafe { canonical::neon::sum(a) },
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        _ => canonical::sum_scalar(a),
     }
 }
 
@@ -313,21 +336,6 @@ mod scalar {
             out[i] = a[i].mul_add(b[i], out[i]);
         }
     }
-    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len().min(b.len());
-        let mut acc = 0f32;
-        for i in 0..n {
-            acc += a[i] * b[i];
-        }
-        acc
-    }
-    pub fn sum_f32(a: &[f32]) -> f32 {
-        let mut acc = 0f32;
-        for &v in a {
-            acc += v;
-        }
-        acc
-    }
     pub fn max_f32(a: &[f32]) -> f32 {
         let mut m = f32::NEG_INFINITY;
         for &v in a {
@@ -399,79 +407,6 @@ mod x86 {
         for i in chunks * 8..n {
             out[i] = a[i].mul_add(b[i], out[i]);
         }
-    }
-
-    #[target_feature(enable = "avx2,fma")]
-    pub unsafe fn dot_f32_avx2(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len().min(b.len());
-        // Unroll across four independent accumulators so the OOO core can
-        // keep the FMA units saturated (latency 4-5 cycles, throughput 1
-        // per cycle on Zen 4 / Sapphire Rapids).
-        let chunks = n / 32;
-        let mut acc0 = _mm256_setzero_ps();
-        let mut acc1 = _mm256_setzero_ps();
-        let mut acc2 = _mm256_setzero_ps();
-        let mut acc3 = _mm256_setzero_ps();
-        for k in 0..chunks {
-            let off = k * 32;
-            let a0 = _mm256_loadu_ps(a.as_ptr().add(off));
-            let a1 = _mm256_loadu_ps(a.as_ptr().add(off + 8));
-            let a2 = _mm256_loadu_ps(a.as_ptr().add(off + 16));
-            let a3 = _mm256_loadu_ps(a.as_ptr().add(off + 24));
-            let b0 = _mm256_loadu_ps(b.as_ptr().add(off));
-            let b1 = _mm256_loadu_ps(b.as_ptr().add(off + 8));
-            let b2 = _mm256_loadu_ps(b.as_ptr().add(off + 16));
-            let b3 = _mm256_loadu_ps(b.as_ptr().add(off + 24));
-            acc0 = _mm256_fmadd_ps(a0, b0, acc0);
-            acc1 = _mm256_fmadd_ps(a1, b1, acc1);
-            acc2 = _mm256_fmadd_ps(a2, b2, acc2);
-            acc3 = _mm256_fmadd_ps(a3, b3, acc3);
-        }
-        let acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
-        let mut buf = [0f32; 8];
-        _mm256_storeu_ps(buf.as_mut_ptr(), acc);
-        let mut total: f32 = buf.iter().sum();
-        // Tail: 8-wide chunks.
-        let tail_chunks = (n - chunks * 32) / 8;
-        for k in 0..tail_chunks {
-            let off = chunks * 32 + k * 8;
-            let va = _mm256_loadu_ps(a.as_ptr().add(off));
-            let vb = _mm256_loadu_ps(b.as_ptr().add(off));
-            let v = _mm256_mul_ps(va, vb);
-            _mm256_storeu_ps(buf.as_mut_ptr(), v);
-            total += buf.iter().sum::<f32>();
-        }
-        // Final scalar tail.
-        let done = chunks * 32 + tail_chunks * 8;
-        for i in done..n {
-            total += a[i] * b[i];
-        }
-        total
-    }
-
-    #[target_feature(enable = "avx2,fma")]
-    pub unsafe fn sum_f32_avx2(a: &[f32]) -> f32 {
-        let n = a.len();
-        let chunks = n / 32;
-        let mut acc0 = _mm256_setzero_ps();
-        let mut acc1 = _mm256_setzero_ps();
-        let mut acc2 = _mm256_setzero_ps();
-        let mut acc3 = _mm256_setzero_ps();
-        for k in 0..chunks {
-            let off = k * 32;
-            acc0 = _mm256_add_ps(acc0, _mm256_loadu_ps(a.as_ptr().add(off)));
-            acc1 = _mm256_add_ps(acc1, _mm256_loadu_ps(a.as_ptr().add(off + 8)));
-            acc2 = _mm256_add_ps(acc2, _mm256_loadu_ps(a.as_ptr().add(off + 16)));
-            acc3 = _mm256_add_ps(acc3, _mm256_loadu_ps(a.as_ptr().add(off + 24)));
-        }
-        let acc = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
-        let mut buf = [0f32; 8];
-        _mm256_storeu_ps(buf.as_mut_ptr(), acc);
-        let mut total: f32 = buf.iter().sum();
-        for &v in &a[chunks * 32..n] {
-            total += v;
-        }
-        total
     }
 
     #[target_feature(enable = "avx2,fma")]
@@ -575,70 +510,6 @@ mod x86 {
         for i in chunks * 16..n {
             out[i] = a[i].mul_add(b[i], out[i]);
         }
-    }
-
-    #[target_feature(enable = "avx512f")]
-    pub unsafe fn dot_f32_avx512(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len().min(b.len());
-        let chunks = n / 64;
-        // Four 512-bit accumulators (1024 bits / 64 lanes per iter).
-        let mut acc0 = _mm512_setzero_ps();
-        let mut acc1 = _mm512_setzero_ps();
-        let mut acc2 = _mm512_setzero_ps();
-        let mut acc3 = _mm512_setzero_ps();
-        for k in 0..chunks {
-            let off = k * 64;
-            let a0 = _mm512_loadu_ps(a.as_ptr().add(off));
-            let a1 = _mm512_loadu_ps(a.as_ptr().add(off + 16));
-            let a2 = _mm512_loadu_ps(a.as_ptr().add(off + 32));
-            let a3 = _mm512_loadu_ps(a.as_ptr().add(off + 48));
-            let b0 = _mm512_loadu_ps(b.as_ptr().add(off));
-            let b1 = _mm512_loadu_ps(b.as_ptr().add(off + 16));
-            let b2 = _mm512_loadu_ps(b.as_ptr().add(off + 32));
-            let b3 = _mm512_loadu_ps(b.as_ptr().add(off + 48));
-            acc0 = _mm512_fmadd_ps(a0, b0, acc0);
-            acc1 = _mm512_fmadd_ps(a1, b1, acc1);
-            acc2 = _mm512_fmadd_ps(a2, b2, acc2);
-            acc3 = _mm512_fmadd_ps(a3, b3, acc3);
-        }
-        let acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
-        let mut total = _mm512_reduce_add_ps(acc);
-        // 16-wide tail.
-        let tail_chunks = (n - chunks * 64) / 16;
-        for k in 0..tail_chunks {
-            let off = chunks * 64 + k * 16;
-            let va = _mm512_loadu_ps(a.as_ptr().add(off));
-            let vb = _mm512_loadu_ps(b.as_ptr().add(off));
-            total += _mm512_reduce_add_ps(_mm512_mul_ps(va, vb));
-        }
-        let done = chunks * 64 + tail_chunks * 16;
-        for i in done..n {
-            total += a[i] * b[i];
-        }
-        total
-    }
-
-    #[target_feature(enable = "avx512f")]
-    pub unsafe fn sum_f32_avx512(a: &[f32]) -> f32 {
-        let n = a.len();
-        let chunks = n / 64;
-        let mut acc0 = _mm512_setzero_ps();
-        let mut acc1 = _mm512_setzero_ps();
-        let mut acc2 = _mm512_setzero_ps();
-        let mut acc3 = _mm512_setzero_ps();
-        for k in 0..chunks {
-            let off = k * 64;
-            acc0 = _mm512_add_ps(acc0, _mm512_loadu_ps(a.as_ptr().add(off)));
-            acc1 = _mm512_add_ps(acc1, _mm512_loadu_ps(a.as_ptr().add(off + 16)));
-            acc2 = _mm512_add_ps(acc2, _mm512_loadu_ps(a.as_ptr().add(off + 32)));
-            acc3 = _mm512_add_ps(acc3, _mm512_loadu_ps(a.as_ptr().add(off + 48)));
-        }
-        let acc = _mm512_add_ps(_mm512_add_ps(acc0, acc1), _mm512_add_ps(acc2, acc3));
-        let mut total = _mm512_reduce_add_ps(acc);
-        for &v in &a[chunks * 64..n] {
-            total += v;
-        }
-        total
     }
 
     #[target_feature(enable = "avx512f")]
@@ -1389,72 +1260,6 @@ mod aarch {
         }
     }
     #[target_feature(enable = "neon")]
-    pub unsafe fn dot_f32_neon(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len().min(b.len());
-        let chunks = n / 16;
-        let mut acc0 = vdupq_n_f32(0.0);
-        let mut acc1 = vdupq_n_f32(0.0);
-        let mut acc2 = vdupq_n_f32(0.0);
-        let mut acc3 = vdupq_n_f32(0.0);
-        for k in 0..chunks {
-            let off = k * 16;
-            let a0 = vld1q_f32(a.as_ptr().add(off));
-            let a1 = vld1q_f32(a.as_ptr().add(off + 4));
-            let a2 = vld1q_f32(a.as_ptr().add(off + 8));
-            let a3 = vld1q_f32(a.as_ptr().add(off + 12));
-            let b0 = vld1q_f32(b.as_ptr().add(off));
-            let b1 = vld1q_f32(b.as_ptr().add(off + 4));
-            let b2 = vld1q_f32(b.as_ptr().add(off + 8));
-            let b3 = vld1q_f32(b.as_ptr().add(off + 12));
-            acc0 = vfmaq_f32(acc0, a0, b0);
-            acc1 = vfmaq_f32(acc1, a1, b1);
-            acc2 = vfmaq_f32(acc2, a2, b2);
-            acc3 = vfmaq_f32(acc3, a3, b3);
-        }
-        let acc01 = vaddq_f32(acc0, acc1);
-        let acc23 = vaddq_f32(acc2, acc3);
-        let acc = vaddq_f32(acc01, acc23);
-        let lanes = [
-            vgetq_lane_f32(acc, 0),
-            vgetq_lane_f32(acc, 1),
-            vgetq_lane_f32(acc, 2),
-            vgetq_lane_f32(acc, 3),
-        ];
-        let mut total: f32 = lanes.iter().sum();
-        for i in chunks * 16..n {
-            total += a[i] * b[i];
-        }
-        total
-    }
-    #[target_feature(enable = "neon")]
-    pub unsafe fn sum_f32_neon(a: &[f32]) -> f32 {
-        let n = a.len();
-        let chunks = n / 16;
-        let mut acc0 = vdupq_n_f32(0.0);
-        let mut acc1 = vdupq_n_f32(0.0);
-        let mut acc2 = vdupq_n_f32(0.0);
-        let mut acc3 = vdupq_n_f32(0.0);
-        for k in 0..chunks {
-            let off = k * 16;
-            acc0 = vaddq_f32(acc0, vld1q_f32(a.as_ptr().add(off)));
-            acc1 = vaddq_f32(acc1, vld1q_f32(a.as_ptr().add(off + 4)));
-            acc2 = vaddq_f32(acc2, vld1q_f32(a.as_ptr().add(off + 8)));
-            acc3 = vaddq_f32(acc3, vld1q_f32(a.as_ptr().add(off + 12)));
-        }
-        let acc = vaddq_f32(vaddq_f32(acc0, acc1), vaddq_f32(acc2, acc3));
-        let lanes = [
-            vgetq_lane_f32(acc, 0),
-            vgetq_lane_f32(acc, 1),
-            vgetq_lane_f32(acc, 2),
-            vgetq_lane_f32(acc, 3),
-        ];
-        let mut total: f32 = lanes.iter().sum();
-        for &v in &a[chunks * 16..n] {
-            total += v;
-        }
-        total
-    }
-    #[target_feature(enable = "neon")]
     pub unsafe fn max_f32_neon(a: &[f32]) -> f32 {
         let n = a.len();
         if n == 0 {
@@ -2097,101 +1902,6 @@ mod aarch {
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm_simd {
     use core::arch::wasm32::*;
-
-    /// wasm SIMD128 f32 dot product — the deployed-target twin of
-    /// `x86::dot_f32_avx2` / `aarch::dot_f32_neon`. Four independent 4-lane
-    /// accumulators hide the add latency; the horizontal reduction and scalar
-    /// tail keep it correct for any length. (Floating-point reduction order is
-    /// arch-dependent here as it already is for every f32 dot/matmul — the
-    /// content-address of a value is derivation-based, not a re-hash of its
-    /// bytes, so this introduces no cross-target divergence the f32 path did
-    /// not already have.)
-    ///
-    /// # Safety
-    /// simd128 must be enabled; `v128_load` is an unaligned wasm load.
-    pub unsafe fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len().min(b.len());
-        let chunks = n / 16;
-        let (mut c0, mut c1, mut c2, mut c3) = (
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-        );
-        for k in 0..chunks {
-            let off = k * 16;
-            let ap = a.as_ptr().add(off);
-            let bp = b.as_ptr().add(off);
-            c0 = f32x4_add(
-                c0,
-                f32x4_mul(v128_load(ap as *const v128), v128_load(bp as *const v128)),
-            );
-            c1 = f32x4_add(
-                c1,
-                f32x4_mul(
-                    v128_load(ap.add(4) as *const v128),
-                    v128_load(bp.add(4) as *const v128),
-                ),
-            );
-            c2 = f32x4_add(
-                c2,
-                f32x4_mul(
-                    v128_load(ap.add(8) as *const v128),
-                    v128_load(bp.add(8) as *const v128),
-                ),
-            );
-            c3 = f32x4_add(
-                c3,
-                f32x4_mul(
-                    v128_load(ap.add(12) as *const v128),
-                    v128_load(bp.add(12) as *const v128),
-                ),
-            );
-        }
-        let acc = f32x4_add(f32x4_add(c0, c1), f32x4_add(c2, c3));
-        let mut sum = f32x4_extract_lane::<0>(acc)
-            + f32x4_extract_lane::<1>(acc)
-            + f32x4_extract_lane::<2>(acc)
-            + f32x4_extract_lane::<3>(acc);
-        for i in chunks * 16..n {
-            sum += *a.as_ptr().add(i) * *b.as_ptr().add(i);
-        }
-        sum
-    }
-
-    /// wasm SIMD128 horizontal sum — the deployed-target twin of
-    /// `x86::sum_f32_avx2` / `aarch::sum_f32_neon`. Four 4-lane accumulators,
-    /// horizontal reduce, scalar tail.
-    ///
-    /// # Safety
-    /// simd128 enabled; `v128_load` is an unaligned wasm load.
-    pub unsafe fn sum_f32(a: &[f32]) -> f32 {
-        let n = a.len();
-        let chunks = n / 16;
-        let (mut c0, mut c1, mut c2, mut c3) = (
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-            f32x4_splat(0.0),
-        );
-        for k in 0..chunks {
-            let off = k * 16;
-            let ap = a.as_ptr().add(off);
-            c0 = f32x4_add(c0, v128_load(ap as *const v128));
-            c1 = f32x4_add(c1, v128_load(ap.add(4) as *const v128));
-            c2 = f32x4_add(c2, v128_load(ap.add(8) as *const v128));
-            c3 = f32x4_add(c3, v128_load(ap.add(12) as *const v128));
-        }
-        let acc = f32x4_add(f32x4_add(c0, c1), f32x4_add(c2, c3));
-        let mut sum = f32x4_extract_lane::<0>(acc)
-            + f32x4_extract_lane::<1>(acc)
-            + f32x4_extract_lane::<2>(acc)
-            + f32x4_extract_lane::<3>(acc);
-        for i in chunks * 16..n {
-            sum += *a.as_ptr().add(i);
-        }
-        sum
-    }
 
     /// wasm SIMD128 horizontal maximum (`−∞` for empty). `f32x4_pmax` picks the
     /// second operand on ties/NaN — immaterial for softmax (a NaN row is NaN
@@ -3111,9 +2821,9 @@ pub fn matmul_f32_packed(
 ///
 /// **Cost model**: blocks are sized so that one row-strip of A
 /// (`BM × BK`), one column-strip of B (`BK × BN`), and one tile of
-/// the output (`BM × BN`) all fit in L1 cache. The inner kernel
-/// streams through `simd_f32_dot` per output cell so the SIMD path
-/// already chosen by `resolve_path()` carries through.
+/// the output (`BM × BN`) all fit in L1 cache. The portable fallback's
+/// inner kernel streams through `simd_f32_dot` per output cell, so it
+/// inherits that function's canonical, target-independent order.
 ///
 /// For square `N × N × N` matmul the asymptotic cost is `N³`
 /// multiply-adds; the blocked layout reduces L1 misses from `Θ(N³)`
