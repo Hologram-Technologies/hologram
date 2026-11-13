@@ -1399,46 +1399,42 @@ fn kc8b_bf16_attention_routes_through_engine() {
 // ─── KC-7: f32 dot and sum carry one association on every target ──────────
 
 /// The canonical association of `simd_f32_dot`, restated independently of
-/// the kernel: lane `j` folds the products at `i ≡ j (mod 4)` over the whole
-/// blocks of four, left to right; the lanes combine as `(l0 + l1) + (l2 + l3)`;
-/// the remaining `n mod 4` products then fold onto that, left to right.
-/// Multiply and add round separately (Rust never contracts `x + y * z`).
-fn canonical_dot_reference(a: &[f32], b: &[f32]) -> f32 {
-    let n = a.len().min(b.len());
-    let whole = n - n % 4;
-    let mut lanes = [0.0f32; 4];
+/// the kernel: lane `j` (of 16) folds the products at `i ≡ j (mod 16)` over the
+/// whole blocks of sixteen, left to right; the lanes then combine by the
+/// halving tree `lane[j] += lane[j + w]` for `w = 8, 4, 2, 1`; the remaining
+/// `n mod 16` products fold onto `lane[0]`, left to right. Multiply and add
+/// round separately (Rust never contracts `x + y * z`).
+fn canonical_reduce_reference(n: usize, term: impl Fn(usize) -> f32) -> f32 {
+    const LANES: usize = 16;
+    let whole = n - n % LANES;
+    let mut lanes = [0.0f32; LANES];
     for (j, lane) in lanes.iter_mut().enumerate() {
         let mut i = j;
         while i < whole {
-            *lane += a[i] * b[i];
-            i += 4;
+            *lane += term(i);
+            i += LANES;
         }
     }
-    let mut total = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
+    let mut w = LANES / 2;
+    while w >= 1 {
+        for j in 0..w {
+            lanes[j] += lanes[j + w];
+        }
+        w /= 2;
+    }
+    let mut total = lanes[0];
     for i in whole..n {
-        total += a[i] * b[i];
+        total += term(i);
     }
     total
 }
 
-/// The canonical association of `simd_f32_sum` — the same shape as
-/// [`canonical_dot_reference`] over the elements themselves.
+fn canonical_dot_reference(a: &[f32], b: &[f32]) -> f32 {
+    canonical_reduce_reference(a.len().min(b.len()), |i| a[i] * b[i])
+}
+
 fn canonical_sum_reference(a: &[f32]) -> f32 {
-    let n = a.len();
-    let whole = n - n % 4;
-    let mut lanes = [0.0f32; 4];
-    for (j, lane) in lanes.iter_mut().enumerate() {
-        let mut i = j;
-        while i < whole {
-            *lane += a[i];
-            i += 4;
-        }
-    }
-    let mut total = (lanes[0] + lanes[1]) + (lanes[2] + lanes[3]);
-    for &v in &a[whole..n] {
-        total += v;
-    }
-    total
+    canonical_reduce_reference(a.len(), |i| a[i])
 }
 
 /// Operands whose magnitudes span ~2⁻⁸…2⁸ with both signs, so that any
@@ -1466,13 +1462,15 @@ fn mixed_magnitude_f32(seed: u64, n: usize) -> Vec<f32> {
 /// AVX2 / AVX-512 (Linux, Windows), aarch64 NEON (macOS), wasm32 with and
 /// without SIMD128.
 ///
-/// The value equals the digest recorded for the fixed-order kernels before
-/// this port, on native and wasm alike.
+/// The golden changed once, deliberately: the port first used four
+/// accumulators (`0a00e59f8f58e4e3`, the private branch's value); widening to
+/// sixteen lanes for speed gave `76408ae96e679411`, measured equal on native
+/// x86-64 and wasm32 baseline, SIMD128 and relaxed-SIMD before pinning.
 #[test]
 fn kc12_f32_dot_and_sum_bits_are_the_cross_target_golden() {
     assert_eq!(
         hologram_compute::cpu::conformance::dot_sum_digest(),
-        0x0a00_e59f_8f58_e4e3,
+        0x7640_8ae9_6e67_9411,
         "f32 dot/sum cross-target golden: the reduction order changed on this lane"
     );
 }
@@ -1480,8 +1478,9 @@ fn kc12_f32_dot_and_sum_bits_are_the_cross_target_golden() {
 /// **KC-7 (reference).** `simd_f32_dot` and `simd_f32_sum`, as compiled for
 /// the running target (vectorised or not), equal the independent restatement
 /// of the canonical association bit for bit, at every length 0…300 and two
-/// long rows. A per-lane-width grouping (the former AVX2 / AVX-512 / NEON /
-/// SIMD128 kernels) or a plain left fold fails this.
+/// long rows. Any other grouping (the former per-lane-width AVX2 / AVX-512 /
+/// NEON / SIMD128 kernels, a four-accumulator order, a plain left fold) fails
+/// this.
 #[test]
 fn kc12b_f32_dot_and_sum_equal_the_canonical_reference_bit_for_bit() {
     use hologram_compute::cpu::simd::{simd_f32_dot, simd_f32_sum};

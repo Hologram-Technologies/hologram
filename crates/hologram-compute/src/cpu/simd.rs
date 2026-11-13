@@ -31,6 +31,9 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, Ordering};
 use hologram_types::DTypeId;
 
+/// The canonical f32 dot / sum association and its per-ISA twins.
+pub(crate) mod canonical;
+
 // The runtime dispatcher and the portable scalar kernels below exist for the
 // targets that *choose* a path at run time (x86 feature detection) or have no
 // vector unit. On wasm+simd128 every `simd_f32_*` wrapper calls its SIMD128
@@ -180,63 +183,67 @@ pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// f32 dot product with one **canonical association on every target**.
+/// f32 dot product with one **canonical association on every target**, so
+/// the result is **bit-identical across targets**: sixteen accumulator lanes
+/// over the whole blocks of sixteen (lane `j` folds the products at
+/// `i ≡ j (mod 16)`, left to right), a halving tree (`lane[j] += lane[j + w]`
+/// for `w = 8, 4, 2, 1`), then the `n mod 16` tail left to right; multiply and
+/// add round separately. The definition and its vector twins (AVX2, SSE2,
+/// NEON, SIMD128) are in the `canonical` submodule; each twin holds the same
+/// sixteen lanes in registers and walks the same tree, so the dispatch below
+/// changes speed, never bits.
 ///
-/// Four accumulators over the whole blocks of four (`acc[j]` folds the
-/// products at `i ≡ j (mod 4)`, left to right), a fixed pairwise combine
-/// `(acc[0] + acc[1]) + (acc[2] + acc[3])`, then the `n mod 4` tail folded on
-/// left to right. Multiply and add round separately. Rust neither reassociates
-/// nor contracts float arithmetic, so the written order is the executed order
-/// on x86-64, aarch64, wasm32 (with or without SIMD128) and the scalar
-/// fallback alike — the result is **bit-identical across targets**. The
-/// compiler may still map the four accumulators onto one 4-lane register,
-/// which preserves every rounding step.
-///
-/// This replaced a per-instruction-set dispatch (AVX-512 / AVX2 / NEON /
-/// SIMD128 / scalar) whose partial sums were grouped by lane width, so the
-/// same operands rounded differently per architecture. Every f32 reduction
-/// built on it inherits the order: attention scores (incl. the wasm worker
-/// pool's tiles), the norm variances and sums of squares, and the portable
-/// matmul fallback. Witnesses: `tests/conformance.rs::kc12_*`, compared across
-/// substrates by `scripts/wasm-conformance.sh`.
+/// This replaced a per-instruction-set dispatch whose partial sums were
+/// grouped by lane width (4×8 on AVX2, 4×16 on AVX-512, 4×4 on NEON and
+/// SIMD128), so the same operands rounded differently per architecture. Every
+/// f32 reduction built on it inherits the order: attention scores (incl. the
+/// wasm worker pool's tiles), the norm variances and sums of squares, and the
+/// portable matmul fallback. Witnesses: `tests/conformance.rs::kc12_*`,
+/// compared across substrates by `scripts/wasm-conformance.sh`.
 #[inline]
 pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
-    let n = a.len().min(b.len());
-    let (blocks_a, tail_a) = a[..n].as_chunks::<4>();
-    let (blocks_b, tail_b) = b[..n].as_chunks::<4>();
-    let mut acc = [0.0f32; 4];
-    for (ca, cb) in blocks_a.iter().zip(blocks_b) {
-        acc[0] += ca[0] * cb[0];
-        acc[1] += ca[1] * cb[1];
-        acc[2] += ca[2] * cb[2];
-        acc[3] += ca[3] * cb[3];
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { canonical::wasm::dot(a, b) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        // SAFETY: paths 2 and 3 are only selected on CPUs with AVX2.
+        #[cfg(target_arch = "x86_64")]
+        2 | 3 => unsafe { canonical::x86::dot_avx2(a, b) },
+        // SAFETY: SSE2 is baseline on x86-64.
+        #[cfg(target_arch = "x86_64")]
+        _ => unsafe { canonical::x86::dot_sse2(a, b) },
+        // SAFETY: NEON is baseline on aarch64.
+        #[cfg(target_arch = "aarch64")]
+        _ => unsafe { canonical::neon::dot(a, b) },
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        _ => canonical::dot_scalar(a, b),
     }
-    let mut s = (acc[0] + acc[1]) + (acc[2] + acc[3]);
-    for (x, y) in tail_a.iter().zip(tail_b) {
-        s += x * y;
-    }
-    s
 }
 
 /// f32 horizontal sum (`Σ a[i]`) with the canonical association of
-/// [`simd_f32_dot`] — four accumulators over blocks of four, the fixed
-/// pairwise combine, then the scalar tail — so it is **bit-identical across
-/// targets**. Feeds the LayerNorm / GroupNorm means and ReduceSum.
+/// [`simd_f32_dot`] (sixteen lanes, halving tree, scalar tail), so it is
+/// **bit-identical across targets**. Feeds the LayerNorm / GroupNorm means
+/// and ReduceSum.
 #[inline]
 pub fn simd_f32_sum(a: &[f32]) -> f32 {
-    let (blocks, tail) = a.as_chunks::<4>();
-    let mut acc = [0.0f32; 4];
-    for c in blocks {
-        acc[0] += c[0];
-        acc[1] += c[1];
-        acc[2] += c[2];
-        acc[3] += c[3];
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    // SAFETY: simd128 gate; slice bounds handled inside.
+    return unsafe { canonical::wasm::sum(a) };
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    match resolve_path() {
+        // SAFETY: paths 2 and 3 are only selected on CPUs with AVX2.
+        #[cfg(target_arch = "x86_64")]
+        2 | 3 => unsafe { canonical::x86::sum_avx2(a) },
+        // SAFETY: SSE2 is baseline on x86-64.
+        #[cfg(target_arch = "x86_64")]
+        _ => unsafe { canonical::x86::sum_sse2(a) },
+        // SAFETY: NEON is baseline on aarch64.
+        #[cfg(target_arch = "aarch64")]
+        _ => unsafe { canonical::neon::sum(a) },
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        _ => canonical::sum_scalar(a),
     }
-    let mut s = (acc[0] + acc[1]) + (acc[2] + acc[3]);
-    for &v in tail {
-        s += v;
-    }
-    s
 }
 
 /// SIMD-vectorized horizontal maximum (`max a[i]`, `−∞` for an empty slice).
