@@ -1,6 +1,6 @@
 //! **The x86-64 (AMD64 / Intel 64) core** — the system emulator's third ISA
 //! target (`CC-43`), alongside the [RISC-V](super) `RV64GC` core and the
-//! [`aarch64`](crate::emulator::aarch64) `ARMv8-A` core.
+//! [`aarch64`] `ARMv8-A` core.
 //!
 //! x86-64 is the ubiquitous registry architecture: most container images publish
 //! a `linux/amd64` variant, so this is the core that lets the browser peer boot

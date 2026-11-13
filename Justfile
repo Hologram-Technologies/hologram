@@ -18,7 +18,7 @@ deny:
 # Verification & Validation (see VERIFICATION.md / CONFORMANCE.md).
 # Every part validated against an external authority + portability +
 # performance. Conformance suites are the `*::conformance` test targets.
-vv: fmt-check clippy test conformance bdd parallel perf deny wasm wasm-conformance embedded
+vv: fmt-check clippy test conformance bdd parallel perf deny wasm embedded wasm-conformance
     @echo "V&V complete — see CONFORMANCE.md for the invariant catalog."
 
 # External-authority + scaling conformance suites (classes AS/MA/KC/SC).

@@ -1,9 +1,9 @@
 //! Cross-substrate kernel conformance digest.
 //!
 //! One dependency-free body that exercises the f32 reduction surface —
-//! [`simd_f32_dot`](super::simd::simd_f32_dot),
-//! [`simd_f32_sum`](super::simd::simd_f32_sum) and
-//! [`matmul_f32_blocked`](super::simd::matmul_f32_blocked) — over
+//! [`simd_f32_dot`](crate::cpu::simd::simd_f32_dot),
+//! [`simd_f32_sum`](crate::cpu::simd::simd_f32_sum) and
+//! [`matmul_f32_blocked`](crate::cpu::simd::matmul_f32_blocked) — over
 //! deterministically generated inputs and folds every result's **bit
 //! pattern** into a 64-bit FNV-1a digest.
 //!
@@ -12,9 +12,9 @@
 //! the comparison can never drift from the code it certifies: two substrates
 //! agree on a kernel exactly when they return the same digest for it.
 //!
-//! The two digests are kept apart on purpose. [`dot_sum_digest`] covers the
+//! The two digests are kept apart on purpose. `dot_sum_digest` covers the
 //! reductions that carry one fixed association on every target and is pinned
-//! to a golden value (`tests/conformance.rs::kc12_*`). [`matmul_digest`]
+//! to a golden value (`tests/conformance.rs::kc12_*`). `matmul_digest`
 //! covers `matmul_f32_blocked`, whose per-architecture register-tiled leaves
 //! (fused multiply-add on x86 and NEON, separate multiply and add on wasm
 //! SIMD128) round differently; it is measured and reported, never claimed
@@ -66,7 +66,7 @@ const DOT_SUM_LENS: [usize; 22] = [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 1000,
 ];
 
-/// Digest of `simd_f32_dot` and `simd_f32_sum` over [`DOT_SUM_LENS`].
+/// Digest of `simd_f32_dot` and `simd_f32_sum` over `DOT_SUM_LENS`.
 pub fn dot_sum_digest() -> u64 {
     let mut h = FNV_OFFSET;
     let mut rng = Lcg(0x9E37_79B9_7F4A_7C15);

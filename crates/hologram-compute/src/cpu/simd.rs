@@ -202,17 +202,17 @@ pub fn simd_f32_fmadd(a: &[f32], b: &[f32], out: &mut [f32]) {
 #[inline]
 pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len().min(b.len());
-    let (a, b) = (&a[..n], &b[..n]);
-    let whole = n - n % 4;
+    let (blocks_a, tail_a) = a[..n].as_chunks::<4>();
+    let (blocks_b, tail_b) = b[..n].as_chunks::<4>();
     let mut acc = [0.0f32; 4];
-    for (ca, cb) in a[..whole].chunks_exact(4).zip(b[..whole].chunks_exact(4)) {
+    for (ca, cb) in blocks_a.iter().zip(blocks_b) {
         acc[0] += ca[0] * cb[0];
         acc[1] += ca[1] * cb[1];
         acc[2] += ca[2] * cb[2];
         acc[3] += ca[3] * cb[3];
     }
     let mut s = (acc[0] + acc[1]) + (acc[2] + acc[3]);
-    for (x, y) in a[whole..].iter().zip(&b[whole..]) {
+    for (x, y) in tail_a.iter().zip(tail_b) {
         s += x * y;
     }
     s
@@ -224,16 +224,16 @@ pub fn simd_f32_dot(a: &[f32], b: &[f32]) -> f32 {
 /// targets**. Feeds the LayerNorm / GroupNorm means and ReduceSum.
 #[inline]
 pub fn simd_f32_sum(a: &[f32]) -> f32 {
-    let whole = a.len() - a.len() % 4;
+    let (blocks, tail) = a.as_chunks::<4>();
     let mut acc = [0.0f32; 4];
-    for c in a[..whole].chunks_exact(4) {
+    for c in blocks {
         acc[0] += c[0];
         acc[1] += c[1];
         acc[2] += c[2];
         acc[3] += c[3];
     }
     let mut s = (acc[0] + acc[1]) + (acc[2] + acc[3]);
-    for &v in &a[whole..] {
+    for &v in tail {
         s += v;
     }
     s

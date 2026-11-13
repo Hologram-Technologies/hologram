@@ -332,7 +332,6 @@ impl ContentPeer {
     /// across transport round-trips).
     ///
     /// [`inbound`]: Self::inbound
-    #[must_use]
     pub fn fetch(&self, kappa: KappaLabel71) -> Pin<Box<dyn Future<Output = Option<Bytes>>>> {
         let sync = self.sync.clone();
         Box::pin(async move { sync.fetch(&kappa).await.ok().flatten() })
@@ -345,7 +344,6 @@ impl ContentPeer {
     /// across the wire (a WebRTC data channel between tabs). The future owns its
     /// peer handle, so it is `'static` (the caller may store and poll it across
     /// transport round-trips, exactly like [`fetch`](Self::fetch)).
-    #[must_use]
     pub fn announce(&self, kappa: KappaLabel71) -> Pin<Box<dyn Future<Output = ()>>> {
         let sync = self.sync.clone();
         Box::pin(async move { sync.announce(&kappa).await })
@@ -359,7 +357,6 @@ impl ContentPeer {
     /// [`fetch`](Self::fetch), drive it by pumping frames over the transport
     /// ([`inbound`](Self::inbound) / [`outbound`](Self::outbound)) and polling; the
     /// owned peer handle makes it `'static`.
-    #[must_use]
     pub fn discover(&self) -> Pin<Box<dyn Future<Output = Vec<KappaLabel71>>>> {
         let sync = self.sync.clone();
         Box::pin(async move { sync.discover(None, usize::MAX).await })
