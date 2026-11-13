@@ -2,7 +2,7 @@
 name = "hologram-compute-conformance-wasm"
 version = "0.13.1"
 edition = "2021"
-rust-version = "1.94"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 authors = ["UOR Foundation"]
 description = "wasm32 driver for the hologram-compute kernel conformance digest; its output must equal the native build's."

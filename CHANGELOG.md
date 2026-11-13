@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Upgraded the native Wasm runtime from Wasmtime 47.0.4 to 48.0.8, the lowest release
+  patched for all 21 RustSec advisories against 47.0.4 (RUSTSEC-2026-0315, -0316, -0325,
+  -0326, -0327, -0353 to -0359, -0361 to -0364, -0378, -0379, -0422 to -0424), and the
+  Layer Assembler's Zstandard decoder from ruzstd 0.7.3 to 0.9.1 (RUSTSEC-2026-0344,
+  decompression bomb).
+
 ### Added
 - Cross-substrate kernel conformance digest (`hologram_compute::cpu::conformance`) and
   its wasm32 driver (`crates/hologram-compute/conformance-wasm`, workspace-excluded):
@@ -16,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per substrate and does not gate, because it differs (KC-7).
 
 ### Changed
+- Raised the declared Rust MSRV from 1.94 to 1.95, Wasmtime 48's supported compiler floor.
 - `simd_f32_dot` and `simd_f32_sum` now use one canonical association on every target
   (sixteen lanes over blocks of sixteen, a halving tree, a scalar tail; no FMA), with
   AVX2, SSE2, NEON and SIMD128 twins that keep the same lanes in registers, replacing the
