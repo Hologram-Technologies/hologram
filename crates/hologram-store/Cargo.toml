@@ -50,6 +50,9 @@ default = []
 std = ["hologram-space/std"]
 # no_std bare-metal BlockDevice backend (`bare` module).
 bare = ["dep:hologram-types", "dep:hashbrown", "dep:spin"]
+# std file-per-κ backend for multi-gigabyte blobs (`file` module): atomic writes, ranged reads,
+# piece tables, resumable out-of-order downloads. std only — no redb, no other dependency.
+file = ["std"]
 # std redb B-tree backend (`native` module).
 native = ["std", "dep:redb"]
 # wasm32 browser OPFS backend (`opfs` module) — the sync `OpfsKappaStore` (rlib, no wasm-bindgen).

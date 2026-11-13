@@ -1821,6 +1821,7 @@ dependencies = [
  "async-trait",
  "hashbrown 0.15.5",
  "hologram-space",
+ "hologram-store",
  "hologram-tck",
  "pollster",
  "quinn",

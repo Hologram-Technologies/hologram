@@ -50,6 +50,10 @@ pub enum StoreError {
     UnknownAxis,
     /// `unpin` on a κ that is not pinned.
     NotPinned,
+    /// A byte range reaches past the end of the stored content.
+    OutOfRange,
+    /// Streamed bytes did not hash to the κ the writer was told to expect; nothing was stored.
+    KappaMismatch,
 }
 
 /// [`KappaSync`] failures (spec §6.1).
@@ -717,6 +721,86 @@ pub trait KappaStore: Send + Sync {
     /// Multi-axis presence. Default: not present.
     fn contains_axis(&self, _label_bytes: &[u8]) -> bool {
         false
+    }
+
+    // ─── large-blob surface ────────────────────────────────────────────────────────────────
+    // The defaults below go through `get`/`put`, so every backend supports them unchanged; a
+    // backend that can stat, seek or stream (the file store) overrides them so a multi-gigabyte
+    // blob is never held in memory.
+
+    /// Byte length of the content under `kappa`, `None` if absent. Default: `get` and measure.
+    fn content_len(&self, kappa: &KappaLabel71) -> Result<Option<u64>, StoreError> {
+        Ok(self.get(kappa)?.map(|b| b.len() as u64))
+    }
+
+    /// Bytes `[offset, offset + len)` of the content under `kappa`; `None` if absent,
+    /// [`StoreError::OutOfRange`] if the range reaches past the end. Default: `get` and slice.
+    fn get_range(
+        &self,
+        kappa: &KappaLabel71,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Bytes>, StoreError> {
+        let Some(all) = self.get(kappa)? else {
+            return Ok(None);
+        };
+        let end = offset.checked_add(len).ok_or(StoreError::OutOfRange)?;
+        if end > all.len() as u64 {
+            return Err(StoreError::OutOfRange);
+        }
+        Ok(Some(Bytes::from(&all[offset as usize..end as usize])))
+    }
+
+    /// Start a streaming `put` on `axis`. Bytes are hashed as they are written; `finish` commits
+    /// them and returns the κ. With `expected`, `finish` stores nothing and returns
+    /// [`StoreError::KappaMismatch`] unless the bytes hash to that κ, so unverified bytes never
+    /// become visible. Dropping the writer without `finish` stores nothing. Default: buffer in
+    /// memory, then `put`.
+    fn put_writer<'a>(
+        &'a self,
+        axis: &str,
+        expected: Option<&KappaLabel71>,
+    ) -> Result<Box<dyn KappaWriter + 'a>, StoreError> {
+        Ok(Box::new(BufferedKappaWriter {
+            store: self,
+            axis: axis.to_string(),
+            expected: expected.copied(),
+            buf: Vec::new(),
+        }))
+    }
+}
+
+/// A streaming `put` in progress ([`KappaStore::put_writer`]).
+pub trait KappaWriter {
+    /// Append the next bytes.
+    fn write(&mut self, bytes: &[u8]) -> Result<(), StoreError>;
+    /// Commit and return the κ (or refuse, see [`KappaStore::put_writer`]).
+    fn finish(self: Box<Self>) -> Result<KappaLabel71, StoreError>;
+}
+
+/// The default [`KappaWriter`]: buffers in memory, then calls `put`.
+struct BufferedKappaWriter<'a, S: KappaStore + ?Sized> {
+    store: &'a S,
+    axis: String,
+    expected: Option<KappaLabel71>,
+    buf: Vec<u8>,
+}
+
+impl<S: KappaStore + ?Sized> KappaWriter for BufferedKappaWriter<'_, S> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
+        self.buf.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn finish(self: Box<Self>) -> Result<KappaLabel71, StoreError> {
+        if let Some(want) = &self.expected {
+            match verify_kappa(&self.buf, want) {
+                Ok(true) => {}
+                Ok(false) => return Err(StoreError::KappaMismatch),
+                Err(_) => return Err(StoreError::UnknownAxis),
+            }
+        }
+        self.store.put(&self.axis, &self.buf)
     }
 }
 

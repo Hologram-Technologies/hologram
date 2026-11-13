@@ -27,6 +27,8 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "rin
 
 [dev-dependencies]
 hologram-tck = { workspace = true }
+# The file-per-κ store backs the large-blob HTTP-CAS tests (resumable fetch into a PartialBlob).
+hologram-store = { workspace = true, features = ["file"] }
 pollster = { workspace = true }
 
 [features]

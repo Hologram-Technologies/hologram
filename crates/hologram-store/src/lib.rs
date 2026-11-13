@@ -7,6 +7,8 @@
 //!   filesystem (sectors only). For bare-metal / embedded peers.
 //! - [`native`] (feature `native`) — WASI/std store on a **redb** B-tree index, with sharding + a
 //!   bounded read-through cache. For native hosts.
+//! - [`file`] (feature `file`) — std store of one file per κ for multi-gigabyte blobs: atomic
+//!   writes, ranged reads, BLAKE3 piece tables, resumable out-of-order downloads. No redb.
 //! - [`opfs`] (feature `opfs`) — browser OPFS store (`wasm32` + web-sys): the sync `OpfsKappaStore`
 //!   backend, plus the async `#[wasm_bindgen]` JS layer under the `js-api` sub-feature.
 //!
@@ -18,6 +20,8 @@ extern crate alloc;
 
 #[cfg(feature = "bare")]
 pub mod bare;
+#[cfg(feature = "file")]
+pub mod file;
 #[cfg(feature = "native")]
 pub mod native;
 #[cfg(feature = "opfs")]

@@ -33,6 +33,69 @@ pub fn store_battery(store: &dyn KappaStore) {
     content_roundtrip(store);
     axis_polymorphic_round_trip(store);
     zero_copy_get_returns_arc_handle(store);
+    large_blob_surface(store);
+}
+
+/// The large-blob surface (`content_len`, `get_range`, `put_writer`) agrees with `get`/`put`, and a
+/// streaming put told to expect a κ stores nothing when the bytes do not match it. Holds for the
+/// trait defaults and for every backend override.
+pub fn large_blob_surface(store: &dyn KappaStore) {
+    let payload: alloc::vec::Vec<u8> = (0..70_000u32).map(|i| (i * 31 % 251) as u8).collect();
+    let k = address_bytes(&payload);
+
+    // Streaming put, in uneven writes, with the right expectation.
+    let mut w = store.put_writer("blake3", Some(&k)).unwrap();
+    for part in payload.chunks(9_973) {
+        w.write(part).unwrap();
+    }
+    assert_eq!(w.finish().unwrap(), k, "put_writer returns the content's κ");
+    assert_eq!(store.get(&k).unwrap().unwrap().as_ref(), payload.as_slice());
+
+    // Length and ranges without reading the rest.
+    assert_eq!(store.content_len(&k).unwrap(), Some(payload.len() as u64));
+    for (off, len) in [
+        (0u64, 1u64),
+        (65_535, 2),
+        (12_345, 40_000),
+        (69_999, 1),
+        (5, 0),
+    ] {
+        let got = store.get_range(&k, off, len).unwrap().unwrap();
+        assert_eq!(got.as_ref(), &payload[off as usize..(off + len) as usize]);
+    }
+    assert_eq!(
+        store.get_range(&k, 69_999, 2),
+        Err(StoreError::OutOfRange),
+        "a range past the end is refused, not truncated"
+    );
+    assert_eq!(
+        store.get_range(&k, u64::MAX, 2),
+        Err(StoreError::OutOfRange)
+    );
+    let absent = address_bytes(b"tck-large-blob-absent");
+    assert_eq!(store.content_len(&absent).unwrap(), None);
+    assert_eq!(store.get_range(&absent, 0, 1).unwrap(), None);
+
+    // Planted defect: one flipped byte under an expected κ. Nothing may be stored.
+    let mut forged = payload.clone();
+    forged[40_000] ^= 1;
+    let before = store.approximate_count();
+    let mut w = store.put_writer("blake3", Some(&absent)).unwrap();
+    w.write(&forged).unwrap();
+    assert_eq!(w.finish(), Err(StoreError::KappaMismatch));
+    assert!(!store.contains(&address_bytes(&forged)));
+    assert_eq!(
+        store.approximate_count(),
+        before,
+        "a refused write stores nothing"
+    );
+
+    // An abandoned writer stores nothing.
+    let mut w = store.put_writer("blake3", None).unwrap();
+    w.write(b"tck-abandoned-write").unwrap();
+    drop(w);
+    assert!(!store.contains(&address_bytes(b"tck-abandoned-write")));
+    assert_eq!(store.approximate_count(), before);
 }
 
 /// ST-2 / spec §10.2 — identical `(axis, bytes)` ⇒ identical κ-label, no duplicate write.
