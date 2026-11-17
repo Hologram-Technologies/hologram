@@ -21,20 +21,17 @@
 //! the κ at the end, holding nothing but the hasher state. [`PieceTreeBuilder`] produces the piece
 //! table from a stream in one pass, holding at most one piece.
 //!
-//! The tree arithmetic uses the 1.5 line's semi-public internals: `blake3::guts` (the chunk and
-//! parent primitives the `bao` crate uses) and `blake3::platform::hash_many` (the multi-lane SIMD
-//! routine `blake3::Hasher` itself runs). The workspace cannot move past blake3 1.5 while
-//! `uor-prism-crypto` 0.4 caps it at `<1.6`; the 1.8 `hazmat` module is the supported API for the
-//! same chaining values, so moving the pin later is a local rewrite of `subtree_cv` that changes no
-//! byte of output (the tests pin every result to the one-shot hash).
+//! The tree arithmetic is BLAKE3's supported `hazmat` API (1.8): a subtree's chaining value is a
+//! `Hasher` started at the subtree's input offset and finalized as a non-root node, which runs the
+//! same multi-lane SIMD paths as the one-shot hash (AVX-512 natively, `simd128` in the browser), and
+//! parents are merged with `merge_subtrees_non_root` and `merge_subtrees_root`. The tests pin every
+//! result to the one-shot hash.
 
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use alloc::vec;
-use blake3::guts::{parent_cv, ChunkState, CHUNK_LEN};
-use blake3::platform::Platform;
-use blake3::IncrementCounter;
+use blake3::hazmat::{merge_subtrees_non_root, merge_subtrees_root, HasherExt, Mode};
+use blake3::CHUNK_LEN;
 use hologram_types::prism::crypto::Blake3Hasher;
 use hologram_types::prism::vocabulary::Hasher;
 
@@ -126,77 +123,31 @@ fn pow2_floor(n: u64) -> u64 {
     1u64 << (63 - n.leading_zeros())
 }
 
-/// BLAKE3's IV (the SHA-256 IV), as the key words for the unkeyed hash mode.
-const IV: [u32; 8] = [
-    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
-];
-/// BLAKE3 domain flags (spec §2.1).
-const CHUNK_START: u8 = 1 << 0;
-const CHUNK_END: u8 = 1 << 1;
-const PARENT: u8 = 1 << 2;
-
 /// Chaining value of `bytes` as the BLAKE3 subtree whose first chunk has index `chunk_offset`.
-/// `is_root` finalizes it as the whole-input root instead (only for an input that is one subtree).
+/// `is_root` finalizes it as the whole-input root instead (only for an input that is one subtree,
+/// which starts at chunk 0).
 ///
-/// Full chunks and each level of parents go through `Platform::hash_many`, the same multi-lane
-/// SIMD routine `blake3::Hasher` uses (AVX-512 hashes 16 chunks at once); a trailing partial chunk
-/// and a root parent use the `guts` primitives. Levels are reduced pairwise with an odd node
-/// carried up, which builds exactly BLAKE3's left-balanced tree. The tests check every result
-/// against the one-shot hash, so a change in these semi-public internals fails loudly.
+/// A non-root subtree is a `Hasher` started at the subtree's input offset and finalized as a
+/// non-root node: the same SIMD paths, and the same left-balanced tree, as the one-shot hash. The
+/// tests check every result against the one-shot hash.
 fn subtree_cv(bytes: &[u8], chunk_offset: u64, is_root: bool) -> [u8; 32] {
-    if bytes.len() <= CHUNK_LEN {
-        return *ChunkState::new(chunk_offset)
-            .update(bytes)
-            .finalize(is_root)
-            .as_bytes();
+    if is_root {
+        debug_assert_eq!(chunk_offset, 0, "only a subtree at offset 0 can be the root");
+        return *blake3::hash(bytes).as_bytes();
     }
-    let platform = Platform::detect();
-    let full = bytes.len() / CHUNK_LEN;
-    let tail = &bytes[full * CHUNK_LEN..];
-    let n = full + usize::from(!tail.is_empty());
-    let mut cvs = vec![0u8; n * 32];
-    let chunks: Vec<&[u8; CHUNK_LEN]> = bytes.as_chunks::<CHUNK_LEN>().0.iter().collect();
-    platform.hash_many(
-        &chunks,
-        &IV,
-        chunk_offset,
-        IncrementCounter::Yes,
-        0,
-        CHUNK_START,
-        CHUNK_END,
-        &mut cvs[..full * 32],
-    );
-    if !tail.is_empty() {
-        let cv = ChunkState::new(chunk_offset + full as u64)
-            .update(tail)
-            .finalize(false);
-        cvs[full * 32..].copy_from_slice(cv.as_bytes());
+    let mut hasher = blake3::Hasher::new();
+    hasher.set_input_offset(chunk_offset * CHUNK_LEN as u64);
+    hasher.update(bytes);
+    hasher.finalize_non_root()
+}
+
+/// The parent of two subtree chaining values, as a non-root node or as the root.
+fn parent(left: &[u8; 32], right: &[u8; 32], is_root: bool) -> [u8; 32] {
+    if is_root {
+        *merge_subtrees_root(left, right, Mode::Hash).as_bytes()
+    } else {
+        merge_subtrees_non_root(left, right, Mode::Hash)
     }
-    // Reduce level by level until two nodes remain; the last parent may carry the root flag.
-    let mut count = n;
-    let mut next = vec![0u8; (n / 2 + 1) * 32];
-    while count > 2 {
-        let pairs = count / 2;
-        let blocks: Vec<&[u8; 64]> = cvs[..pairs * 64].as_chunks::<64>().0.iter().collect();
-        platform.hash_many(
-            &blocks,
-            &IV,
-            0,
-            IncrementCounter::No,
-            PARENT,
-            0,
-            0,
-            &mut next[..pairs * 32],
-        );
-        if count % 2 == 1 {
-            next[pairs * 32..pairs * 32 + 32].copy_from_slice(&cvs[(count - 1) * 32..count * 32]);
-        }
-        count = pairs + count % 2;
-        core::mem::swap(&mut cvs, &mut next);
-    }
-    let left: [u8; 32] = cvs[..32].try_into().expect("32 bytes");
-    let right: [u8; 32] = cvs[32..64].try_into().expect("32 bytes");
-    *parent_cv(&left.into(), &right.into(), is_root).as_bytes()
 }
 
 /// Fold piece chaining values into their parent with BLAKE3's split rule (pieces are aligned
@@ -209,7 +160,7 @@ fn merge(cvs: &[[u8; 32]], is_root: bool) -> [u8; 32] {
     let left = pow2_floor(cvs.len() as u64 - 1) as usize;
     let l = merge(&cvs[..left], false);
     let r = merge(&cvs[left..], false);
-    *parent_cv(&l.into(), &r.into(), is_root).as_bytes()
+    parent(&l, &r, is_root)
 }
 
 /// The chaining value of piece `index` with content `bytes`, for a blob of `piece_total` pieces:
