@@ -132,7 +132,10 @@ fn pow2_floor(n: u64) -> u64 {
 /// tests check every result against the one-shot hash.
 fn subtree_cv(bytes: &[u8], chunk_offset: u64, is_root: bool) -> [u8; 32] {
     if is_root {
-        debug_assert_eq!(chunk_offset, 0, "only a subtree at offset 0 can be the root");
+        debug_assert_eq!(
+            chunk_offset, 0,
+            "only a subtree at offset 0 can be the root"
+        );
         return *blake3::hash(bytes).as_bytes();
     }
     let mut hasher = blake3::Hasher::new();
